@@ -1,5 +1,9 @@
 # Beacon - High-Performance mDNS Library for Go
 
+<p align="center">
+  <img src="image/Beacon_Logo_Large.PNG" alt="Beacon mDNS" width="300" style="border-radius: 15px;">
+</p>
+
 [![Go Reference](https://pkg.go.dev/badge/github.com/joshuafuller/beacon.svg)](https://pkg.go.dev/github.com/joshuafuller/beacon)
 [![Go Report Card](https://goreportcard.com/badge/github.com/joshuafuller/beacon)](https://goreportcard.com/report/github.com/joshuafuller/beacon)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
