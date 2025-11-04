@@ -24,7 +24,7 @@ func TestPort(t *testing.T) {
 // FR-004: System MUST use mDNS port 5353 and multicast address 224.0.0.251 for IPv4 queries
 func TestMulticastAddrIPv4(t *testing.T) {
 	// Test validates constant matches RFC value, hardcoded string is intentional
-	want := "224.0.0.251" // nosemgrep: beacon-hardcoded-multicast-address
+	want := "224.0.0.251"          // nosemgrep: beacon-hardcoded-multicast-address
 	if MulticastAddrIPv4 != want { // nosemgrep: beacon-hardcoded-multicast-address
 		t.Errorf("MulticastAddrIPv4 = %s, want %s per RFC 6762 §5", MulticastAddrIPv4, want) // nosemgrep: beacon-hardcoded-multicast-address
 	}
