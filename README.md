@@ -116,20 +116,31 @@ Beacon is built on proven engineering principles:
 
 ## Documentation
 
-### Getting Started
-- [Shipping Guide](docs/SHIPPING_GUIDE.md) - Using Beacon in your project
-- [API Reference](https://pkg.go.dev/github.com/joshuafuller/beacon) - GoDoc
-- [Examples](examples/) - Code samples
+**📚 [Complete Documentation Hub →](docs/README.md)**
 
-### Technical Details
-- [RFC Compliance Matrix](docs/RFC_COMPLIANCE_MATRIX.md) - 72.2% compliant (91/126 requirements)
-- [Performance Analysis](specs/006-mdns-responder/PERFORMANCE_ANALYSIS.md) - Benchmarks (Grade A+)
-- [Security Audit](specs/006-mdns-responder/SECURITY_AUDIT.md) - Security posture (STRONG)
-- [hashicorp/mdns Comparison](docs/HASHICORP_COMPARISON.md) - Detailed comparison
+### 👤 For Users
 
-### Development
-- [Contributing Guide](CLAUDE.md) - Development guidelines
-- [Semgrep Rules](SEMGREP_RULES_SUMMARY.md) - Quality enforcement
+**New to Beacon?** Start here: **[Getting Started Guide →](docs/guides/getting-started.md)**
+
+- **[Getting Started](docs/guides/getting-started.md)** - Installation and first steps (15 min)
+- **[Architecture Overview](docs/guides/architecture.md)** - How Beacon works (10 min)
+- **[Troubleshooting Guide](docs/guides/troubleshooting.md)** - Common issues and solutions
+- **[API Reference](docs/api/README.md)** - Complete API documentation
+- **[Examples](examples/)** - Working code samples
+
+### 🛠️ For Contributors
+
+- **[Contributing Guide](CONTRIBUTING.md)** - How to contribute
+- **[Code of Conduct](CODE_OF_CONDUCT.md)** - Community standards
+- **[Security Policy](SECURITY.md)** - Reporting vulnerabilities
+
+### 🔬 For Researchers/Architects
+
+- **[RFC Compliance Matrix](docs/internals/rfc-compliance/RFC_COMPLIANCE_MATRIX.md)** - 72.2% compliant (91/126 requirements)
+- **[hashicorp/mdns Comparison](docs/internals/analysis/HASHICORP_COMPARISON.md)** - Detailed performance comparison
+- **[Performance Analysis](specs/006-mdns-responder/PERFORMANCE_ANALYSIS.md)** - Benchmarks (Grade A+)
+- **[Security Audit](specs/006-mdns-responder/SECURITY_AUDIT.md)** - Security posture (STRONG)
+- **[Architecture Decision Records](docs/internals/architecture/decisions/)** - Why we made key decisions
 
 ---
 
@@ -172,13 +183,18 @@ Beacon is built on proven engineering principles:
 
 ## Contributing
 
-Contributions welcome! Please read [CLAUDE.md](CLAUDE.md) for guidelines.
+Contributions welcome! We value code, documentation, bug reports, and feature requests.
 
-Quick checklist:
-- Tests written first (TDD)
-- All tests pass with `-race`
-- ≥80% coverage maintained
-- `make semgrep-check` passes
+**[Read the Contributing Guide →](CONTRIBUTING.md)**
+
+Quick checklist before submitting a PR:
+- [ ] Tests written first (TDD)
+- [ ] All tests pass with `-race`
+- [ ] Code coverage ≥80%
+- [ ] `make semgrep-check` passes
+- [ ] Documentation updated
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
 ---
 
@@ -194,4 +210,11 @@ Quick checklist:
 - Implements [RFC 6762](https://www.rfc-editor.org/rfc/rfc6762.html) and [RFC 6763](https://www.rfc-editor.org/rfc/rfc6763.html)
 - Built using [Spec Kit](https://github.com/github/spec-kit) framework
 
-**Questions?** [Open an issue](https://github.com/joshuafuller/beacon/issues) · **Email**: joshuafuller@gmail.com
+---
+
+## Community & Support
+
+- **Questions?** [GitHub Discussions](https://github.com/joshuafuller/beacon/discussions)
+- **Bug Reports:** [GitHub Issues](https://github.com/joshuafuller/beacon/issues)
+- **Security Issues:** See [SECURITY.md](SECURITY.md)
+- **Email:** joshuafuller@gmail.com
