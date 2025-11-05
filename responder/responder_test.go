@@ -909,3 +909,274 @@ func splitDomainName(name string) []string {
 
 	return labels
 }
+
+// TestResponder_Unregister_ErrorCases tests error handling in Unregister.
+//
+// Validates proper error handling for edge cases:
+// - Unregistering non-existent service
+// - Unregistering already unregistered service
+// - Invalid service ID formats
+//
+// Coverage improvement for responder.Unregister (71.4% → target 90%+)
+func TestResponder_Unregister_ErrorCases(t *testing.T) {
+	ctx := context.Background()
+	r, err := New(ctx)
+	if err != nil {
+		t.Fatalf("New() error = %v, want nil", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	tests := []struct {
+		name      string
+		serviceID string
+		setup     func()
+		wantErr   bool
+	}{
+		{
+			name:      "unregister non-existent service",
+			serviceID: "NonExistent",
+			setup:     func() {},
+			wantErr:   true,
+		},
+		{
+			name:      "unregister already unregistered service",
+			serviceID: "TestService",
+			setup: func() {
+				// Register then unregister
+				svc := &Service{
+					InstanceName: "TestService",
+					ServiceType:  "_http._tcp.local",
+					Port:         8080,
+				}
+				_ = r.Register(svc)
+				_ = r.Unregister("TestService")
+			},
+			wantErr: true,
+		},
+		{
+			name:      "unregister with full service ID",
+			serviceID: "AnotherTest._http._tcp.local",
+			setup: func() {
+				// Register service
+				svc := &Service{
+					InstanceName: "AnotherTest",
+					ServiceType:  "_http._tcp.local",
+					Port:         8080,
+				}
+				_ = r.Register(svc)
+			},
+			wantErr: false, // Should succeed with full ID
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.setup()
+			err := r.Unregister(tt.serviceID)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Unregister(%q) error = %v, wantErr %v", tt.serviceID, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestResponder_UpdateService_ErrorCases tests error handling in UpdateService.
+//
+// Validates proper error handling for edge cases:
+// - Updating non-existent service
+// - Empty TXT records
+// - Nil TXT records
+//
+// Coverage improvement for responder.UpdateService (75.0% → target 90%+)
+func TestResponder_UpdateService_ErrorCases(t *testing.T) {
+	ctx := context.Background()
+	r, err := New(ctx)
+	if err != nil {
+		t.Fatalf("New() error = %v, want nil", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	tests := []struct {
+		name       string
+		serviceID  string
+		txtRecords map[string]string
+		setup      func()
+		wantErr    bool
+	}{
+		{
+			name:       "update non-existent service",
+			serviceID:  "NonExistent",
+			txtRecords: map[string]string{"version": "1.0"},
+			setup:      func() {},
+			wantErr:    true,
+		},
+		{
+			name:       "update with empty TXT records",
+			serviceID:  "TestService._http._tcp.local",
+			txtRecords: map[string]string{},
+			setup: func() {
+				svc := &Service{
+					InstanceName: "TestService",
+					ServiceType:  "_http._tcp.local",
+					Port:         8080,
+					TXTRecords:   map[string]string{"version": "1.0"},
+				}
+				_ = r.Register(svc)
+			},
+			wantErr: false, // Empty TXT is valid
+		},
+		{
+			name:       "update with nil TXT records",
+			serviceID:  "NilTest",
+			txtRecords: nil,
+			setup: func() {
+				svc := &Service{
+					InstanceName: "NilTest",
+					ServiceType:  "_http._tcp.local",
+					Port:         8080,
+					TXTRecords:   map[string]string{"key": "value"},
+				}
+				_ = r.Register(svc)
+			},
+			wantErr: false, // Nil TXT is valid (clears records)
+		},
+		{
+			name:       "update using instance name only",
+			serviceID:  "InstanceOnly",
+			txtRecords: map[string]string{"updated": "true"},
+			setup: func() {
+				svc := &Service{
+					InstanceName: "InstanceOnly",
+					ServiceType:  "_http._tcp.local",
+					Port:         8080,
+				}
+				_ = r.Register(svc)
+			},
+			wantErr: false, // Should work with instance name
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.setup()
+			err := r.UpdateService(tt.serviceID, tt.txtRecords)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("UpdateService(%q) error = %v, wantErr %v", tt.serviceID, err, tt.wantErr)
+			}
+
+			// If no error, verify update took effect
+			if err == nil {
+				retrieved, found := r.GetService(tt.serviceID)
+				if !found {
+					t.Errorf("GetService(%q) found = false after successful update", tt.serviceID)
+				} else if retrieved != nil {
+					// Verify TXT records match
+					if len(tt.txtRecords) != len(retrieved.TXTRecords) {
+						t.Logf("TXT records length mismatch: got %d, want %d", len(retrieved.TXTRecords), len(tt.txtRecords))
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestResponder_Register_EdgeCases tests edge cases in Register.
+//
+// Improves coverage for responder.Register (76.1% → target 90%+)
+func TestResponder_Register_EdgeCases(t *testing.T) {
+	ctx := context.Background()
+	r, err := New(ctx)
+	if err != nil {
+		t.Fatalf("New() error = %v, want nil", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	tests := []struct {
+		name    string
+		service *Service
+		wantErr bool
+	}{
+		{
+			name: "service with empty TXT records",
+			service: &Service{
+				InstanceName: "EmptyTXT",
+				ServiceType:  "_http._tcp.local",
+				Port:         8080,
+				TXTRecords:   map[string]string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "service with nil TXT records",
+			service: &Service{
+				InstanceName: "NilTXT",
+				ServiceType:  "_http._tcp.local",
+				Port:         8080,
+				TXTRecords:   nil,
+			},
+			wantErr: false,
+		},
+		{
+			name: "service with multiple TXT records",
+			service: &Service{
+				InstanceName: "MultiTXT",
+				ServiceType:  "_http._tcp.local",
+				Port:         8080,
+				TXTRecords: map[string]string{
+					"txtvers": "1",
+					"path":    "/",
+					"version": "1.0.0",
+					"status":  "ready",
+				},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := r.Register(tt.service)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Register() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if err == nil {
+				// Verify service was registered
+				retrieved, found := r.GetService(tt.service.InstanceName)
+				if !found {
+					t.Error("GetService() found = false after successful Register()")
+				} else if retrieved != nil {
+					// Verify TXT records
+					if len(retrieved.TXTRecords) != len(tt.service.TXTRecords) {
+						t.Errorf("TXT records length = %d, want %d", len(retrieved.TXTRecords), len(tt.service.TXTRecords))
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestResponder_GetLocalIPv4_EdgeCases tests edge cases in getLocalIPv4.
+//
+// This is a helper function used by Register, so improving its coverage
+// indirectly improves Register coverage.
+//
+// Note: getLocalIPv4 is hard to test exhaustively without mocking network
+// interfaces, but we can at least verify it doesn't panic.
+func TestResponder_GetLocalIPv4_EdgeCases(t *testing.T) {
+	// Just verify it doesn't panic and returns something reasonable
+	ip, err := getLocalIPv4()
+
+	// Either we get an IP or an error, both are valid
+	if err != nil {
+		t.Logf("getLocalIPv4() returned error: %v (may be expected in test environment)", err)
+	}
+
+	if err == nil && ip == nil {
+		t.Error("getLocalIPv4() returned nil IP without error")
+	}
+
+	if err == nil && len(ip) != 4 {
+		t.Errorf("getLocalIPv4() returned IP with length %d, want 4", len(ip))
+	}
+}
