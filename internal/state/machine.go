@@ -34,21 +34,22 @@ import (
 //
 // OPERATION:
 // The machine orchestrates three phases:
-//   1. Probing Phase (RFC 6762 §8.1):
-//      - Duration: ~750ms (3 probes × 250ms intervals)
-//      - Purpose: Detect if another device is already using this name
-//      - Action: Send probe queries (type ANY) and listen for responses
-//      - Outcome: Either no conflict (proceed to announcing) or conflict detected (stop)
 //
-//   2. Announcing Phase (RFC 6762 §8.3):
-//      - Duration: ~1s (2 announcements × 1s intervals)
-//      - Purpose: Inform network that we're claiming this name
-//      - Action: Send unsolicited multicast responses with all records (PTR, SRV, TXT, A)
-//      - Outcome: Service is now established and discoverable
+//  1. Probing Phase (RFC 6762 §8.1):
+//     - Duration: ~750ms (3 probes × 250ms intervals)
+//     - Purpose: Detect if another device is already using this name
+//     - Action: Send probe queries (type ANY) and listen for responses
+//     - Outcome: Either no conflict (proceed to announcing) or conflict detected (stop)
 //
-//   3. Established State:
-//      - Service is fully registered and responding to queries
-//      - Responder handles incoming queries via query handler goroutine
+//  2. Announcing Phase (RFC 6762 §8.3):
+//     - Duration: ~1s (2 announcements × 1s intervals)
+//     - Purpose: Inform network that we're claiming this name
+//     - Action: Send unsolicited multicast responses with all records (PTR, SRV, TXT, A)
+//     - Outcome: Service is now established and discoverable
+//
+//  3. Established State:
+//     - Service is fully registered and responding to queries
+//     - Responder handles incoming queries via query handler goroutine
 //
 // CONFLICT HANDLING:
 // If a conflict is detected during probing (RFC 6762 §8.2):
