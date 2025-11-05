@@ -91,7 +91,7 @@ func main() {
     defer q.Close()
 
     // Query for services
-    results, err := q.Query(ctx, "_http._tcp.local", querier.QueryTypePTR)
+    results, err := q.Query(ctx, "_http._tcp.local", querier.RecordTypePTR)
     if err != nil {
         log.Fatalf("Query failed: %v", err)
     }
@@ -439,7 +439,7 @@ func main() {
     q, _ := querier.New()
     defer q.Close()
 
-    results, _ := q.Query(ctx, "_http._tcp.local", querier.QueryTypePTR)
+    results, _ := q.Query(ctx, "_http._tcp.local", querier.RecordTypePTR)
     for _, rr := range results {
         fmt.Printf("Found: %s\n", rr.Data)
     }

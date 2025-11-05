@@ -23,7 +23,7 @@ Common issues, solutions, and debugging techniques for Beacon.
 
 **Symptoms**:
 ```go
-results, _ := q.Query(ctx, "_http._tcp.local", querier.QueryTypePTR)
+results, _ := q.Query(ctx, "_http._tcp.local", querier.RecordTypePTR)
 fmt.Println(len(results))  // Outputs: 0
 ```
 
@@ -107,13 +107,13 @@ Service types must match exactly (case-sensitive).
 **Check**:
 ```go
 // ❌ WRONG
-q.Query(ctx, "_HTTP._tcp.local", querier.QueryTypePTR)  // Wrong case
+q.Query(ctx, "_HTTP._tcp.local", querier.RecordTypePTR)  // Wrong case
 
 // ❌ WRONG
-q.Query(ctx, "http._tcp.local", querier.QueryTypePTR)   // Missing underscore
+q.Query(ctx, "http._tcp.local", querier.RecordTypePTR)   // Missing underscore
 
 // ✅ CORRECT
-q.Query(ctx, "_http._tcp.local", querier.QueryTypePTR)
+q.Query(ctx, "_http._tcp.local", querier.RecordTypePTR)
 ```
 
 **Fix**: Verify service type name with system tools (see [Debugging Tools](#debugging-tools))
@@ -393,14 +393,14 @@ sudo setcap 'cap_net_bind_service=+ep' ./myapp
    ```go
    // ❌ WRONG - Hammers the network
    for {
-       results, _ := q.Query(ctx, "_http._tcp.local", querier.QueryTypePTR)
+       results, _ := q.Query(ctx, "_http._tcp.local", querier.RecordTypePTR)
    }
    ```
    **Fix**: Add delays between queries
    ```go
    ticker := time.NewTicker(5 * time.Second)
    for range ticker.C {
-       results, _ := q.Query(ctx, "_http._tcp.local", querier.QueryTypePTR)
+       results, _ := q.Query(ctx, "_http._tcp.local", querier.RecordTypePTR)
    }
    ```
 

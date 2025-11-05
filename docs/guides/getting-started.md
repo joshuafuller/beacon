@@ -71,7 +71,7 @@ func main() {
 
     // Query for HTTP services
     fmt.Println("Searching for HTTP services...")
-    results, err := q.Query(ctx, "_http._tcp.local", querier.QueryTypePTR)
+    results, err := q.Query(ctx, "_http._tcp.local", querier.RecordTypePTR)
     if err != nil {
         log.Fatalf("Query failed: %v", err)
     }
@@ -229,7 +229,7 @@ Beacon supports different DNS query types for different use cases:
 **Use case**: Browse for service instances
 
 ```go
-results, _ := q.Query(ctx, "_http._tcp.local", querier.QueryTypePTR)
+results, _ := q.Query(ctx, "_http._tcp.local", querier.RecordTypePTR)
 // Returns: ["My Server._http._tcp.local", "Another Server._http._tcp.local"]
 ```
 
@@ -238,7 +238,7 @@ results, _ := q.Query(ctx, "_http._tcp.local", querier.QueryTypePTR)
 **Use case**: Get hostname and port for a specific service instance
 
 ```go
-results, _ := q.Query(ctx, "My Server._http._tcp.local", querier.QueryTypeSRV)
+results, _ := q.Query(ctx, "My Server._http._tcp.local", querier.RecordTypeSRV)
 // Returns: SRV record with hostname and port
 ```
 
@@ -247,7 +247,7 @@ results, _ := q.Query(ctx, "My Server._http._tcp.local", querier.QueryTypeSRV)
 **Use case**: Get service metadata (version, capabilities, etc.)
 
 ```go
-results, _ := q.Query(ctx, "My Server._http._tcp.local", querier.QueryTypeTXT)
+results, _ := q.Query(ctx, "My Server._http._tcp.local", querier.RecordTypeTXT)
 // Returns: TXT records like ["version=1.0", "path=/api"]
 ```
 
@@ -256,7 +256,7 @@ results, _ := q.Query(ctx, "My Server._http._tcp.local", querier.QueryTypeTXT)
 **Use case**: Resolve hostname to IPv4 address
 
 ```go
-results, _ := q.Query(ctx, "myserver.local", querier.QueryTypeA)
+results, _ := q.Query(ctx, "myserver.local", querier.RecordTypeA)
 // Returns: A record with IPv4 address
 ```
 
@@ -281,7 +281,7 @@ ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 defer cancel()
 
 // 3. Check query/register results
-results, err := q.Query(ctx, "_http._tcp.local", querier.QueryTypePTR)
+results, err := q.Query(ctx, "_http._tcp.local", querier.RecordTypePTR)
 if err != nil {
     // Handle context deadline, network errors, etc.
     return fmt.Errorf("query failed: %w", err)

@@ -60,7 +60,7 @@ Beacon is organized into two main public APIs and several internal layers:
 **Example**:
 ```go
 q, _ := querier.New()
-results, _ := q.Query(ctx, "_http._tcp.local", querier.QueryTypePTR)
+results, _ := q.Query(ctx, "_http._tcp.local", querier.RecordTypePTR)
 ```
 
 **RFC Compliance**: Implements RFC 6762 §5 (Query Transmission)
@@ -169,7 +169,7 @@ type Transport interface {
 **Example**:
 ```go
 // Build a query
-packet := builder.BuildQuery("_http._tcp.local", QueryTypePTR)
+packet := builder.BuildQuery("_http._tcp.local", RecordTypePTR)
 
 // Parse a response
 records, _ := parser.ParseResponse(packet)
@@ -351,12 +351,12 @@ Beacon is built on five constitutional principles:
 ```go
 // Timeout support
 ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-results, err := q.Query(ctx, "_http._tcp.local", querier.QueryTypePTR)
+results, err := q.Query(ctx, "_http._tcp.local", querier.RecordTypePTR)
 
 // Cancellation support
 ctx, cancel := context.WithCancel(context.Background())
 go func() {
-    results, _ := q.Query(ctx, "_http._tcp.local", querier.QueryTypePTR)
+    results, _ := q.Query(ctx, "_http._tcp.local", querier.RecordTypePTR)
 }()
 cancel()  // Query stops immediately
 ```

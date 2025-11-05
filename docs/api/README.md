@@ -74,14 +74,14 @@ defer r.Close()  // Always close
 // With timeout
 ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 defer cancel()
-results, err := q.Query(ctx, "_http._tcp.local", querier.QueryTypePTR)
+results, err := q.Query(ctx, "_http._tcp.local", querier.RecordTypePTR)
 
 // With cancellation
 ctx, cancel := context.WithCancel(context.Background())
 defer cancel()
 
 go func() {
-    results, _ := q.Query(ctx, "_http._tcp.local", querier.QueryTypePTR)
+    results, _ := q.Query(ctx, "_http._tcp.local", querier.RecordTypePTR)
 }()
 
 // Cancel the query
@@ -103,7 +103,7 @@ if err != nil {
 }
 defer q.Close()
 
-results, err := q.Query(ctx, "_http._tcp.local", querier.QueryTypePTR)
+results, err := q.Query(ctx, "_http._tcp.local", querier.RecordTypePTR)
 if err != nil {
     // Handle query errors
     // Common: context timeout, network errors
@@ -133,7 +133,7 @@ import "github.com/joshuafuller/beacon/querier"
 q, _ := querier.New()
 defer q.Close()
 
-results, _ := q.Query(ctx, "_http._tcp.local", querier.QueryTypePTR)
+results, _ := q.Query(ctx, "_http._tcp.local", querier.RecordTypePTR)
 ```
 
 **See**: [Querier API Documentation](querier.md)
@@ -173,10 +173,10 @@ DNS query types for service discovery:
 
 ```go
 const (
-    QueryTypePTR querier.QueryType = 12  // Browse for service instances
-    QueryTypeSRV querier.QueryType = 33  // Get service location (host:port)
-    QueryTypeTXT querier.QueryType = 16  // Get service metadata
-    QueryTypeA   querier.QueryType = 1   // Resolve hostname to IPv4
+    RecordTypePTR querier.RecordType = 12  // Browse for service instances
+    RecordTypeSRV querier.RecordType = 33  // Get service location (host:port)
+    RecordTypeTXT querier.RecordType = 16  // Get service metadata
+    RecordTypeA   querier.RecordType = 1   // Resolve hostname to IPv4
 )
 ```
 
@@ -245,7 +245,7 @@ func main() {
     ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
     defer cancel()
 
-    results, _ := q.Query(ctx, "_http._tcp.local", querier.QueryTypePTR)
+    results, _ := q.Query(ctx, "_http._tcp.local", querier.RecordTypePTR)
 
     for _, rr := range results {
         fmt.Printf("Found: %s\n", rr.Name)
@@ -333,7 +333,7 @@ for i := 0; i < 10; i++ {
     wg.Add(1)
     go func() {
         defer wg.Done()
-        q.Query(ctx, "_http._tcp.local", querier.QueryTypePTR)
+        q.Query(ctx, "_http._tcp.local", querier.RecordTypePTR)
     }()
 }
 wg.Wait()
@@ -373,7 +373,7 @@ Beacon uses `sync.Pool` internally for receive buffers. **No user action require
 ```go
 // ❌ Avoid: hammers the network
 for i := 0; i < 100; i++ {
-    q.Query(ctx, "_http._tcp.local", querier.QueryTypePTR)
+    q.Query(ctx, "_http._tcp.local", querier.RecordTypePTR)
 }
 ```
 
@@ -385,7 +385,7 @@ ticker := time.NewTicker(1 * time.Second)
 defer ticker.Stop()
 
 for range ticker.C {
-    q.Query(ctx, "_http._tcp.local", querier.QueryTypePTR)
+    q.Query(ctx, "_http._tcp.local", querier.RecordTypePTR)
 }
 ```
 
