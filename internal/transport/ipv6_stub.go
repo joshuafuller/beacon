@@ -14,7 +14,8 @@ import (
 //
 // Full implementation will be added in M1.1 (F-9, F-10).
 type UDPv6Transport struct {
-	conn net.PacketConn //nolint:unused // M2: Will be used in full IPv6 implementation
+	//lint:ignore U1000 M2: Will be used in full IPv6 implementation
+	conn net.PacketConn
 }
 
 // NewUDPv6Transport creates a UDP IPv6 multicast transport (stub).
