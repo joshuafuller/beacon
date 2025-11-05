@@ -7,13 +7,35 @@ import (
 	"github.com/joshuafuller/beacon/internal/protocol"
 )
 
-// RecordType represents a DNS record type for querying.
+// RecordType represents a DNS record type for querying per RFC 1035.
+//
+// RFC 1035 §3.2.2: TYPE Values
+// RFC 6762 §5: mDNS Query Types
+//
+// RecordType specifies which kind of resource records to query from the network.
+// Each type serves a specific purpose in DNS-SD service discovery:
+//
+//  - A records: Resolve hostnames to IPv4 addresses
+//  - PTR records: Enumerate service instances of a given type
+//  - SRV records: Get service location (hostname and port)
+//  - TXT records: Retrieve service metadata (key=value pairs)
 //
 // Supported types in M1 (Basic mDNS Querier) per FR-002:
-//   - RecordTypeA: IPv4 address records
-//   - RecordTypePTR: Pointer records (service discovery)
-//   - RecordTypeSRV: Service records (hostname and port)
-//   - RecordTypeTXT: Text records (service metadata)
+//   - RecordTypeA: IPv4 address records (type 1)
+//   - RecordTypePTR: Pointer records (type 12) for service discovery
+//   - RecordTypeSRV: Service records (type 33) for hostname and port
+//   - RecordTypeTXT: Text records (type 16) for service metadata
+//
+// Functional Requirements:
+//   - FR-002: System MUST support querying for A, PTR, SRV, and TXT record types
+//
+// Example:
+//
+//	// Query for IPv4 address
+//	response, _ := q.Query(ctx, "printer.local", querier.RecordTypeA)
+//
+//	// Discover HTTP services
+//	response, _ = q.Query(ctx, "_http._tcp.local", querier.RecordTypePTR)
 type RecordType uint16
 
 const (
@@ -46,10 +68,41 @@ func (r RecordType) String() string {
 	return protocol.RecordType(r).String()
 }
 
-// Response represents the aggregated results from an mDNS query.
+// Response represents the aggregated results from an mDNS query per RFC 6762 §6.
 //
-// Response contains all records received within the timeout window per FR-008.
-// Empty Records slice indicates timeout with no responses (not an error).
+// RFC 6762 §6: Responding
+// RFC 6762 §7: Traffic Reduction (response aggregation)
+//
+// Response contains all unique resource records received within the timeout window.
+// Multiple responders may send identical records; these are deduplicated per FR-007.
+//
+// An empty Records slice indicates no devices responded within the timeout. This is
+// NOT an error condition - it simply means no services/devices were discovered.
+//
+// Functional Requirements:
+//   - FR-007: System MUST deduplicate identical responses from multiple responders
+//   - FR-008: System MUST aggregate responses received within timeout window
+//   - FR-010: System MUST filter answer section records, ignoring authority/additional
+//
+// Example:
+//
+//	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+//	defer cancel()
+//
+//	response, err := q.Query(ctx, "printer.local", querier.RecordTypeA)
+//	if err != nil {
+//	    return err
+//	}
+//
+//	if len(response.Records) == 0 {
+//	    fmt.Println("No devices found (timeout - not an error)")
+//	} else {
+//	    for _, record := range response.Records {
+//	        if ip := record.AsA(); ip != nil {
+//	            fmt.Printf("Found device at %s\n", ip)
+//	        }
+//	    }
+//	}
 type Response struct {
 	// Records contains all discovered resource records.
 	//
@@ -63,8 +116,53 @@ type Response struct {
 
 // ResourceRecord represents a single DNS resource record from an mDNS response.
 //
-// ResourceRecord provides access to both raw DNS fields and type-specific
-// parsed data through helper methods (AsA, AsPTR, AsSRV, AsTXT).
+// RFC 1035 §3.2.1: Resource Record Format
+// RFC 6762 §5: mDNS Resource Record Format
+//
+// ResourceRecord provides access to both raw DNS fields (Name, Type, Class, TTL)
+// and type-specific parsed data through helper methods (AsA, AsPTR, AsSRV, AsTXT).
+//
+// The Data field contains parsed, type-specific information:
+//   - A record: net.IP (IPv4 address)
+//   - PTR record: string (target domain name)
+//   - SRV record: SRVData struct (priority, weight, port, target)
+//   - TXT record: []string (text strings)
+//
+// Wire format (RFC 1035 §3.2.1):
+//
+//	0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5
+//	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+//	|                     NAME                      |
+//	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+//	|                     TYPE                      |
+//	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+//	|                     CLASS                     |
+//	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+//	|                      TTL                      |
+//	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+//	|                   RDLENGTH                    |
+//	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+//	|                     RDATA                     |
+//	+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+//
+// Functional Requirements:
+//   - FR-009: System MUST parse mDNS response messages per RFC 6762 wire format
+//   - FR-012: System MUST decompress DNS names per RFC 1035 §4.1.4
+//
+// Example:
+//
+//	for _, record := range response.Records {
+//	    switch record.Type {
+//	    case querier.RecordTypeA:
+//	        if ip := record.AsA(); ip != nil {
+//	            fmt.Printf("IPv4: %s → %s\n", record.Name, ip)
+//	        }
+//	    case querier.RecordTypePTR:
+//	        if target := record.AsPTR(); target != "" {
+//	            fmt.Printf("Service: %s → %s\n", record.Name, target)
+//	        }
+//	    }
+//	}
 type ResourceRecord struct {
 	// Data contains the type-specific parsed data:
 	//   - A record: net.IP (IPv4 address)

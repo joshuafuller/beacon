@@ -10,13 +10,50 @@ import (
 // Service represents an mDNS service to be registered per RFC 6763.
 //
 // RFC 6763 §4: Service Instance Names
-//   - ServiceType: "_service._proto.domain" (e.g., "_http._tcp.local")
-//   - InstanceName: Human-readable service instance name (1-63 octets)
-//   - Port: Service port (1-65535)
-//   - TXTRecords: Optional metadata as key-value pairs
+// RFC 6763 §6: Text Record Semantics
 //
-// FR-026: System MUST validate service registration parameters
-// T031: Implement Service struct
+// Service encapsulates all information needed to advertise a network service via mDNS.
+// The service name follows DNS-SD conventions with three components:
+//   1. InstanceName: Human-readable label (e.g., "My Printer")
+//   2. ServiceType: Protocol identifier (e.g., "_ipp._tcp")
+//   3. Domain: Always ".local" for mDNS
+//
+// Full DNS name: "My Printer._ipp._tcp.local"
+//
+// Wire Format (DNS-SD PTR/SRV/TXT Records):
+//
+//	PTR Record:  _ipp._tcp.local. → My Printer._ipp._tcp.local.
+//	SRV Record:  My Printer._ipp._tcp.local. → hostname.local:631
+//	TXT Record:  My Printer._ipp._tcp.local. → ["version=1.0", "path=/"]
+//	A Record:    hostname.local. → 192.168.1.100
+//
+// Functional Requirements:
+//   - FR-026: System MUST validate service registration parameters
+//   - US-1: Service registration with probing/announcing
+//   - T031: Service struct design
+//
+// Validation Constraints (per RFC 6763 §4.3, RFC 1035 §2.3.4):
+//   - InstanceName: 1-63 octets (UTF-8)
+//   - ServiceType: Must match "_service._proto.local" pattern
+//   - Port: 1-65535
+//   - TXTRecords: Total size ≤1300 bytes (recommended ≤200 bytes)
+//
+// Example:
+//
+//	service := &responder.Service{
+//	    InstanceName: "My Web Server",
+//	    ServiceType:  "_http._tcp.local",
+//	    Port:         8080,
+//	    TXTRecords:   map[string]string{
+//	        "version": "1.0",
+//	        "path":    "/api",
+//	    },
+//	    Hostname:     "server.local",  // Optional - defaults to system hostname
+//	}
+//
+//	if err := service.Validate(); err != nil {
+//	    log.Fatalf("Invalid service: %v", err)
+//	}
 type Service struct {
 	// InstanceName is the human-readable service instance name (e.g., "My Printer").
 	// RFC 1035 §2.3.4: Labels are 1-63 octets.

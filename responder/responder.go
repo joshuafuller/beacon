@@ -1,3 +1,122 @@
+// Package responder implements mDNS responder functionality for service registration
+// and query response per RFC 6762.
+//
+// ## WHY THIS PACKAGE EXISTS
+//
+// Applications need to advertise network services (HTTP servers, printers, IoT devices)
+// so they can be discovered by other devices on the local network without centralized
+// DNS servers or manual configuration. This package provides RFC 6762/6763 compliant
+// mDNS responder implementation, enabling zero-configuration service discovery on
+// local networks.
+//
+// ## PRIMARY TECHNICAL AUTHORITY
+//
+// - RFC 6762 §5-§15: Multicast DNS protocol specification (message format, probing, announcing, conflict resolution)
+// - RFC 6763 §4-§9: DNS-Based Service Discovery (service naming, TXT records, service enumeration)
+// - RFC 1035 §3-§4: Domain Names - Implementation and Specification (DNS message format, name encoding)
+// - ADR-005: State machine architecture for probing/announcing phases
+//
+// ## DESIGN RATIONALE
+//
+// The responder uses a goroutine-per-service architecture (ADR-005) to isolate state
+// machines and simplify concurrency management. Each registered service progresses
+// through independent states (Initial → Probing → Announcing → Established) without
+// complex global locking. This design:
+//
+//  1. Enables concurrent service registration without lock contention
+//  2. Simplifies conflict detection (isolated per-service state)
+//  3. Provides clean cancellation semantics via context
+//  4. Scales to 100+ concurrent services (tested in benchmarks)
+//
+// The state machine orchestrates the two-phase registration process mandated by
+// RFC 6762 §8: probing to detect name conflicts (~750ms with 3 probes @ 250ms spacing),
+// then announcing to advertise the service (~1s with 2 announcements @ 1s spacing).
+//
+// ## RFC COMPLIANCE
+//
+// This package implements the following RFC requirements:
+//
+// - RFC 6762 §5: mDNS message format and multicast address (224.0.0.251:5353)
+// - RFC 6762 §6: Query response with PTR, SRV, TXT, A/AAAA records
+// - RFC 6762 §7.1: Known-answer suppression to reduce network traffic
+// - RFC 6762 §8.1: Probing phase (3 probes, 250ms apart) for conflict detection
+// - RFC 6762 §8.2: Simultaneous probe tiebreaking via lexicographic comparison
+// - RFC 6762 §8.3: Announcing phase (2 announcements, 1s apart) to advertise service
+// - RFC 6762 §8.4: TXT record updates without re-probing (metadata changes only)
+// - RFC 6762 §9: Conflict-based renaming with numeric suffix ("-2", "-3", etc.)
+// - RFC 6762 §10: TTL values (75 minutes default, 10 seconds for goodbye packets)
+// - RFC 6762 §10.2: Goodbye packets (TTL=0) for graceful shutdown
+// - RFC 6763 §4: Service instance naming (_service._proto.local format)
+// - RFC 6763 §4.3: DNS name length limits (labels ≤63 bytes, domains ≤255 bytes)
+// - RFC 6763 §6: Service enumeration via PTR queries
+// - RFC 6763 §7: Service type format validation (_service._tcp or _udp)
+//
+// ## KEY CONCEPTS
+//
+// - Service: An instance of a network service with name, type, port, and metadata.
+//   Example: "My Printer" (_ipp._tcp.local, port 631)
+//
+// - Probing: Conflict detection phase where the responder sends 3 probe queries to
+//   check if the desired service name is already in use. Takes ~750ms (RFC 6762 §8.1).
+//
+// - Announcing: Broadcasting phase where the responder sends 2 unsolicited multicast
+//   announcements to advertise the service after successful probing. Takes ~1s (RFC 6762 §8.3).
+//
+// - Conflict: Occurs when another device is using the same service name. Detected during
+//   probing via simultaneous probe tiebreaking (RFC 6762 §8.2). Triggers automatic
+//   rename with numeric suffix.
+//
+// - Goodbye: Multicast announcement with TTL=0 sent during service unregistration to
+//   immediately flush the service from peer caches (RFC 6762 §10.2).
+//
+// - Service Type: DNS-SD service type following "_service._proto.local" format where
+//   service is alphanumeric+hyphens and proto is _tcp or _udp (RFC 6763 §7).
+//
+// ## EXAMPLE USAGE
+//
+// Register a single service:
+//
+//	ctx := context.Background()
+//	resp, err := responder.New(ctx, responder.WithHostname("mydevice.local"))
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	defer resp.Close()
+//
+//	service := &responder.Service{
+//	    InstanceName: "My Web Server",
+//	    ServiceType:  "_http._tcp.local",
+//	    Port:         8080,
+//	    TXTRecords:   map[string]string{"version": "1.0", "path": "/"},
+//	}
+//
+//	if err := resp.Register(service); err != nil {
+//	    log.Fatal(err)
+//	}
+//	// Service is now discoverable on the network
+//
+// Handle name conflicts with automatic retry:
+//
+//	// If "My Web Server" is taken, Register() automatically retries with
+//	// "My Web Server-2", "My Web Server-3", etc. (up to 10 attempts)
+//	if err := resp.Register(service); err != nil {
+//	    log.Fatalf("Failed after 10 rename attempts: %v", err)
+//	}
+//
+// Update service metadata without re-probing:
+//
+//	// Changing TXT records doesn't require re-probing (RFC 6762 §8.4)
+//	err = resp.UpdateService("My Web Server", map[string]string{
+//	    "version": "2.0",
+//	    "path":    "/api",
+//	})
+//
+// Unregister service with goodbye packets:
+//
+//	// Sends TTL=0 packets to flush from peer caches
+//	if err := resp.Unregister("My Web Server"); err != nil {
+//	    log.Fatal(err)
+//	}
 package responder
 
 import (
@@ -14,10 +133,56 @@ import (
 	"github.com/joshuafuller/beacon/internal/transport"
 )
 
-// Responder manages mDNS service registration and response per RFC 6762.
+// Responder manages mDNS service registration and query response per RFC 6762.
 //
-// T035: Responder struct
-// T080: Added query handler goroutine support
+// RFC 6762 §5-§15: Multicast DNS Responder Implementation
+//
+// Responder orchestrates the complete mDNS responder lifecycle:
+//  1. Service registration with probing/announcing (RFC 6762 §8)
+//  2. Query handling and response construction (RFC 6762 §6)
+//  3. Conflict detection and automatic renaming (RFC 6762 §8.2, §9)
+//  4. Graceful shutdown with goodbye packets (RFC 6762 §10.2)
+//
+// Each registered service runs through an independent state machine:
+//   Initial → Probing (~750ms) → Announcing (~1s) → Established
+//
+// The responder maintains a thread-safe service registry and runs a background
+// goroutine to receive and handle mDNS queries from the network.
+//
+// Functional Requirements:
+//   - FR-201: Service registration with conflict detection
+//   - FR-202: Context-aware cancellation
+//   - FR-203: Multi-service support
+//   - FR-204: Query response with RFC-compliant records
+//   - US-1: Service registration
+//   - US-2: Name conflict resolution
+//   - US-3: Response to queries
+//   - US-4: Cache coherency (known-answer suppression)
+//   - US-5: Multi-service support
+//
+// Design Decisions:
+//   - R001: Goroutine-per-service architecture for isolation
+//   - ADR-005: State machine pattern for lifecycle management
+//   - T035: Responder struct design
+//   - T080: Background query handler goroutine
+//
+// Example:
+//
+//	ctx := context.Background()
+//	resp, err := responder.New(ctx)
+//	if err != nil {
+//	    return err
+//	}
+//	defer resp.Close()
+//
+//	service := &responder.Service{
+//	    InstanceName: "My Service",
+//	    ServiceType:  "_http._tcp.local",
+//	    Port:         8080,
+//	}
+//	if err := resp.Register(service); err != nil {
+//	    return err
+//	}
 type Responder struct {
 	ctx              context.Context
 	transport        transport.Transport
@@ -39,10 +204,54 @@ type Responder struct {
 	lastAnnouncedRecords []*ResourceRecord // Last record set announced
 }
 
-// New creates a new mDNS responder.
+// New creates a new mDNS responder with optional configuration.
 //
-// T036: Responder.New() implementation
-// T080: Start query handler goroutine
+// RFC 6762 §5: Multicast DNS Message Format
+// RFC 6762 §6: Responding to Queries
+//
+// New initializes the mDNS responder infrastructure:
+//  1. Creates UDP multicast transport (224.0.0.251:5353)
+//  2. Initializes thread-safe service registry
+//  3. Starts background query handler goroutine
+//  4. Applies functional options for configuration
+//
+// The responder is ready to register services immediately after New() returns.
+// Services registered via Register() will undergo probing and announcing before
+// becoming discoverable on the network.
+//
+// Parameters:
+//   - ctx: Lifecycle context for the responder. Cancelling this context stops
+//     the query handler goroutine and prevents new registrations.
+//   - opts: Optional functional options (e.g., WithHostname) for configuration
+//
+// Returns:
+//   - *Responder: Configured responder instance ready for service registration
+//   - error: NetworkError if transport creation fails, ValidationError if options invalid
+//
+// Functional Requirements:
+//   - FR-201: Initialize responder with RFC-compliant transport
+//   - FR-202: Context-aware lifecycle management
+//   - T036: Responder.New() implementation
+//   - T080: Background query handler goroutine
+//
+// Example:
+//
+//	ctx := context.Background()
+//	resp, err := responder.New(ctx, responder.WithHostname("mydevice.local"))
+//	if err != nil {
+//	    return fmt.Errorf("failed to create responder: %w", err)
+//	}
+//	defer resp.Close()
+//
+//	// Responder is now ready to register services
+//	service := &responder.Service{
+//	    InstanceName: "My Printer",
+//	    ServiceType:  "_ipp._tcp.local",
+//	    Port:         631,
+//	}
+//	if err := resp.Register(service); err != nil {
+//	    return err
+//	}
 func New(ctx context.Context, opts ...Option) (*Responder, error) {
 	// Get system hostname if not provided
 	hostname, err := os.Hostname()
