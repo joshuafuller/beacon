@@ -55,8 +55,7 @@ linters:
         - (net.Listener).Close
 
     govet:
-      enable:
-        - shadow
+      enable-all: true  # Enable all optional go vet analyzers
       settings:
         shadow:
           strict: true
@@ -106,7 +105,8 @@ issues:
     - path: _stub\.go$
       linters:
         - unused
-      text: "is unused"
+        - staticcheck
+      text: "is unused|field conn is unused"
 
     # Exclude RFC comment lines from line length check
     - linters:
