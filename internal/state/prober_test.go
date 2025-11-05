@@ -374,3 +374,119 @@ func TestProber_BuildQuery_Error(t *testing.T) {
 		t.Logf("BuildQuery succeeded unexpectedly, message length: %d", len(msg))
 	}
 }
+
+// TestCompareBytesLexicographically tests lexicographic byte comparison.
+//
+// RFC 6762 §8.2.1: Tie-breaking uses lexicographic comparison of probe records.
+// This is critical for simultaneous probe conflict resolution.
+//
+// Coverage improvement: compareBytesLexicographically (77.8% → target 100%)
+func TestCompareBytesLexicographically(t *testing.T) {
+	tests := []struct {
+		name    string
+		a       []byte
+		b       []byte
+		wantWin bool // true if a > b (we win)
+	}{
+		{
+			name:    "a wins - first byte greater",
+			a:       []byte{200, 1, 1, 1},
+			b:       []byte{100, 1, 1, 1},
+			wantWin: true,
+		},
+		{
+			name:    "b wins - first byte greater",
+			a:       []byte{100, 1, 1, 1},
+			b:       []byte{200, 1, 1, 1},
+			wantWin: false,
+		},
+		{
+			name:    "a wins - second byte decides",
+			a:       []byte{169, 254, 200, 50},
+			b:       []byte{169, 254, 99, 200},
+			wantWin: true, // 200 > 99 in third byte
+		},
+		{
+			name:    "b wins - third byte decides",
+			a:       []byte{169, 254, 1, 255},
+			b:       []byte{169, 254, 2, 1},
+			wantWin: false, // 1 < 2 in third byte
+		},
+		{
+			name:    "a wins - longer when prefixes match",
+			a:       []byte{192, 168, 1, 100, 5},
+			b:       []byte{192, 168, 1, 100},
+			wantWin: true, // len(a)=5 > len(b)=4
+		},
+		{
+			name:    "b wins - longer when prefixes match",
+			a:       []byte{10, 0, 0},
+			b:       []byte{10, 0, 0, 1},
+			wantWin: false, // len(a)=3 < len(b)=4
+		},
+		{
+			name:    "identical - no winner",
+			a:       []byte{192, 168, 1, 1},
+			b:       []byte{192, 168, 1, 1},
+			wantWin: false, // equal length, equal bytes
+		},
+		{
+			name:    "empty slices - no winner",
+			a:       []byte{},
+			b:       []byte{},
+			wantWin: false, // both empty
+		},
+		{
+			name:    "a has data, b empty - a wins",
+			a:       []byte{1},
+			b:       []byte{},
+			wantWin: true, // len(a)=1 > len(b)=0
+		},
+		{
+			name:    "a empty, b has data - b wins",
+			a:       []byte{},
+			b:       []byte{1},
+			wantWin: false, // len(a)=0 < len(b)=1
+		},
+		{
+			name:    "single byte - a wins",
+			a:       []byte{255},
+			b:       []byte{0},
+			wantWin: true, // 255 > 0
+		},
+		{
+			name:    "single byte - b wins",
+			a:       []byte{0},
+			b:       []byte{255},
+			wantWin: false, // 0 < 255
+		},
+		{
+			name:    "max values - a wins by length",
+			a:       []byte{255, 255, 255, 255, 1},
+			b:       []byte{255, 255, 255, 255},
+			wantWin: true, // all bytes match, a is longer
+		},
+		{
+			name:    "ip addresses - a wins",
+			a:       []byte{192, 168, 2, 1},  // 192.168.2.1
+			b:       []byte{192, 168, 1, 255}, // 192.168.1.255
+			wantWin: true,                     // 2 > 1 in third octet
+		},
+		{
+			name:    "last byte decides",
+			a:       []byte{1, 2, 3, 5},
+			b:       []byte{1, 2, 3, 4},
+			wantWin: true, // 5 > 4 in last byte
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := compareBytesLexicographically(tt.a, tt.b)
+			if got != tt.wantWin {
+				t.Errorf("compareBytesLexicographically(%v, %v) = %v, want %v",
+					tt.a, tt.b, got, tt.wantWin)
+			}
+		})
+	}
+}

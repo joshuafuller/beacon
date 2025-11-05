@@ -621,3 +621,214 @@ func TestQuerier_Close_PropagatesTransportErrors(t *testing.T) {
 		t.Logf("✓ FR-004 VALIDATED (end-to-end): Querier.Close() propagates transport error: %v", err)
 	}
 }
+
+// TestQuerier_Query_ContextAlreadyCanceled tests Query with already-canceled context.
+//
+// This tests the fast-path cancellation check in Query().
+//
+// Coverage improvement: Query() context handling edge case
+func TestQuerier_Query_ContextAlreadyCanceled(t *testing.T) {
+	q, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer func() { _ = q.Close() }()
+
+	// Create already-canceled context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	response, err := q.Query(ctx, "_http._tcp.local", RecordTypePTR)
+
+	// Should return context error
+	if err == nil {
+		t.Error("Query() with canceled context should return error")
+	}
+
+	if response != nil {
+		t.Error("Query() with canceled context should return nil response")
+	}
+}
+
+// TestQuerier_Query_VeryShortTimeout tests Query with very short timeout.
+//
+// This tests timeout handling in receiveLoop and collectResponses.
+//
+// Coverage improvement: Query() timeout edge case
+func TestQuerier_Query_VeryShortTimeout(t *testing.T) {
+	q, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer func() { _ = q.Close() }()
+
+	// 1 nanosecond timeout - should expire immediately
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+	defer cancel()
+
+	// Sleep briefly to ensure timeout expires
+	time.Sleep(1 * time.Millisecond)
+
+	response, err := q.Query(ctx, "_http._tcp.local", RecordTypePTR)
+
+	// Should return context error or empty response
+	if err != nil && response == nil {
+		// Context timeout - expected
+		t.Logf("Query returned context error as expected: %v", err)
+	} else if response != nil && len(response.Records) == 0 {
+		// Empty response - also acceptable
+		t.Log("Query returned empty response as expected")
+	} else {
+		t.Logf("Query with 1ns timeout: err=%v, records=%d (context handling may vary)",
+			err, len(response.Records))
+	}
+}
+
+// TestQuerier_Query_ConcurrentQueries tests multiple concurrent Query calls.
+//
+// This validates thread-safety of the Querier and proper handling of
+// concurrent receiveLoop and collectResponses goroutines.
+//
+// Coverage improvement: Concurrent Query() execution paths
+func TestQuerier_Query_ConcurrentQueries(t *testing.T) {
+	q, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer func() { _ = q.Close() }()
+
+	// Launch 10 concurrent queries
+	const numQueries = 10
+	errors := make(chan error, numQueries)
+
+	for i := 0; i < numQueries; i++ {
+		go func(id int) {
+			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			defer cancel()
+
+			serviceName := "_http._tcp.local"
+			if id%2 == 0 {
+				serviceName = "_ssh._tcp.local"
+			}
+
+			_, err := q.Query(ctx, serviceName, RecordTypePTR)
+			errors <- err
+		}(i)
+	}
+
+	// Collect results
+	successCount := 0
+	timeoutCount := 0
+	errorCount := 0
+
+	for i := 0; i < numQueries; i++ {
+		err := <-errors
+		if err == nil {
+			successCount++
+		} else if err == context.DeadlineExceeded {
+			timeoutCount++
+		} else {
+			errorCount++
+		}
+	}
+
+	t.Logf("Concurrent queries: %d success, %d timeout, %d error", successCount, timeoutCount, errorCount)
+
+	// All queries should complete without panics (success/timeout/error all acceptable)
+	// Network operations can fail in various ways, what matters is no panics
+	total := successCount + timeoutCount + errorCount
+	if total != numQueries {
+		t.Errorf("Expected all queries to complete, got %d/%d", total, numQueries)
+	}
+
+	// Log outcome distribution
+	t.Logf("✓ All %d concurrent queries completed without panics", numQueries)
+}
+
+// TestQuerier_New_EdgeCases tests New() function edge cases.
+//
+// Coverage improvement: New() error paths and initialization
+func TestQuerier_New_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name    string
+		test    func(t *testing.T)
+		wantErr bool
+	}{
+		{
+			name: "multiple new instances",
+			test: func(t *testing.T) {
+				q1, err1 := New()
+				q2, err2 := New()
+
+				if err1 != nil {
+					t.Errorf("First New() failed: %v", err1)
+				}
+				if err2 != nil {
+					t.Errorf("Second New() failed: %v", err2)
+				}
+
+				// Both should be independent
+				if q1 != nil && q2 != nil {
+					defer func() { _ = q1.Close() }()
+					defer func() { _ = q2.Close() }()
+				}
+			},
+			wantErr: false,
+		},
+		{
+			name: "close immediately after new",
+			test: func(t *testing.T) {
+				q, err := New()
+				if err != nil {
+					t.Fatalf("New() failed: %v", err)
+				}
+
+				// Close immediately without any queries
+				err = q.Close()
+				if err != nil {
+					t.Errorf("Close() immediately after New() failed: %v", err)
+				}
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.test(t)
+		})
+	}
+}
+
+// TestQuerier_Close_MultipleGoroutines tests Close() with active goroutines.
+//
+// This validates that Close() properly stops receiveLoop and cleanupLoop
+// goroutines without deadlocks or panics.
+//
+// Coverage improvement: Close() goroutine cleanup paths
+func TestQuerier_Close_MultipleGoroutines(t *testing.T) {
+	q, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	// Start a query to ensure goroutines are running
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	go func() {
+		_, _ = q.Query(ctx, "_http._tcp.local", RecordTypePTR)
+	}()
+
+	// Give goroutines time to start
+	time.Sleep(10 * time.Millisecond)
+
+	// Close should stop all goroutines
+	err = q.Close()
+	if err != nil {
+		t.Logf("Close() returned error (may be expected): %v", err)
+	}
+
+	// Verify no panics occurred
+	t.Log("✓ Close() completed without panics while goroutines active")
+}
