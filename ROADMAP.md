@@ -18,15 +18,15 @@ Beacon follows a milestone-based development approach (M1-M6), delivering workin
 - ✅ Production-ready at every milestone
 
 **Reference Documents**:
-- [Constitution v1.1.0](/.specify/memory/constitution.md) - Governance and principles
-- [Beacon Foundations](/.specify/specs/BEACON_FOUNDATIONS.md) - DNS/mDNS/DNS-SD conceptual foundation
-- [Architectural Pitfalls & Mitigations](/docs/ARCHITECTURAL_PITFALLS_AND_MITIGATIONS.md) - Security and resilience requirements
+- [Constitution v1.1.0](.specify/memory/constitution.md) - Governance and principles
+- [Beacon Foundations](.specify/specs/BEACON_FOUNDATIONS.md) - DNS/mDNS/DNS-SD conceptual foundation
+- [Architectural Pitfalls & Mitigations](docs/ARCHITECTURAL_PITFALLS_AND_MITIGATIONS.md) - Security and resilience requirements
 
 **Compliance & Status** (Foundation Phase):
-- [Compliance Dashboard](/docs/COMPLIANCE_DASHBOARD.md) - Single-page project status overview (<2 min read)
-- [RFC Compliance Matrix](/docs/RFC_COMPLIANCE_MATRIX.md) - Section-by-section RFC 6762 implementation (52.8% complete)
-- [Functional Requirements Matrix](/docs/FUNCTIONAL_REQUIREMENTS_MATRIX.md) - 61 FRs with traceability to code and tests
-- [Foundation Completion Report](/docs/FOUNDATION_COMPLETE.md) - M1→M1-R→M1.1 narrative
+- [Compliance Dashboard](docs/COMPLIANCE_DASHBOARD.md) - Single-page project status overview (<2 min read)
+- [RFC Compliance Matrix](docs/RFC_COMPLIANCE_MATRIX.md) - Section-by-section RFC 6762 implementation (52.8% complete)
+- [Functional Requirements Matrix](docs/FUNCTIONAL_REQUIREMENTS_MATRIX.md) - 61 FRs with traceability to code and tests
+- Foundation completion narrative (publication pending)
 
 ---
 
@@ -48,7 +48,7 @@ Beacon follows a milestone-based development approach (M1-M6), delivering workin
 
 **Deliverable**: Complete specifications ready for implementation ✅
 
-**Documentation**: [Phase 0 Complete Report](/docs/PHASE_0_COMPLETE.md)
+**Documentation**: Phase 0 completion report (pending publication)
 
 ---
 
@@ -82,9 +82,9 @@ Beacon follows a milestone-based development approach (M1-M6), delivering workin
 **Deliverable**: Production-ready query-only mDNS library ✅
 
 **Documentation**:
-- [M1 Completion Summary](/tmp/m1_completion_summary.txt)
-- [Spec: 002-mdns-querier](/specs/002-mdns-querier/spec.md)
-- [Tasks: 107/107 complete](/specs/002-mdns-querier/tasks.md)
+- M1 completion summary (see [specs/002-mdns-querier/tasks.md](specs/002-mdns-querier/tasks.md))
+- [Spec: 002-mdns-querier](specs/002-mdns-querier/spec.md)
+- [Tasks: 107/107 complete](specs/002-mdns-querier/tasks.md)
 
 **Known Limitations** (addressed in M1.1):
 - ⚠️ Uses `net.ListenMulticastUDP()` (Go Issues #73484, #34728)
@@ -120,12 +120,12 @@ Beacon follows a milestone-based development approach (M1-M6), delivering workin
 **Deliverable**: Clean internal architecture ready for M1.1 socket/interface work ✅
 
 **Documentation**:
-- [Completion Report](/archive/m1-refactoring/reports/REFACTORING_COMPLETE.md)
-- [Completion Validation](/archive/m1-refactoring/reports/COMPLETION_VALIDATION.md)
-- [Flaky Test Fix Analysis](/archive/m1-refactoring/reports/FLAKY_TEST_FIX.md)
-- [ADR-001: Transport Interface](/docs/decisions/001-transport-interface-abstraction.md)
-- [ADR-002: Buffer Pooling](/docs/decisions/002-buffer-pooling-pattern.md)
-- [ADR-003: Test Timing Tolerance](/docs/decisions/003-integration-test-timing-tolerance.md)
+- [Plan Completion Summary](specs/003-m1-refactoring/PLAN_COMPLETE.md)
+- [Baseline Metrics](specs/003-m1-refactoring/baseline_metrics.md)
+- [Refactoring Research Notes](specs/003-m1-refactoring/research.md)
+- [ADR-001: Transport Interface](docs/decisions/001-transport-interface-abstraction.md)
+- [ADR-002: Buffer Pooling](docs/decisions/002-buffer-pooling-pattern.md)
+- [ADR-003: Test Timing Tolerance](docs/decisions/003-integration-test-timing-tolerance.md)
 
 **Impact**: Established transport interface foundation that M1.1 will extend with platform-specific socket options and interface management.
 
@@ -231,12 +231,12 @@ Beacon follows a milestone-based development approach (M1-M6), delivering workin
 
 ### Documentation
 
-- [Spec: 004-m1-1-architectural-hardening](/specs/004-m1-1-architectural-hardening/spec.md)
-- [Tasks: 100/103 complete](/specs/004-m1-1-architectural-hardening/tasks.md) (3 deferred: T083, T084, T100)
-- [Incomplete Tasks Analysis](/specs/004-m1-1-architectural-hardening/INCOMPLETE_TASKS_ANALYSIS.md)
-- F-9: Transport Layer & Socket Configuration (.specify/specs/)
-- F-10: Network Interface Management (.specify/specs/)
-- F-11: Security Architecture (.specify/specs/)
+- [Spec: 004-m1-1-architectural-hardening](specs/004-m1-1-architectural-hardening/spec.md)
+- [Tasks: 100/103 complete](specs/004-m1-1-architectural-hardening/tasks.md) (3 deferred: T083, T084, T100)
+- [Incomplete Tasks Analysis](specs/004-m1-1-architectural-hardening/INCOMPLETE_TASKS_ANALYSIS.md)
+- [F-9: Transport Layer & Socket Configuration](.specify/specs/F-9-transport-layer-socket-configuration.md)
+- [F-10: Network Interface Management](.specify/specs/F-10-network-interface-management.md)
+- [F-11: Security Architecture](.specify/specs/F-11-security-architecture.md)
 
 **Impact**: Established production-grade foundation that M2 responder will build upon. All architectural pitfalls from M1 addressed
 
@@ -581,24 +581,24 @@ v1.0.0 Release 🎉
 ## References
 
 **Project Governance**:
-- [Constitution v1.1.0](/.specify/memory/constitution.md)
-- [Beacon Foundations](/.specify/specs/BEACON_FOUNDATIONS.md)
-- [Architectural Pitfalls & Mitigations](/docs/ARCHITECTURAL_PITFALLS_AND_MITIGATIONS.md)
+- [Constitution v1.1.0](.specify/memory/constitution.md)
+- [Beacon Foundations](.specify/specs/BEACON_FOUNDATIONS.md)
+- [Architectural Pitfalls & Mitigations](docs/ARCHITECTURAL_PITFALLS_AND_MITIGATIONS.md)
 
 **Compliance & Status**:
-- [Compliance Dashboard](/docs/COMPLIANCE_DASHBOARD.md) - Single-page status overview
-- [RFC Compliance Matrix](/docs/RFC_COMPLIANCE_MATRIX.md) - Section-by-section implementation status
-- [Functional Requirements Matrix](/docs/FUNCTIONAL_REQUIREMENTS_MATRIX.md) - 61 FRs with traceability
-- [Foundation Completion Report](/docs/FOUNDATION_COMPLETE.md) - M1→M1-R→M1.1 narrative
+- [Compliance Dashboard](docs/COMPLIANCE_DASHBOARD.md) - Single-page status overview
+- [RFC Compliance Matrix](docs/RFC_COMPLIANCE_MATRIX.md) - Section-by-section implementation status
+- [Functional Requirements Matrix](docs/FUNCTIONAL_REQUIREMENTS_MATRIX.md) - 61 FRs with traceability
+- Foundation completion narrative (publication pending)
 
 **Protocol Specifications**:
 - [RFC 6762: Multicast DNS](https://www.rfc-editor.org/rfc/rfc6762.html)
 - [RFC 6763: DNS-Based Service Discovery](https://www.rfc-editor.org/rfc/rfc6763.html)
 
 **Milestone Completion Reports**:
-- [Phase 0 Completion Report](/docs/PHASE_0_COMPLETE.md)
-- [M1 Completion Report](/tmp/m1_completion_summary.txt)
-- [M1-Refactoring Completion Report](/archive/m1-refactoring/reports/REFACTORING_COMPLETE.md)
+- Phase 0 completion report (pending publication)
+- M1 completion summary (see [specs/002-mdns-querier/tasks.md](specs/002-mdns-querier/tasks.md) for final checklist)
+- M1-Refactoring summary (see [specs/003-m1-refactoring/PLAN_COMPLETE.md](specs/003-m1-refactoring/PLAN_COMPLETE.md))
 
 ---
 

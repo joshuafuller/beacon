@@ -122,7 +122,7 @@ All F-specs now use correct relative paths:
 - ✅ RFCs: `../../RFC%20Docs/RFC-6762-Multicast-DNS.txt`
 - ✅ RFCs: `../../RFC%20Docs/RFC-6763-DNS-SD.txt`
 - ✅ Constitution: `../../.specify/memory/constitution.md`
-- ✅ BEACON_FOUNDATIONS: `../../docs/BEACON_FOUNDATIONS.md`
+- ✅ BEACON_FOUNDATIONS: `../../.specify/specs/BEACON_FOUNDATIONS.md`
 - ✅ Architecture specs: `./F-#-spec-name.md`
 
 ### Content Consistency

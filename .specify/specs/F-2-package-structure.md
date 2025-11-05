@@ -11,7 +11,7 @@
 - RFC 6762 (Multicast DNS)
 - RFC 6763 (DNS-Based Service Discovery)
 
-**Governance**: Development governed by [Beacon Constitution v1.0.0](../../.specify/memory/constitution.md)
+**Governance**: Development governed by [Beacon Constitution v1.0.0](../memory/constitution.md)
 
 **RFC Validation**: Completed 2025-11-01. Package structure validated against RFC 6762 and RFC 6763 requirements for protocol layering and separation of concerns. No blocking issues identified.
 
@@ -562,8 +562,8 @@ Changes to this specification require:
 ## References
 
 **Constitutional**:
-- [Beacon Constitution v1.0.0](../../.specify/memory/constitution.md)
-- [BEACON_FOUNDATIONS v1.1](../../docs/BEACON_FOUNDATIONS.md)
+- [Beacon Constitution v1.0.0](../memory/constitution.md)
+- [BEACON_FOUNDATIONS v1.1](./BEACON_FOUNDATIONS.md)
 
 **RFCs**:
 - [RFC 6762](../../RFC%20Docs/RFC-6762-Multicast-DNS.txt) - Multicast DNS

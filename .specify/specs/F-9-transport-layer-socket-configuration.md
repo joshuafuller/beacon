@@ -13,7 +13,7 @@
 - Go Issue #73484 (ListenMulticastUDP packet filtering bug)
 - Go Issue #34728 (ListenPacket multicast binding bug)
 
-**Governance**: Development governed by [Beacon Constitution v1.1.0](../../.specify/memory/constitution.md)
+**Governance**: Development governed by [Beacon Constitution v1.1.0](../memory/constitution.md)
 
 **RFC Validation**: Pending. This specification implements RFC 6762 §5 multicast requirements using platform-specific socket options unavailable in Go standard library.
 
@@ -815,7 +815,7 @@ Changes to this specification require:
 ## References
 
 **Constitutional**:
-- [Beacon Constitution v1.1.0](../../.specify/memory/constitution.md) - Principle V (Dependencies)
+- [Beacon Constitution v1.1.0](../memory/constitution.md) - Principle V (Dependencies)
 
 **Architectural**:
 - [ARCHITECTURAL_PITFALLS_AND_MITIGATIONS.md](../../docs/ARCHITECTURAL_PITFALLS_AND_MITIGATIONS.md) - §1 (Socket Configuration)

@@ -43,10 +43,10 @@ This feature audits and updates the existing 7 F-series architecture specificati
   - Abort if any missing
 
 - [X] T003 Verify foundation documents exist
-  - Check: `RFC Docs/RFC-6762-Multicast-DNS.txt` exists (184 KB)
-  - Check: `RFC Docs/RFC-6763-DNS-SD.txt` exists (125 KB)
+  - Check: `RFC%20Docs/RFC-6762-Multicast-DNS.txt` exists (184 KB)
+  - Check: `RFC%20Docs/RFC-6763-DNS-SD.txt` exists (125 KB)
   - Check: `.specify/memory/constitution.md` exists (v1.0.0)
-  - Check: `docs/BEACON_FOUNDATIONS.md` exists (v1.1)
+  - Check: `.specify/specs/BEACON_FOUNDATIONS.md` exists (v1.1)
   - Abort if any missing
 
 ---
@@ -496,9 +496,9 @@ After completing all tasks, validate against success criteria from spec.md:
 The goal is to ensure all guiding documents, specs, and plans are **well-planned, well-scoped, proper, and serve as the foundation** for future iterations that will start building features.
 
 **Foundation Documents Confirmed**:
-1. ✅ **RFC 6762 & RFC 6763** - PRIMARY TECHNICAL AUTHORITY (already exist in `/RFC Docs/`)
+1. ✅ **RFC 6762 & RFC 6763** - PRIMARY TECHNICAL AUTHORITY (already exist in `/RFC%20Docs/`)
 2. ✅ **Constitution v1.0.0** - Project governance (already exists in `.specify/memory/`)
-3. ✅ **BEACON_FOUNDATIONS v1.1** - Common knowledge (already exists in `docs/`)
+3. ✅ **BEACON_FOUNDATIONS v1.1** - Common knowledge (already exists in `.specify/specs/`)
 4. ✅ **F-Series Specs (F-2 through F-8)** - Architecture patterns (already exist in `.specify/specs/`)
 
 **This Feature Enhances**:

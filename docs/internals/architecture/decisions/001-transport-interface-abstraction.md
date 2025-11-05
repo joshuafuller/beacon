@@ -254,7 +254,7 @@ func (t *UDPv6Transport) Send(ctx context.Context, packet []byte, dest net.Addr)
 - **Research**: [specs/003-m1-refactoring/research.md](../../specs/003-m1-refactoring/research.md) Topic 1
 - **Plan**: [specs/003-m1-refactoring/plan.md](../../specs/003-m1-refactoring/plan.md) Phase 1
 - **Tasks**: [specs/003-m1-refactoring/tasks.md](../../specs/003-m1-refactoring/tasks.md) T020-T037
-- **Completion Report**: [REFACTORING_COMPLETE.md](../../REFACTORING_COMPLETE.md)
+- **Completion Report**: [PLAN_COMPLETE.md](../../specs/003-m1-refactoring/PLAN_COMPLETE.md)
 
 ---
 

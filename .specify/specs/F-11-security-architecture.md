@@ -12,7 +12,7 @@
 - RFC 6762 §6 (Multicast DNS Resource Record TTL and Cache Coherency)
 - RFC 6762 §18 (Security Considerations)
 
-**Governance**: Development governed by [Beacon Constitution v1.1.0](../../.specify/memory/constitution.md)
+**Governance**: Development governed by [Beacon Constitution v1.1.0](../memory/constitution.md)
 
 **RFC Validation**: Pending. This specification implements RFC 6762 §18 security considerations through defense-in-depth: source IP filtering, rate limiting, and input validation.
 
@@ -720,7 +720,7 @@ Changes to this specification require:
 ## References
 
 **Constitutional**:
-- [Beacon Constitution v1.1.0](../../.specify/memory/constitution.md)
+- [Beacon Constitution v1.1.0](../memory/constitution.md)
 
 **Architectural**:
 - [ARCHITECTURAL_PITFALLS_AND_MITIGATIONS.md](../../docs/ARCHITECTURAL_PITFALLS_AND_MITIGATIONS.md) - §3 (Security Architecture)

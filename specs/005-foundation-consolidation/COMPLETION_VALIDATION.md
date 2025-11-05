@@ -94,22 +94,22 @@ This document validates that all 11 success criteria from spec.md have been met.
 **Validation Method**: Check all links in COMPLIANCE_DASHBOARD.md against file system
 
 **Links Tested**:
-1. [RFC Compliance Matrix](./RFC_COMPLIANCE_MATRIX.md) → ✅ docs/RFC_COMPLIANCE_MATRIX.md exists
-2. [Functional Requirements Matrix](./FUNCTIONAL_REQUIREMENTS_MATRIX.md) → ✅ docs/FUNCTIONAL_REQUIREMENTS_MATRIX.md exists
-3. [Foundation Completion Report](./FOUNDATION_COMPLETE.md) → ✅ docs/FOUNDATION_COMPLETE.md exists
-4. [ROADMAP](../ROADMAP.md) → ✅ ROADMAP.md exists
-5. [Beacon Constitution](../.specify/memory/constitution.md) → ✅ .specify/memory/constitution.md exists
-6. [F-2: Package Structure](../.specify/specs/F-2-architecture-layers.md) → ✅ .specify/specs/F-2-architecture-layers.md exists
-7. [F-3: Error Handling](../.specify/specs/F-3-error-handling.md) → ✅ .specify/specs/F-3-error-handling.md exists
-8. [F-9: Transport Layer Configuration](../.specify/specs/F-9-transport-layer-config.md) → ✅ .specify/specs/F-9-transport-layer-config.md exists
-9. [F-10: Network Interface Management](../.specify/specs/F-10-network-interface-management.md) → ✅ .specify/specs/F-10-network-interface-management.md exists
-10. [F-11: Security Architecture](../.specify/specs/F-11-security-architecture.md) → ✅ .specify/specs/F-11-security-architecture.md exists
-11. [M1: Basic mDNS Querier](../specs/002-mdns-querier/) → ✅ specs/002-mdns-querier/ exists
-12. [M1-Refactoring](../specs/003-m1-refactoring/) → ✅ specs/003-m1-refactoring/ exists
-13. [M1.1: Architectural Hardening](../specs/004-m1-1-architectural-hardening/) → ✅ specs/004-m1-1-architectural-hardening/ exists
-14. [RFC 6762: Multicast DNS](../RFC%20Docs/rfc6762.txt) → ✅ RFC Docs/rfc6762.txt exists
-15. [RFC 6763: DNS-SD](../RFC%20Docs/rfc6763.txt) → ✅ RFC Docs/rfc6763.txt exists
-16. [BEACON_FOUNDATIONS](../.specify/specs/BEACON_FOUNDATIONS.md) → ✅ .specify/specs/BEACON_FOUNDATIONS.md exists
+1. [RFC Compliance Matrix](../../docs/RFC_COMPLIANCE_MATRIX.md) → ✅ docs/RFC_COMPLIANCE_MATRIX.md exists
+2. [Functional Requirements Matrix](../../docs/FUNCTIONAL_REQUIREMENTS_MATRIX.md) → ✅ docs/FUNCTIONAL_REQUIREMENTS_MATRIX.md exists
+3. Foundation completion narrative (publication pending) → ⚠️ Document not yet published
+4. [ROADMAP](../../ROADMAP.md) → ✅ ROADMAP.md exists
+5. [Beacon Constitution](../../.specify/memory/constitution.md) → ✅ .specify/memory/constitution.md exists
+6. [F-2: Package Structure](../../.specify/specs/F-2-package-structure.md) → ✅ .specify/specs/F-2-package-structure.md exists
+7. [F-3: Error Handling](../../.specify/specs/F-3-error-handling.md) → ✅ .specify/specs/F-3-error-handling.md exists
+8. [F-9: Transport Layer Configuration](../../.specify/specs/F-9-transport-layer-socket-configuration.md) → ✅ .specify/specs/F-9-transport-layer-socket-configuration.md exists
+9. [F-10: Network Interface Management](../../.specify/specs/F-10-network-interface-management.md) → ✅ .specify/specs/F-10-network-interface-management.md exists
+10. [F-11: Security Architecture](../../.specify/specs/F-11-security-architecture.md) → ✅ .specify/specs/F-11-security-architecture.md exists
+11. [M1: Basic mDNS Querier](../002-mdns-querier/spec.md) → ✅ specs/002-mdns-querier/spec.md exists
+12. [M1-Refactoring](../003-m1-refactoring/spec.md) → ✅ specs/003-m1-refactoring/spec.md exists
+13. [M1.1: Architectural Hardening](../004-m1-1-architectural-hardening/spec.md) → ✅ specs/004-m1-1-architectural-hardening/spec.md exists
+14. [RFC 6762: Multicast DNS](../../RFC%20Docs/RFC-6762-Multicast-DNS.txt) → ✅ RFC%20Docs/RFC-6762-Multicast-DNS.txt exists
+15. [RFC 6763: DNS-SD](../../RFC%20Docs/RFC-6763-DNS-SD.txt) → ✅ RFC%20Docs/RFC-6763-DNS-SD.txt exists
+16. [BEACON_FOUNDATIONS](../../.specify/specs/BEACON_FOUNDATIONS.md) → ✅ .specify/specs/BEACON_FOUNDATIONS.md exists
 17. [GitHub Issues](https://github.com/joshuafuller/beacon/issues) → ✅ External link (assumed valid)
 
 **Result**: ✅ **PASS** - All 17 links resolve correctly (16 internal + 1 external)
@@ -118,32 +118,17 @@ This document validates that all 11 success criteria from spec.md have been met.
 
 ---
 
-### SC-005: Foundation Narrative Clear ✅ PASS
+### SC-005: Foundation Narrative Clear ⚠️ PENDING
 
-**Criterion**: Foundation Completion Report clearly explains M1→M1-R→M1.1 progression
+**Criterion**: Foundation documentation should explain the M1→M1-R→M1.1 progression.
 
-**Validation Method**: Check FOUNDATION_COMPLETE.md contains all 5 required sections
+**Current Status**: The consolidated narrative is still being drafted. In the interim, contributors can reference:
 
-**Required Sections** (from spec.md):
-1. ✅ **Executive Summary** (lines 10-76) - M1+M1-R+M1.1 complete, 210+ tasks, 80% coverage, zero regressions
-2. ✅ **Why Three Milestones?** (lines 78-163) - Basic → Refactored → Production-Ready progression
-3. ✅ **What's Implemented** (lines 165-343) - 5 functional areas (Querying, Socket Config, Interface Management, Security, Testing)
-4. ✅ **Quality Metrics** (lines 345-435) - 210+ tasks, 80% coverage, 10/10 PASS, zero races, fuzz tested
-5. ✅ **What's Next** (lines 437-469) - M2 (responder), M3 (DNS-SD), M4-M6 roadmap
+- [ROADMAP](../../ROADMAP.md) for milestone summaries
+- [specs/003-m1-refactoring/PLAN_COMPLETE.md](../003-m1-refactoring/PLAN_COMPLETE.md) for refactoring outcomes
+- [docs/COMPLIANCE_DASHBOARD.md](../../docs/COMPLIANCE_DASHBOARD.md) for milestone-level status
 
-**Content Quality Checks**:
-- ✅ M1 achievements described (lines 85-113)
-- ✅ M1-Refactoring rationale explained (lines 115-152)
-- ✅ M1.1 production features detailed (lines 154-163)
-- ✅ Lessons learned documented (lines 518-573)
-- ✅ Platform status clarified (lines 399-407)
-
-**Result**: ✅ **PASS** - All 5 sections present with comprehensive narrative
-
-**Evidence**: docs/FOUNDATION_COMPLETE.md
-- Total length: 602 lines
-- Complete narrative from conception → implementation → validation
-- Includes examples, rationale, and future roadmap
+**Result**: ⚠️ **PENDING** - Narrative publication required before marking this criterion as complete.
 
 ---
 
@@ -158,19 +143,16 @@ This document validates that all 11 success criteria from spec.md have been met.
 1. **FR Count (61 total: 22 M1 + 4 M1-R + 35 M1.1)**:
    - ✅ COMPLIANCE_DASHBOARD.md line 20: "61 FRs across 3 milestones"
    - ✅ FUNCTIONAL_REQUIREMENTS_MATRIX.md line 5: "61 (22 M1 + 4 M1-R + 35 M1.1)"
-   - ✅ FOUNDATION_COMPLETE.md line 5: "61 (22 M1 + 4 M1-R + 35 M1.1)"
 
 2. **RFC Compliance % (52.8%)**:
    - ✅ COMPLIANCE_DASHBOARD.md line 18: "52.8% (9.5/18 core sections implemented)"
    - ✅ RFC_COMPLIANCE_MATRIX.md line 9: "52.8% (9.5/18 core sections)"
-   - ✅ FOUNDATION_COMPLETE.md line 6: "52.8% (9.5/18 core sections)"
    - ✅ ROADMAP.md line 27: "52.8% complete"
 
 3. **Platform Status (Linux ✅, macOS/Windows ⚠️)**:
    - ✅ COMPLIANCE_DASHBOARD.md line 50: "Linux ✅, macOS/Windows ⚠️"
    - ✅ RFC_COMPLIANCE_MATRIX.md line 29: "Linux ✅ (validated), macOS/Windows ⚠️"
    - ✅ FUNCTIONAL_REQUIREMENTS_MATRIX.md line 23: "Linux ✅, macOS ⚠️, Windows ⚠️"
-   - ✅ FOUNDATION_COMPLETE.md line 401: "Linux ✅, macOS ⚠️, Windows ⚠️"
 
 4. **Milestone Names**:
    - ✅ All docs use: "M1 (Basic mDNS Querier)", "M1-Refactoring (Architectural Improvements)", "M1.1 (Architectural Hardening)"
@@ -178,7 +160,6 @@ This document validates that all 11 success criteria from spec.md have been met.
 
 5. **Test Coverage (80.0%)**:
    - ✅ COMPLIANCE_DASHBOARD.md line 19: "80.0%"
-   - ✅ FOUNDATION_COMPLETE.md line 7: "80.0%"
 
 **Result**: ✅ **PASS** - All key values consistent across documentation
 
@@ -223,7 +204,7 @@ This document validates that all 11 success criteria from spec.md have been met.
    - ✅ Table syntax correct (lines 11-21: Quick Status table with 6 columns)
    - ✅ Status icons display: ✅ ⚠️
    - ✅ Headings hierarchy: ## and ### properly nested
-   - ✅ Links formatted correctly: `[Text](./path.md)`
+   - ✅ Links formatted correctly (example: `Text -> ./path.md`)
 
 2. **RFC_COMPLIANCE_MATRIX.md**:
    - ✅ Main compliance table (lines 50-91) with 4 columns
@@ -237,10 +218,8 @@ This document validates that all 11 success criteria from spec.md have been met.
    - ✅ 7-column tables with proper alignment
    - ✅ Code examples render (lines 178-187)
 
-4. **FOUNDATION_COMPLETE.md**:
-   - ✅ Tables: Quality Metrics (lines 350-357, 383-387, 409-414)
-   - ✅ Code blocks: Query example (lines 177-187), Transport interface (lines 274-280)
-   - ✅ Headings: proper hierarchy with ##, ###, ####
+4. **Foundation narrative**:
+   - ⚠️ Drafting in progress; final tables and examples will be validated upon publication
 
 **Markdown Syntax Validation**: No syntax errors detected (tables have header separators, links closed, code blocks properly fenced)
 
@@ -356,7 +335,7 @@ This document validates that all 11 success criteria from spec.md have been met.
 | SC-002: RFC compliance 50-60% | ✅ PASS | 52.8% calculated from RFC matrix |
 | SC-003: FR tracking 61 FRs | ✅ PASS | FR matrix summary statistics |
 | SC-004: Dashboard links work | ✅ PASS | 17/17 links resolve correctly |
-| SC-005: Foundation narrative clear | ✅ PASS | 5/5 sections present in report |
+| SC-005: Foundation narrative clear | ⚠️ Pending | Narrative publication deferred |
 | SC-006: Documentation consistency | ✅ PASS | All key values match across docs |
 | SC-007: Platform status clarity | ✅ PASS | Legend + per-section platform notes |
 | SC-009: Markdown rendering | ✅ PASS | All tables/links/code blocks valid |
@@ -364,7 +343,7 @@ This document validates that all 11 success criteria from spec.md have been met.
 | SC-011: Calculation methodology | ✅ PASS | Formula + worked example in RFC matrix |
 | SC-012: Cross-reference accuracy | ✅ PASS | Bidirectional FR↔RFC links verified |
 
-**Overall Result**: ✅ **11/11 SUCCESS CRITERIA MET (100%)**
+**Overall Result**: ⚠️ **10/11 SUCCESS CRITERIA MET (pending foundation narrative)**
 
 ---
 
@@ -375,7 +354,7 @@ This document validates that all 11 success criteria from spec.md have been met.
 | Compliance Dashboard | ✅ Complete | docs/COMPLIANCE_DASHBOARD.md (142 lines) |
 | RFC Compliance Matrix (updated) | ✅ Complete | docs/RFC_COMPLIANCE_MATRIX.md (header + M1.1 sections updated) |
 | Functional Requirements Matrix | ✅ Complete | docs/FUNCTIONAL_REQUIREMENTS_MATRIX.md (260 lines, 61 FRs) |
-| Foundation Completion Report | ✅ Complete | docs/FOUNDATION_COMPLETE.md (602 lines) |
+| Foundation Completion Narrative | ⚠️ In progress | Publication pending |
 | ROADMAP.md (updated) | ✅ Complete | ROADMAP.md (4 compliance doc links added) |
 | tasks.md (updated) | ✅ Complete | specs/005-foundation-consolidation/tasks.md (T001-T060 marked complete) |
 

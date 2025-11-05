@@ -14,7 +14,7 @@ Before writing a feature specification, understand the Beacon documentation hier
 
 ### 1. RFC 6762 & RFC 6763 - **PRIMARY TECHNICAL AUTHORITY** ⭐
 
-**Location**: `/RFC Docs/`
+**Location**: `/RFC%20Docs/`
 
 - **[RFC 6762: Multicast DNS](../../RFC%20Docs/RFC-6762-Multicast-DNS.txt)** (184 KB, 1,410 lines)
   - Authoritative specification for mDNS protocol
@@ -40,7 +40,7 @@ Before writing a feature specification, understand the Beacon documentation hier
 
 ### 3. BEACON_FOUNDATIONS v1.1 - **COMMON FOUNDATIONAL KNOWLEDGE**
 
-**Location**: [`docs/BEACON_FOUNDATIONS.md`](../../docs/BEACON_FOUNDATIONS.md)
+**Location**: [`.specify/specs/BEACON_FOUNDATIONS.md`](../../.specify/specs/BEACON_FOUNDATIONS.md)
 
 - Common knowledge base for all users, developers, AI agents, and contributors
 - Extracts and explains concepts from RFCs 6762 and 6763
@@ -117,7 +117,7 @@ Every feature spec MUST include a References section organized by the documentat
 
 ### Foundational Knowledge
 
-- **[BEACON_FOUNDATIONS v1.1](../../docs/BEACON_FOUNDATIONS.md)** - Common knowledge for all contributors
+- **[BEACON_FOUNDATIONS v1.1](../../.specify/specs/BEACON_FOUNDATIONS.md)** - Common knowledge for all contributors
 
 ### Architecture Specifications (F-Series)
 
@@ -201,7 +201,7 @@ This specification demonstrates alignment with Beacon Constitution v1.0.0:
 
 ### Step 5: Use BEACON_FOUNDATIONS Terminology
 
-Use consistent terminology from [BEACON_FOUNDATIONS §5 (Terminology Glossary)](../../docs/BEACON_FOUNDATIONS.md#5-terminology-glossary):
+Use consistent terminology from [BEACON_FOUNDATIONS §5 (Terminology Glossary)](../../.specify/specs/BEACON_FOUNDATIONS.md#5-terminology-glossary):
 
 **Common Terms**:
 - **Querier**: Component that sends queries (not "client" or "requester")
@@ -258,7 +258,7 @@ As a **network administrator**, I need to query for services on the local networ
 
 ### Foundational Knowledge
 
-- **[BEACON_FOUNDATIONS v1.1](../../docs/BEACON_FOUNDATIONS.md)** - Terminology (§5), Reference Tables (§7)
+- **[BEACON_FOUNDATIONS v1.1](../../.specify/specs/BEACON_FOUNDATIONS.md)** - Terminology (§5), Reference Tables (§7)
 
 ### Architecture Specifications
 
@@ -313,8 +313,8 @@ After writing your specification:
 
 - [Spec Kit Documentation](https://docs.claude.com/en/docs/claude-code/speckit) - Full Spec Kit workflow
 - [Beacon Constitution v1.0.0](../../.specify/memory/constitution.md) - Governance and principles
-- [BEACON_FOUNDATIONS v1.1](../../docs/BEACON_FOUNDATIONS.md) - Common knowledge and terminology
-- [REVISED_SPEC_STRATEGY v3.0](../../docs/REVISED_SPEC_STRATEGY.md) - Strategic context and Phase 0 completion
+- [BEACON_FOUNDATIONS v1.1](../../.specify/specs/BEACON_FOUNDATIONS.md) - Common knowledge and terminology
+- [ROADMAP](../../ROADMAP.md) - Strategic context and Phase 0 completion
 - [RFC 6762 (Full Text)](../../RFC%20Docs/RFC-6762-Multicast-DNS.txt) - Multicast DNS specification
 - [RFC 6763 (Full Text)](../../RFC%20Docs/RFC-6763-DNS-SD.txt) - DNS-SD specification
 

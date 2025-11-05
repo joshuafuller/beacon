@@ -184,9 +184,9 @@ This feature is documentation audit, not code, so traditional complexity concern
 **Status**: 🔄 **IN PROGRESS** (No unknowns to research, but audit checklist needs definition)
 
 All information required for this feature already exists:
-- ✅ RFC 6762 & RFC 6763 available in `/RFC Docs/`
+- ✅ RFC 6762 & RFC 6763 available in `/RFC%20Docs/`
 - ✅ Constitution v1.0.0 published in `.specify/memory/constitution.md`
-- ✅ BEACON_FOUNDATIONS v1.1 published in `docs/BEACON_FOUNDATIONS.md`
+- ✅ BEACON_FOUNDATIONS v1.1 published in `.specify/specs/BEACON_FOUNDATIONS.md`
 - ✅ All F-series specs (F-2 through F-8) exist in `.specify/specs/`
 - ✅ Preliminary assessment completed (F-2 through F-6 excellent, F-7 and F-8 need enhancement)
 
@@ -205,7 +205,7 @@ The audit checklist for each F-spec will verify:
    - [ ] Includes RFC 6762 with full path: `../../RFC%20Docs/RFC-6762-Multicast-DNS.txt`
    - [ ] Includes RFC 6763 with full path: `../../RFC%20Docs/RFC-6763-DNS-SD.txt`
    - [ ] Includes Constitution v1.0.0 with path: `../../.specify/memory/constitution.md`
-   - [ ] Includes BEACON_FOUNDATIONS v1.1 with path: `../../docs/BEACON_FOUNDATIONS.md`
+   - [ ] Includes BEACON_FOUNDATIONS v1.1 with path: `../../.specify/specs/BEACON_FOUNDATIONS.md`
    - [ ] RFCs positioned as "PRIMARY TECHNICAL AUTHORITY" or "PRIMARY AUTHORITY"
    - [ ] Includes note: "RFC requirements override all other concerns"
    - [ ] Structure: RFCs → Constitution → BEACON_FOUNDATIONS → Architecture Specifications → Go Resources
@@ -369,12 +369,12 @@ Based on audit findings (preliminary assessment: F-7 and F-8 need enhancement), 
 
    ### Foundational Knowledge
 
-   - [BEACON_FOUNDATIONS v1.1](../../docs/BEACON_FOUNDATIONS.md) - Architecture overview
+   - [BEACON_FOUNDATIONS v1.1](../../.specify/specs/BEACON_FOUNDATIONS.md) - Architecture overview
 
    ### Architecture Specifications
 
-   - [F-2: Package Structure](./F-2-package-structure.md) - Component organization
-   - [F-4: Concurrency Model](./F-4-concurrency-model.md) - Goroutine lifecycle patterns
+   - [F-2: Package Structure](../../.specify/specs/F-2-package-structure.md) - Component organization
+   - [F-4: Concurrency Model](../../.specify/specs/F-4-concurrency-model.md) - Goroutine lifecycle patterns
 
    ### Go Best Practices
 
@@ -429,13 +429,13 @@ Based on audit findings (preliminary assessment: F-7 and F-8 need enhancement), 
 
    ### Foundational Knowledge
 
-   - [BEACON_FOUNDATIONS v1.1](../../docs/BEACON_FOUNDATIONS.md) - Common knowledge for test scenarios
+   - [BEACON_FOUNDATIONS v1.1](../../.specify/specs/BEACON_FOUNDATIONS.md) - Common knowledge for test scenarios
 
    ### Architecture Specifications
 
-   - [F-2: Package Structure](./F-2-package-structure.md) - Test organization
-   - [F-3: Error Handling](./F-3-error-handling.md) - Error testing patterns
-   - [F-4: Concurrency Model](./F-4-concurrency-model.md) - Concurrency testing
+   - [F-2: Package Structure](../../.specify/specs/F-2-package-structure.md) - Test organization
+   - [F-3: Error Handling](../../.specify/specs/F-3-error-handling.md) - Error testing patterns
+   - [F-4: Concurrency Model](../../.specify/specs/F-4-concurrency-model.md) - Concurrency testing
 
    ### Go Testing Resources
 
@@ -533,7 +533,7 @@ After completing Phase 1 (audit and updates), validate against success criteria:
 - [Feature Specification](./spec.md) - Complete spec for this feature
 - [Spec Quality Checklist](./checklists/requirements.md) - Validation checklist (ALL PASS)
 - [Beacon Constitution v1.0.0](../../.specify/memory/constitution.md) - Project governance
-- [BEACON_FOUNDATIONS v1.1](../../docs/BEACON_FOUNDATIONS.md) - Common knowledge
+- [BEACON_FOUNDATIONS v1.1](../../.specify/specs/BEACON_FOUNDATIONS.md) - Common knowledge
 - [RFC 6762: Multicast DNS](../../RFC%20Docs/RFC-6762-Multicast-DNS.txt) - Primary technical authority
 - [RFC 6763: DNS-Based Service Discovery](../../RFC%20Docs/RFC-6763-DNS-SD.txt) - Primary technical authority
 - [F-Series Architecture Specs](../../.specify/specs/) - Subjects of audit (F-2 through F-8)

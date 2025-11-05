@@ -218,14 +218,14 @@ As a **network application developer**, I need clear error reporting when mDNS q
 - [F-2: Package Structure](../../.specify/specs/F-2-package-structure.md) - Defines `beacon/querier/` public API package and `internal/message/`, `internal/protocol/` implementation packages
 - [F-3: Error Handling](../../.specify/specs/F-3-error-handling.md) - Defines NetworkError, ValidationError, WireFormatError types
 - [F-4: Concurrency Model](../../.specify/specs/F-4-concurrency-model.md) - Defines context propagation, goroutine lifecycle, timeout patterns
-- [F-5: Configuration & Defaults](../../.specify/specs/F-5-configuration-defaults.md) - Defines functional options pattern for query timeout configuration
+- [F-5: Configuration & Defaults](../../.specify/specs/F-5-configuration.md) - Defines functional options pattern for query timeout configuration
 - [F-7: Resource Management](../../.specify/specs/F-7-resource-management.md) - Defines cleanup patterns, graceful shutdown, no-leak requirements
 - [F-8: Testing Strategy](../../.specify/specs/F-8-testing-strategy.md) - Defines TDD cycle, coverage requirements (≥80%), race detection
 
 ### Project Governance
 
 - [Beacon Constitution v1.0.0](../../.specify/memory/constitution.md) - Governs all development (Principles I-VII)
-- [BEACON_FOUNDATIONS v1.1](../../docs/BEACON_FOUNDATIONS.md) - Common knowledge base, terminology glossary (§5), architecture overview (§4)
+- [BEACON_FOUNDATIONS v1.1](../../.specify/specs/BEACON_FOUNDATIONS.md) - Common knowledge base, terminology glossary (§5), architecture overview (§4)
 
 ### Technical Authority
 

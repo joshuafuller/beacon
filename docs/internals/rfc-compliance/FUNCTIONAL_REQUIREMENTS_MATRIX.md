@@ -255,7 +255,7 @@ For bidirectional traceability, see [RFC Compliance Matrix](./RFC_COMPLIANCE_MAT
 
 - **[Compliance Dashboard](./COMPLIANCE_DASHBOARD.md)** - Single-page project status overview
 - **[RFC Compliance Matrix](./RFC_COMPLIANCE_MATRIX.md)** - Section-by-section RFC 6762 implementation status
-- **[Foundation Completion Report](./FOUNDATION_COMPLETE.md)** - Narrative of M1→M1-R→M1.1 journey
+- **Foundation Completion Narrative (in progress)** - Summary will be published alongside the roadmap updates
 - **[ROADMAP](../ROADMAP.md)** - Milestone plan (M1-M6)
 - **[Beacon Constitution](../.specify/memory/constitution.md)** - Project principles
 

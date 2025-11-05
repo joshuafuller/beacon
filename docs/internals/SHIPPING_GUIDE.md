@@ -232,25 +232,25 @@ go get github.com/joshuafuller/beacon@v0.1.0
 ```
 
 ## Quick Start
-See [docs/SHIPPING_GUIDE.md](docs/SHIPPING_GUIDE.md) for examples.
+See [docs/SHIPPING_GUIDE.md](./SHIPPING_GUIDE.md) for examples.
 
 ## Comparison to hashicorp/mdns
-See [docs/HASHICORP_COMPARISON.md](docs/HASHICORP_COMPARISON.md) for detailed comparison.
+See [HASHICORP_COMPARISON.md](./HASHICORP_COMPARISON.md) for detailed comparison.
 
 ## RFC 6762 Compliance
 - **72.2%** compliant (91/126 requirements)
-- See [docs/RFC_COMPLIANCE_MATRIX.md](docs/RFC_COMPLIANCE_MATRIX.md)
+- See [docs/RFC_COMPLIANCE_MATRIX.md](./RFC_COMPLIANCE_MATRIX.md)
 
 ## Performance
 - Response latency: **4.8μs** (20,833x under 100ms requirement)
-- See [specs/006-mdns-responder/PERFORMANCE_ANALYSIS.md](specs/006-mdns-responder/PERFORMANCE_ANALYSIS.md)
+- See [specs/006-mdns-responder/PERFORMANCE_ANALYSIS.md](../specs/006-mdns-responder/PERFORMANCE_ANALYSIS.md)
 
 ## Security
 - **STRONG** security posture
-- See [specs/006-mdns-responder/SECURITY_AUDIT.md](specs/006-mdns-responder/SECURITY_AUDIT.md)
+- See [specs/006-mdns-responder/SECURITY_AUDIT.md](../specs/006-mdns-responder/SECURITY_AUDIT.md)
 
 ## License
-[MIT License](LICENSE) (or your chosen license)
+[MIT License](../LICENSE) (or your chosen license)
 ```
 
 6. Click "Publish release"
@@ -384,7 +384,7 @@ Beacon was built to replace unmaintained alternatives like `hashicorp/mdns`, off
 - ✅ **Automatic conflict resolution** - RFC 6762 §8.2 compliant
 - ✅ **SO_REUSEPORT** - Coexists with Avahi/Bonjour
 
-[See detailed comparison](docs/HASHICORP_COMPARISON.md)
+[See detailed comparison](./HASHICORP_COMPARISON.md)
 
 ## Installation
 
@@ -467,11 +467,11 @@ func main() {
 
 ## Documentation
 
-- [Shipping Guide](docs/SHIPPING_GUIDE.md) - How to use Beacon
-- [RFC Compliance Matrix](docs/RFC_COMPLIANCE_MATRIX.md) - Protocol compliance
-- [Performance Analysis](specs/006-mdns-responder/PERFORMANCE_ANALYSIS.md) - Benchmarks
-- [Security Audit](specs/006-mdns-responder/SECURITY_AUDIT.md) - Security posture
-- [hashicorp/mdns Comparison](docs/HASHICORP_COMPARISON.md) - Why Beacon is better
+- [Shipping Guide](./SHIPPING_GUIDE.md) - How to use Beacon
+- [RFC Compliance Matrix](./RFC_COMPLIANCE_MATRIX.md) - Protocol compliance
+- [Performance Analysis](../specs/006-mdns-responder/PERFORMANCE_ANALYSIS.md) - Benchmarks
+- [Security Audit](../specs/006-mdns-responder/SECURITY_AUDIT.md) - Security posture
+- [hashicorp/mdns Comparison](./HASHICORP_COMPARISON.md) - Why Beacon is better
 - [GoDoc](https://pkg.go.dev/github.com/joshuafuller/beacon) - API reference
 
 ## Requirements
@@ -481,11 +481,11 @@ func main() {
 
 ## License
 
-[MIT License](LICENSE) (or your chosen license)
+[MIT License](../LICENSE) (or your chosen license)
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+See [CONTRIBUTING.md](../CONTRIBUTING.md) for guidelines.
 ```
 
 ---

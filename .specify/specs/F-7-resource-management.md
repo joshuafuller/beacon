@@ -5,7 +5,7 @@
 **Status**: Draft
 **Dependencies**: F-2 (Package Structure), F-4 (Concurrency Model)
 **References**: BEACON_FOUNDATIONS v1.1
-**Governance**: Governed by [Beacon Constitution v1.0.0](../../.specify/memory/constitution.md)
+**Governance**: Governed by [Beacon Constitution v1.0.0](../memory/constitution.md)
 **RFC Validation**: Completed 2025-11-01 (No RFC-specific resource management requirements; implementation follows Go best practices)
 
 ---
@@ -771,7 +771,7 @@ func TestGracefulShutdown(t *testing.T) {
 
 ## Constitutional Compliance
 
-This specification aligns with the [Beacon Constitution v1.0.0](../../.specify/memory/constitution.md):
+This specification aligns with the [Beacon Constitution v1.0.0](../memory/constitution.md):
 
 ### Principle I: RFC Compliant
 **Status**: ✅ **COMPLIANT**
@@ -860,11 +860,11 @@ This specification aligns with the [Beacon Constitution v1.0.0](../../.specify/m
 
 ### Project Governance
 
-- [Beacon Constitution v1.0.0](../../.specify/memory/constitution.md) - Principle VII (Excellence) requires resource efficiency, no leaks, graceful shutdown, and predictable performance
+- [Beacon Constitution v1.0.0](../memory/constitution.md) - Principle VII (Excellence) requires resource efficiency, no leaks, graceful shutdown, and predictable performance
 
 ### Foundational Knowledge
 
-- [BEACON_FOUNDATIONS v1.1](../../docs/BEACON_FOUNDATIONS.md) - Architecture overview and terminology
+- [BEACON_FOUNDATIONS v1.1](./BEACON_FOUNDATIONS.md) - Architecture overview and terminology
 
 ### Architecture Specifications
 

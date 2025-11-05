@@ -497,7 +497,7 @@ go test -fuzz=FuzzMessageParser -fuzztime=10000x ./tests/fuzz
 - Research: `specs/002-mdns-querier/research.md`
 - Data Model: `specs/002-mdns-querier/data-model.md`
 - API Contract: `specs/002-mdns-querier/contracts/querier-api.md`
-- RFC 6762: `RFC Docs/RFC-6762-Multicast-DNS.txt`
+- RFC 6762: `RFC%20Docs/RFC-6762-Multicast-DNS.txt`
 - Constitution: `.specify/memory/constitution.md`
 
 ---

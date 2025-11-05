@@ -14,7 +14,7 @@
 
 ## Constitution Compliance
 
-This specification adheres to the [Beacon Constitution v1.0.0](../../.specify/memory/constitution.md):
+This specification adheres to the [Beacon Constitution v1.0.0](../memory/constitution.md):
 
 - **RFC Compliant (Principle I)**: All mDNS timing requirements (probe intervals, response delays, rate limiting) strictly follow RFC 6762 §6, §8.1, and §8.3. Timer values are non-negotiable and defined by RFC mandates.
 - **Spec-Driven (Principle II)**: This architecture specification governs concurrency patterns across all Beacon components before implementation.
@@ -1159,8 +1159,8 @@ func (r *Responder) probeWithConflictDetection(ctx context.Context, name string)
 ## References
 
 ### Governance
-- [Beacon Constitution v1.0.0](../../.specify/memory/constitution.md)
-- [BEACON_FOUNDATIONS v1.1](../../docs/BEACON_FOUNDATIONS.md)
+- [Beacon Constitution v1.0.0](../memory/constitution.md)
+- [BEACON_FOUNDATIONS v1.1](./BEACON_FOUNDATIONS.md)
 
 ### RFCs
 - [RFC 6762](../../RFC%20Docs/RFC-6762-Multicast-DNS.txt) - Multicast DNS (February 2013)

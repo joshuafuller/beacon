@@ -507,7 +507,7 @@ make ci-fast  # Must pass before marking US2 complete
 - `.specify/specs/F-8-testing-strategy.md` - TDD requirements
 
 ### RFC
-- `RFC Docs/rfc6762.txt` - §8.2 (Simultaneous Probe Tie-Breaking), §9 (Conflict Resolution)
+- `RFC%20Docs/RFC-6762-Multicast-DNS.txt` - §8.2 (Simultaneous Probe Tie-Breaking), §9 (Conflict Resolution)
 
 ### Project Docs
 - `specs/006-mdns-responder/spec.md` - US2 requirements

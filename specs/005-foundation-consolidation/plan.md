@@ -635,6 +635,6 @@ From spec.md success criteria, we will measure:
 - [Feature Specification](spec.md)
 - [Beacon Constitution v1.1.0](../../.specify/memory/constitution.md)
 - [ROADMAP.md](../../ROADMAP.md)
-- [RFC 6762: Multicast DNS](../../RFC%20Docs/rfc6762.txt)
-- [M1 Completion Summary](../../tmp/m1_completion_summary.txt)
+- [RFC 6762: Multicast DNS](../../RFC%20Docs/RFC-6762-Multicast-DNS.txt)
+- [M1 Completion Summary](../002-mdns-querier/tasks.md)
 - [M1.1 INCOMPLETE_TASKS_ANALYSIS](../004-m1-1-architectural-hardening/INCOMPLETE_TASKS_ANALYSIS.md)

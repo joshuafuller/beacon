@@ -46,8 +46,8 @@
 
 ### Internal Links (Relative Paths)
 ```markdown
-[Link Text](../path/to/file.md)
-[Link to Section](./file.md#section-name)
+Link Text: ../path/to/file.md
+Link to Section: ./file.md#section-name
 ```
 
 ### RFC References
@@ -88,7 +88,7 @@ docs/decisions/001-transport-interface-abstraction.md (full path)
 
 ### Internal Links
 - Use relative paths from repository root
-- Example: `../RFC%20Docs/rfc6762.txt` (note: space encoding)
+- Example: `../RFC%20Docs/RFC-6762-Multicast-DNS.txt` (note: space encoding)
 - Anchor links: `#section-name` (lowercase, hyphens replace spaces)
 
 ### External Links

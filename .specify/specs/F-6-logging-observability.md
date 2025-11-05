@@ -29,7 +29,7 @@ This specification defines Beacon's logging and observability strategy, includin
 
 ## Constitutional Compliance
 
-This specification aligns with the [Beacon Constitution v1.0.0](../../.specify/memory/constitution.md):
+This specification aligns with the [Beacon Constitution v1.0.0](../memory/constitution.md):
 
 **I. RFC Compliant**: Logging captures RFC-critical events (probing, announcing, cache-flush, TC bit, QU bit) with timing metadata to verify compliance with RFC 6762 timing requirements (§8.1-8.3). TXT record handling follows RFC 6763 §6.1 security guidance by redacting sensitive values.
 
@@ -882,8 +882,8 @@ json
 
 ## References
 
-- [Beacon Constitution v1.0.0](../../.specify/memory/constitution.md)
-- [BEACON_FOUNDATIONS v1.1](../../docs/BEACON_FOUNDATIONS.md)
+- [Beacon Constitution v1.0.0](../memory/constitution.md)
+- [BEACON_FOUNDATIONS v1.1](./BEACON_FOUNDATIONS.md)
 - [RFC 6762: Multicast DNS](../../RFC%20Docs/RFC-6762-Multicast-DNS.txt)
 - [RFC 6763: DNS-Based Service Discovery](../../RFC%20Docs/RFC-6763-DNS-SD.txt)
 - Go Blog: [Structured Logging with slog](https://go.dev/blog/slog)

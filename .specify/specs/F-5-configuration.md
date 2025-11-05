@@ -5,7 +5,7 @@
 **Status**: Validated (2025-11-01)
 **Dependencies**: F-2 (Package Structure), F-3 (Error Handling)
 **References**: BEACON_FOUNDATIONS v1.1 §6
-**Governance**: [Beacon Constitution v1.0.0](../../.specify/memory/constitution.md)
+**Governance**: [Beacon Constitution v1.0.0](../memory/constitution.md)
 **RFC Validation**: Validated against RFC 6762 and RFC 6763 (2025-11-01)
 
 **Revision Notes**:
@@ -799,7 +799,7 @@ func TestDefaults(t *testing.T) {
 
 ## Constitution Compliance
 
-This specification aligns with the [Beacon Constitution v1.0.0](../../.specify/memory/constitution.md) as follows:
+This specification aligns with the [Beacon Constitution v1.0.0](../memory/constitution.md) as follows:
 
 **Principle I - RFC Compliant (NON-NEGOTIABLE)**:
 - ✅ All RFC MUST requirements identified and enforced as non-configurable constants
@@ -859,12 +859,12 @@ This specification aligns with the [Beacon Constitution v1.0.0](../../.specify/m
 ## References
 
 ### Governance
-- [Beacon Constitution v1.0.0](../../.specify/memory/constitution.md) - Project governance and principles
+- [Beacon Constitution v1.0.0](../memory/constitution.md) - Project governance and principles
 - Constitution Principle I: RFC Compliance (NON-NEGOTIABLE)
 - Constitution Principle II: Spec-Driven Development
 
 ### Technical References
-- [BEACON_FOUNDATIONS v1.1](../../docs/BEACON_FOUNDATIONS.md) §6 (Common Requirements)
+- [BEACON_FOUNDATIONS v1.1](./BEACON_FOUNDATIONS.md) §6 (Common Requirements)
 - RFC 6762 (Multicast DNS) - Default TTLs, timing values, MUST requirements
   - §8.1: Probing (3 probes, 250ms intervals - MUST requirements)
   - §8.3: Announcing (minimum 2 announcements, 1 second intervals)

@@ -107,7 +107,7 @@ As a **project maintainer**, I need all F-series specs (F-2 through F-8) to have
 ## Assumptions
 
 1. **F-Series Specs Exist**: All 7 F-series specs (F-2 through F-8) are published in `.specify/specs/` as of 2025-11-01
-2. **Phase 0 Complete**: Constitution v1.0.0 is ratified, BEACON_FOUNDATIONS v1.1 is published, and RFCs 6762/6763 are available in `/RFC Docs/`
+2. **Phase 0 Complete**: Constitution v1.0.0 is ratified, BEACON_FOUNDATIONS v1.1 is published, and RFCs 6762/6763 are available in `/RFC%20Docs/`
 3. **F-Series Already RFC-Validated**: F-series specs were validated against RFCs during Phase 0 (2025-11-01) but may have varying levels of documentation completeness
 4. **No Breaking Changes**: Audit and updates will not change technical content of F-specs, only enhance documentation (References sections, Constitutional Alignment sections)
 5. **F-2 through F-6 Are Exemplars**: F-2, F-3, F-4, F-5, and F-6 already have comprehensive References and Constitutional Alignment sections that serve as templates
@@ -124,9 +124,9 @@ As a **project maintainer**, I need all F-series specs (F-2 through F-8) to have
 
 ## Dependencies
 
-- **RFC Documents**: RFC 6762 and RFC 6763 must be available in `/RFC Docs/` for reference linking (✅ Available)
+- **RFC Documents**: RFC 6762 and RFC 6763 must be available in `/RFC%20Docs/` for reference linking (✅ Available)
 - **Constitution v1.0.0**: Must be ratified and published in `.specify/memory/constitution.md` (✅ Complete as of 2025-11-01)
-- **BEACON_FOUNDATIONS v1.1**: Must be published in `docs/BEACON_FOUNDATIONS.md` (✅ Complete as of 2025-11-01)
+- **BEACON_FOUNDATIONS v1.1**: Must be published in `.specify/specs/BEACON_FOUNDATIONS.md` (✅ Complete as of 2025-11-01)
 - **Existing F-Series Specs**: All 7 F-series specs must exist in `.specify/specs/` (✅ Complete: F-2 through F-8)
 - **Git Repository Access**: Ability to read and edit `.specify/specs/*.md` files (✅ Available)
 
@@ -154,7 +154,7 @@ As a **project maintainer**, I need all F-series specs (F-2 through F-8) to have
 
 ### Foundational Knowledge
 
-- **[BEACON_FOUNDATIONS v1.1](../../docs/BEACON_FOUNDATIONS.md)** - Shared context and terminology for all Beacon contributors
+- **[BEACON_FOUNDATIONS v1.1](../../.specify/specs/BEACON_FOUNDATIONS.md)** - Shared context and terminology for all Beacon contributors
   - Provides: DNS fundamentals, mDNS essentials, DNS-SD concepts, architecture overview, terminology glossary, reference tables
   - **Common knowledge base** for users, developers, AI agents, and contributors
 
@@ -170,7 +170,7 @@ As a **project maintainer**, I need all F-series specs (F-2 through F-8) to have
 
 ### Strategic Context
 
-- [REVISED_SPEC_STRATEGY v3.0](../../docs/REVISED_SPEC_STRATEGY.md) - Strategic analysis and Phase 0 completion report
+- [ROADMAP](../../ROADMAP.md) - Strategic analysis and Phase 0 completion report
 
 ## Constitutional Alignment
 

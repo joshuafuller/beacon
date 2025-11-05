@@ -371,7 +371,7 @@ Explore returning slice directly (not pointer) using unsafe:
 - **Research**: [specs/003-m1-refactoring/research.md](../../specs/003-m1-refactoring/research.md) Topic 2
 - **Plan**: [specs/003-m1-refactoring/plan.md](../../specs/003-m1-refactoring/plan.md) Phase 2
 - **Tasks**: [specs/003-m1-refactoring/tasks.md](../../specs/003-m1-refactoring/tasks.md) T044-T062
-- **Benchmarks**: [benchmark_comparison.md](../../benchmark_comparison.md)
+- **Benchmarks**: [baseline_metrics.md](../../specs/003-m1-refactoring/baseline_metrics.md)
 
 ### External Resources
 - [Go sync.Pool Documentation](https://pkg.go.dev/sync#Pool)

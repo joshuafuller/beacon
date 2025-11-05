@@ -33,7 +33,7 @@ Complete architectural refactoring to prepare for M1.1 and M2 milestones. **Zero
   - Improved testability (can inject `MockTransport` for deterministic tests)
 
 #### Fixed
-- **P0: Layer Boundary Violation** ([Issue #P0-001](specs/003-m1-refactoring/issues.md))
+- **P0: Layer Boundary Violation** ([Issue #P0-001](specs/003-m1-refactoring/tasks.md))
   - `querier` package no longer imports `internal/network`
   - Proper layer separation: `querier` → `transport` → `network`
   - Complies with F-2 architecture specification
@@ -86,7 +86,7 @@ Complete architectural refactoring to prepare for M1.1 and M2 milestones. **Zero
 #### Documentation
 - Created [ADR-001: Transport Interface Abstraction](docs/decisions/001-transport-interface-abstraction.md)
 - Created [ADR-002: Buffer Pooling Pattern](docs/decisions/002-buffer-pooling-pattern.md)
-- Created [REFACTORING_COMPLETE.md](REFACTORING_COMPLETE.md) with full metrics
+- Summarised final metrics in [PLAN_COMPLETE.md](specs/003-m1-refactoring/PLAN_COMPLETE.md)
 - Updated godoc for all new packages
 
 #### Migration Guide
@@ -106,8 +106,8 @@ This refactoring enables:
 #### References
 - **Milestone Plan**: [specs/003-m1-refactoring/plan.md](specs/003-m1-refactoring/plan.md)
 - **Tasks**: [specs/003-m1-refactoring/tasks.md](specs/003-m1-refactoring/tasks.md) (97/97 complete)
-- **Completion Report**: [REFACTORING_COMPLETE.md](REFACTORING_COMPLETE.md)
-- **Benchmarks**: [benchmark_comparison.md](benchmark_comparison.md)
+- **Completion Report**: [PLAN_COMPLETE.md](specs/003-m1-refactoring/PLAN_COMPLETE.md)
+- **Benchmarks**: [baseline_metrics.md](specs/003-m1-refactoring/baseline_metrics.md)
 
 ---
 

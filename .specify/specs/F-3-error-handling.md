@@ -985,8 +985,8 @@ func probe(name string) error {
 
 ## References
 
-- [Beacon Constitution v1.0.0](../../.specify/memory/constitution.md)
-- [BEACON_FOUNDATIONS v1.1](../../docs/BEACON_FOUNDATIONS.md)
+- [Beacon Constitution v1.0.0](../memory/constitution.md)
+- [BEACON_FOUNDATIONS v1.1](./BEACON_FOUNDATIONS.md)
 - [RFC 6762 - Multicast DNS](../../RFC%20Docs/RFC-6762-Multicast-DNS.txt)
 - [RFC 6763 - DNS-SD](../../RFC%20Docs/RFC-6763-DNS-SD.txt)
 - Go Blog: [Error Handling](https://go.dev/blog/error-handling-and-go)

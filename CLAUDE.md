@@ -6,6 +6,21 @@ This file provides context for Claude AI when working on the Beacon project.
 
 ---
 
+## Claude Code Quick-Start (read first)
+
+- **Know the layers**: Public APIs live in `querier/` & `responder/`; concrete mDNS logic stays under `internal/` to honor F-2 boundaries.
+- **Stay milestone-aware**: We are in **M2 responder polish** (122/129 tasks done). Only touch M1 artifacts for regressions or docs.
+- **Go-to specs**: Start with `specs/006-mdns-responder/{spec,plan,tasks}.md` plus `.specify/specs/F-2-architecture-layers.md` for import rules.
+- **Primary commands**: `make test`, `make test-race`, `make semgrep-check`, and `go test ./... -run <Name>` for focused suites.
+- **Token budget tip**: Quote just the sections you need (e.g., RFC 6762 §8) rather than pasting entire documents.
+- **Summaries before detail**: Provide short status recaps before pasting large diffs or logs to keep startup context tight.
+- **Citations & reports**: Always cite spec sections, ADRs, or RFC clauses when justifying protocol or architectural choices.
+- **State machine focus**: Open tasks concentrate on probing/announcing polish—check `internal/state/*` tests first.
+- **Hook awareness**: Pre-commit runs Semgrep; if reproducing failures, mention the exact rule ID.
+- **Exit checklist**: Before finishing, ensure tests + `make semgrep-check` are green and documentation references are updated.
+
+---
+
 ## Project Overview
 
 **Beacon** is a lightweight, high-performance mDNS (Multicast DNS) library for Go, implementing RFC 6762 for service discovery on local networks.
@@ -18,12 +33,8 @@ This file provides context for Claude AI when working on the Beacon project.
 
 ### Language & Runtime
 - **Go 1.21+** (required)
-- Standard library only - zero external dependencies
-  - `net` - Network I/O
-  - `context` - Cancellation and timeouts
-  - `time` - Timing operations
-  - `sync` - Concurrency primitives (sync.Pool for buffer pooling)
-  - `encoding/binary` - DNS wire format encoding
+- Core packages: `net`, `context`, `time`, `sync`, `encoding/binary`
+- External (std-adjacent) deps: `golang.org/x/net` (multicast helpers), `golang.org/x/sys` (socket options)
 
 ### Architecture
 - **Clean Architecture** with strict layer boundaries (F-2)
@@ -116,7 +127,7 @@ beacon/
 │       ├── CODE_REVIEW.md     # Code quality review (Grade: A)
 │       └── PERFORMANCE_ANALYSIS.md # Performance profiling (Grade: A+)
 │
-├── RFC Docs/                   # ⭐ Protocol Specifications (SOURCE OF TRUTH)
+├── RFC%20Docs/                   # ⭐ Protocol Specifications (SOURCE OF TRUTH)
 │   ├── rfc6762.txt            # mDNS specification
 │   └── rfc1035.txt            # DNS message format
 │
@@ -229,43 +240,11 @@ make ci-fast                # Fast CI (unit + race + coverage)
 make ci-full                # Full CI (all tests)
 ```
 
-**Coverage Philosophy**:
-- **Target**: ≥80% (Constitution requirement, REQ-F8-2)
-- **Aspiration**: 85%+
-- **Current**: 81.3%
-- **Enforcement**: CI only (NOT in pre-commit hook)
-
-**Why no pre-commit coverage gate?**
-Coverage measures aggregate codebase health, not commit safety. Coverage checks:
-- Are slow (3-5s vs. 1-2s for gofmt/vet/semgrep)
-- Break TDD RED phase (adding tests before implementation)
-- Are non-deterministic (depend on global state)
-- Can be gamed with empty tests
-- Should answer "Is codebase healthy?" (CI) not "Is this commit safe?" (pre-commit)
-
-**Where coverage IS enforced:**
-- ✅ `make ci-fast` / `make ci-full` - Blocks merge if <80%
-- ✅ Developer visibility via `make test-coverage-report`
-- ✅ Trend tracking via `./scripts/coverage-trend.sh`
-
-**Best practices:**
-- Write tests FIRST (TDD: RED → GREEN → REFACTOR)
-- Use coverage to find gaps, not to hit a number
-- Test behavior, not implementation details
-- Don't panic over small drops (<2%) - check if expected (RED phase, refactoring)
-- Focus on critical paths: error handling, edge cases, concurrency
-
-**Package targets (current status):**
-- `internal/protocol`: 100% ✅ (constants)
-- `internal/errors`: 93.3% ✅
-- `internal/message`: 90.3% ✅
-- `internal/records`: 94.1% ✅
-- `internal/security`: 92.1% ✅ (security-critical)
-- `internal/state`: 83.6% ✅
-- `internal/responder`: 76.5% ⚠️ (WIP)
-- `internal/network`: 73.9% ⚠️
-- `internal/transport`: 71.1% ⚠️
-- `querier`: 60.6% ⚠️ (needs more integration tests)
+**Coverage checklist** (details: `scripts/coverage-trend.sh --help`, docs/COMPLIANCE_DASHBOARD.md):
+- Target ≥80% per constitution; aim for ≥85% when touching hot paths.
+- Run `make test-coverage-report` for package deltas before large refactors.
+- Log snapshots via `./scripts/coverage-trend.sh` when coverage meaningfully shifts.
+- Investigate dips in `internal/responder`, `internal/transport`, and `querier`—open focus areas.
 
 ### Building
 ```bash
@@ -284,78 +263,12 @@ make test
 
 ### Semgrep (Static Analysis)
 
-**Automated Enforcement**: Semgrep runs automatically via:
-1. **Pre-commit hook** - Blocks commits with findings (`.githooks/pre-commit`)
-2. **Makefile CI** - `make semgrep-check` in `verify`, `ci-fast`, `ci-full`
-3. **Manual runs** - `make semgrep` (informational) or `make semgrep-check` (strict)
-
-**When to use Semgrep:**
-- ✅ **AUTOMATIC** - Pre-commit hook runs on every `git commit`
-- ✅ **CI/CD** - All CI targets include `semgrep-check`
-- ✅ **MANUAL** - Run `make semgrep` to see all findings (informational)
-- ✅ **BEFORE PR** - Run `make semgrep-check` to verify clean state
-
-**DO NOT** use Semgrep:
-- ❌ During initial exploration/prototyping
-- ❌ Bypass with `git commit --no-verify` without user permission
-
-```bash
-# ✅ RECOMMENDED: Use Makefile targets
-make semgrep              # Informational scan (won't fail)
-make semgrep-check        # Strict scan (fails on findings) - used in CI
-
-# ✅ Pre-commit hook (automatic)
-git commit -m "message"   # Hook runs semgrep automatically
-
-# Manual semgrep commands (if needed)
-semgrep --config=.semgrep.yml .                                # All findings
-semgrep --config=.semgrep.yml --severity ERROR .               # Critical only
-semgrep --config=.semgrep.yml --validate                       # Check config
-semgrep --config=.semgrep.yml .semgrep-tests/ --no-git-ignore  # Test rules
-
-# Bypass hook (NOT recommended - ask user first)
-git commit --no-verify
-```
-
-**Rules enforce:**
-- 🛡️ **Constitution principles** (RFC compliance, error handling, dependencies)
-- 🏗️ **F-Spec requirements** (concurrency, architecture, security)
-- 📋 **RFC 6762 compliance** (mDNS protocol constants, TTLs)
-
-**Common findings you should fix:**
-1. **Timer/Ticker leaks** (`beacon-timer-leak`, `beacon-ticker-leak`)
-   - Add `defer timer.Stop()` after creating timers
-2. **Mutex without defer** (`beacon-mutex-defer-unlock`)
-   - Add `defer mu.Unlock()` after `mu.Lock()`
-3. **File leaks** (`beacon-file-missing-defer-close`)
-   - Add `defer file.Close()` after opening files
-4. **WaitGroup leaks** (`beacon-waitgroup-missing-done`)
-   - Add `defer wg.Done()` as first line in goroutine
-5. **Security violations** (`beacon-unsafe-in-parser`, `beacon-panic-on-network-input`)
-   - Never use `unsafe` in packet parsing code
-   - Never `panic()` on network input - return `WireFormatError` instead
-
-**Integration:**
-- **Pre-commit hook**: `.githooks/pre-commit` (auto-installed via `git config core.hooksPath .githooks`)
-- **Makefile**: `make semgrep-check` in `verify`, `ci-fast`, `ci-full` targets
-- **Testing**: See `.semgrep-tests/README.md` for TDD approach
-- **Rules**: See `SEMGREP_RULES_SUMMARY.md` for complete documentation
-
-**Suppressing findings:**
-```go
-// Valid reason: Lock upgrade pattern requires manual unlock
-mu.RLock() // nosemgrep: beacon-mutex-defer-unlock
-```
-Always add a comment explaining WHY suppression is necessary.
-
-**Current Status:**
-```bash
-# As of 2025-11-02:
-# - 25 rules active
-# - 13 ERROR severity (critical bugs/security/library design)
-# - 10 WARNING severity (best practices)
-# - 2 INFO severity (style)
-```
+**Semgrep checklist** (full rule docs: `SEMGREP_RULES_SUMMARY.md`, quick ref: `.semgrep-tests/README.md`):
+- Hooks: `.githooks/pre-commit` runs Semgrep automatically—rerun via `make semgrep-check` to reproduce CI.
+- Prioritize ERROR rules first (timer/ticker, mutex, panic-on-input). Mention rule IDs when reporting failures.
+- Use `make semgrep` for exploratory scans; switch to `make semgrep-check` before final commits or PRs.
+- Suppress only with inline justification (`nosemgrep: <rule>` plus reason). Keep overrides rare and reviewed.
+- Track rule updates in `SEMGREP_FINDINGS.md` before/after large changes.
 
 ---
 
@@ -548,7 +461,7 @@ Development follows a strict **Spec → Plan → Tasks → TDD → Validate** cy
 - **`specs/[milestone]/tasks.md`** - Executable tasks
 - Example: `specs/003-m1-refactoring/` (97 tasks, all complete)
 
-#### `RFC Docs/` - Protocol Specifications (CRITICAL)
+#### `RFC%20Docs/` - Protocol Specifications (CRITICAL)
 - **RFC 6762**: mDNS specification - **ALL behavior must comply**
 - **RFC 1035**: DNS message format
 - RFCs are the source of truth for protocol behavior
@@ -559,6 +472,16 @@ Development follows a strict **Spec → Plan → Tasks → TDD → Validate** cy
 - **ADR-002**: Buffer Pooling Pattern
 - **ADR-003**: Integration Test Timing Tolerance
 - ADRs document WHY we made key architectural choices
+
+## Common Task Recipes
+
+| Scenario | Specs & References | Tests to Run First | Implementation Notes |
+| --- | --- | --- | --- |
+| Polish responder probing/announcing | `specs/006-mdns-responder/{plan,tasks}.md` (T118–T126), RFC 6762 §8, `.specify/specs/F-2-architecture-layers.md` | `go test ./internal/state -run Prober` then `make test` | Touch `internal/state/{prober,announcer}.go`; keep timers cancellable and cite RFC clauses when adjusting timings. |
+| Add responder validation | `specs/006-mdns-responder/spec.md#validation`, `internal/security/validation.go` | `go test ./internal/security -run Validate` | Update validation errors only via `internal/errors`; document new constraints in `responder/service.go` Godoc. |
+| Extend public responder API | `responder/responder.go`, `specs/006-mdns-responder/tasks.md` (API section), ADR-001 | `go test ./responder -run TestResponder` | Ensure new options thread through `internal/responder/registry.go`; add examples to `examples/` if behavior changes. |
+| Investigate coverage regression | docs/COMPLIANCE_DASHBOARD.md, `scripts/coverage-trend.sh` | `make test-coverage-report` | Isolate packages <80% and add tests before refactors; log results via coverage script for history. |
+| Semgrep failure triage | `SEMGREP_RULES_SUMMARY.md`, `.semgrep-tests/README.md` | `make semgrep-check` | Reproduce failing rule, adjust code or rule test; include rule ID + reasoning in PR description if suppression necessary. |
 
 ### Spec Kit Slash Commands
 
@@ -617,7 +540,7 @@ Development follows a strict **Spec → Plan → Tasks → TDD → Validate** cy
 From `.specify/memory/constitution.md`:
 
 1. **Protocol Compliance First** - RFC 6762 (mDNS) compliance is non-negotiable
-2. **Zero External Dependencies** - Standard library only
+2. **Minimal External Dependencies** - Prefer standard library; currently only `golang.org/x/net` + `golang.org/x/sys`
 3. **Context-Aware Operations** - All blocking operations accept `context.Context`
 4. **Clean Architecture** - Strict layer boundaries (F-2)
 5. **Test-Driven Development** - Tests written first (TDD)
@@ -707,16 +630,27 @@ gofmt -l . | grep . && echo "Files need formatting"
 ---
 
 <!-- MANUAL ADDITIONS START -->
-<!-- Add project-specific guidelines below -->
-
+- **Beacon-specific prompting**:
+  - When citing requirements, reference spec IDs (e.g., `specs/006-mdns-responder/tasks.md#T121`) or ADR numbers alongside file paths.
+  - Prefer layered summaries: 1) headline decision, 2) key evidence (tests/specs), 3) optional deep dive to conserve tokens.
+  - Collapse large RFC excerpts into section pointers (e.g., "RFC 6762 §6.7, paragraphs 1-2") unless verbatim wording is essential.
+- **Token stewardship**:
+  - Keep conversation deltas ≤400 tokens where possible; link to prior context instead of repeating it.
+  - Annotate any long log or diff with a one-line takeaway before pasting the snippet.
+- **Failure reporting**:
+  - For CI or Semgrep failures, provide command, exit status, and top 3 findings with rule IDs—offer remediation options if known.
+  - If a required dependency is missing locally, suggest the Makefile/script that installs or mocks it.
+- **PR etiquette**:
+  - Summaries must map work to open specs/tasks and mention any Semgrep suppressions explicitly.
+  - Highlight user-visible behavior changes and note testing gaps if something could not be run.
 <!-- MANUAL ADDITIONS END -->
 
 ---
 
-**Generated**: 2025-11-01
+**Generated**: 2025-11-01 (living document)
 **Project**: Beacon mDNS Library
-**Status**: M1-Refactoring Complete, M1.1 Planning
-- Any time we remove a test, I would like to think critically over the decision and to consider if other tests need to adde in its place.
+**Status**: M2 Responder Implementation 94.6% complete (final polish + docs)
+- When removing a test, justify the decision and note compensating coverage if needed.
 
 ## Active Technologies
 - Go 1.21+ + Standard library + `golang.org/x/sys` (platform-specific socket options from M1.1), `golang.org/x/net` (multicast group management from M1.1) (006-mdns-responder)

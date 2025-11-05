@@ -3,7 +3,7 @@
 **Version**: 1.1
 **Purpose**: Shared context and reference for all Beacon specifications and implementations
 **Audience**: Spec writers, developers, testers, contributors
-**Governance**: Development governed by [Beacon Constitution v1.0.0](../.specify/memory/constitution.md)
+**Governance**: Development governed by [Beacon Constitution v1.0.0](../memory/constitution.md)
 
 This document establishes the foundational knowledge required to understand, specify, and implement Beacon. All other specifications reference this document rather than re-explaining basics.
 
@@ -899,7 +899,7 @@ User → Resolver.Resolve(instance) → Querier.Query(SRV + TXT)
 - "RFC 6763 §4.1" = RFC 6763, Section 4.1
 
 **RFC Compliance**:
-- See [RFC Compliance Matrix](./RFC_COMPLIANCE_MATRIX.md) for detailed section-by-section compliance status
+- See [RFC Compliance Matrix](../../docs/RFC_COMPLIANCE_MATRIX.md) for detailed section-by-section compliance status
 
 **Code Examples**:
 - Pseudocode uses Go-like syntax

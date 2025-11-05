@@ -82,27 +82,27 @@ Beacon is a **production-ready query-only mDNS library** with the following capa
 **Compliance & Requirements**:
 - [RFC Compliance Matrix](./RFC_COMPLIANCE_MATRIX.md) - Section-by-section RFC 6762/6763 implementation status
 - [Functional Requirements Matrix](./FUNCTIONAL_REQUIREMENTS_MATRIX.md) - All 61 Foundation FRs with traceability
-- [Foundation Completion Report](./FOUNDATION_COMPLETE.md) - M1 → M1-R → M1.1 narrative
+- Foundation completion narrative (publication pending)
 
 **Project Governance**:
 - [Beacon Constitution v1.1.0](../.specify/memory/constitution.md) - Project principles and non-negotiables
 - [ROADMAP](../ROADMAP.md) - Milestone plan (M1-M6: Basic Querier → Production Ready)
 
 **Architecture Specifications** (F-Series):
-- [F-2: Package Structure](../.specify/specs/F-2-architecture-layers.md) - Layer boundaries and clean architecture
+- [F-2: Package Structure](../.specify/specs/F-2-package-structure.md) - Layer boundaries and clean architecture
 - [F-3: Error Handling](../.specify/specs/F-3-error-handling.md) - Error propagation (NetworkError, ValidationError, WireFormatError)
-- [F-9: Transport Layer Configuration](../.specify/specs/F-9-transport-layer-config.md) - Socket options, multicast configuration
+- [F-9: Transport Layer Configuration](../.specify/specs/F-9-transport-layer-socket-configuration.md) - Socket options, multicast configuration
 - [F-10: Network Interface Management](../.specify/specs/F-10-network-interface-management.md) - Interface filtering, VPN exclusion
 - [F-11: Security Architecture](../.specify/specs/F-11-security-architecture.md) - Rate limiting, source IP filtering
 
 **Feature Specifications**:
-- [M1: Basic mDNS Querier](../specs/002-mdns-querier/) - Original query-only spec
-- [M1-Refactoring](../specs/003-m1-refactoring/) - Architectural improvements
-- [M1.1: Architectural Hardening](../specs/004-m1-1-architectural-hardening/) - Production readiness
+- [M1: Basic mDNS Querier](../specs/002-mdns-querier/spec.md) - Original query-only spec
+- [M1-Refactoring](../specs/003-m1-refactoring/spec.md) - Architectural improvements
+- [M1.1: Architectural Hardening](../specs/004-m1-1-architectural-hardening/spec.md) - Production readiness
 
 **Reference**:
-- [RFC 6762: Multicast DNS](../RFC%20Docs/rfc6762.txt) - PRIMARY TECHNICAL AUTHORITY
-- [RFC 6763: DNS-SD](../RFC%20Docs/rfc6763.txt) - Service Discovery (M3+)
+- [RFC 6762: Multicast DNS](../RFC%20Docs/RFC-6762-Multicast-DNS.txt) - PRIMARY TECHNICAL AUTHORITY
+- [RFC 6763: DNS-SD](../RFC%20Docs/RFC-6763-DNS-SD.txt) - Service Discovery (M3+)
 - [BEACON_FOUNDATIONS](../.specify/specs/BEACON_FOUNDATIONS.md) - DNS/mDNS/DNS-SD conceptual foundation
 
 ---

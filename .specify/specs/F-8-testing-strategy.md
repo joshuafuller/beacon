@@ -1203,7 +1203,7 @@ This specification is considered complete when:
 
 ## Constitutional Compliance
 
-This specification implements and enforces the [Beacon Constitution v1.0.0](../../.specify/memory/constitution.md):
+This specification implements and enforces the [Beacon Constitution v1.0.0](../memory/constitution.md):
 
 ### Principle I: RFC Compliant
 **Status**: ✅ **ENFORCED**
@@ -1314,7 +1314,7 @@ This specification implements and enforces the [Beacon Constitution v1.0.0](../.
 
 ### Project Governance
 
-- [Beacon Constitution v1.0.0](../../.specify/memory/constitution.md) - Ratified 2025-11-01
+- [Beacon Constitution v1.0.0](../memory/constitution.md) - Ratified 2025-11-01
   - **Principle I**: RFC Compliant (NON-NEGOTIABLE) - All RFC MUST requirements tested
   - **Principle II**: Spec-Driven Development (NON-NEGOTIABLE) - Tests from specs, not implementation
   - **Principle III**: Test-Driven Development (NON-NEGOTIABLE) - TDD cycle mandatory, coverage ≥80%, race detection required
@@ -1322,7 +1322,7 @@ This specification implements and enforces the [Beacon Constitution v1.0.0](../.
 
 ### Foundational Knowledge
 
-- [BEACON_FOUNDATIONS v1.1](../../docs/BEACON_FOUNDATIONS.md) - Terminology and test scenarios
+- [BEACON_FOUNDATIONS v1.1](./BEACON_FOUNDATIONS.md) - Terminology and test scenarios
 
 ### Architecture Specifications
 

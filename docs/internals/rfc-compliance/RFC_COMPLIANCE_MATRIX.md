@@ -277,12 +277,12 @@ Based on research findings and RFC analysis, the following are **critical gaps**
 
 ### Internal Documents
 - [Beacon Constitution v1.0.0](../.specify/memory/constitution.md)
-- [BEACON_FOUNDATIONS v1.1](./BEACON_FOUNDATIONS.md)
+- [BEACON_FOUNDATIONS v1.1](../.specify/specs/BEACON_FOUNDATIONS.md)
 - [F-2: Package Structure](../.specify/specs/F-2-package-structure.md)
 - [F-3: Error Handling](../.specify/specs/F-3-error-handling.md)
 - [F-4: Concurrency Model](../.specify/specs/F-4-concurrency-model.md)
 - [F-5: Configuration](../.specify/specs/F-5-configuration.md)
-- [Research Documents](./research/)
+- Research documents (see milestone specs under `../specs/`)
 
 ### Research Findings
 - "Designing Premier Go MDNS Library.md" - Socket management, architecture, security

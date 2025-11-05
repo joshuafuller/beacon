@@ -529,8 +529,8 @@ The 006-mdns-responder implementation successfully delivers a **production-ready
 - [tasks.md](./tasks.md) - Executable tasks (129 tasks)
 
 **RFCs**:
-- [RFC 6762: Multicast DNS](../../RFC%20Docs/rfc6762.txt)
-- [RFC 6763: DNS-Based Service Discovery](../../RFC%20Docs/rfc6763.txt)
+- [RFC 6762: Multicast DNS](../../RFC%20Docs/RFC-6762-Multicast-DNS.txt)
+- [RFC 6763: DNS-Based Service Discovery](../../RFC%20Docs/RFC-6763-DNS-SD.txt)
 
 ---
 

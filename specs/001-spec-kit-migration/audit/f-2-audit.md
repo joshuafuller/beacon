@@ -26,12 +26,12 @@
 ## References
 
 **Constitutional**:
-- [Beacon Constitution v1.0.0](../../.specify/memory/constitution.md)
-- [BEACON_FOUNDATIONS v1.1](../../docs/BEACON_FOUNDATIONS.md)
+- Beacon Constitution v1.0.0 → ../../.specify/memory/constitution.md
+- BEACON_FOUNDATIONS v1.1 → ../../.specify/specs/BEACON_FOUNDATIONS.md
 
 **RFCs**:
-- [RFC 6762](../../RFC%20Docs/RFC-6762-Multicast-DNS.txt) - Multicast DNS
-- [RFC 6763](../../RFC%20Docs/RFC-6763-DNS-SD.txt) - DNS-Based Service Discovery
+- RFC 6762 → ../../RFC%20Docs/RFC-6762-Multicast-DNS.txt (Multicast DNS)
+- RFC 6763 → ../../RFC%20Docs/RFC-6763-DNS-SD.txt (DNS-Based Service Discovery)
 
 **Go Best Practices**:
 - Go Blog: [Internal Packages](https://go.dev/doc/go1.4#internalpackages)

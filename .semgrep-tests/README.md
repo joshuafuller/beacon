@@ -225,4 +225,4 @@ When modifying existing rules:
 - **Semgrep Rule Syntax**: https://semgrep.dev/docs/writing-rules/rule-syntax/
 - **Constitution**: `.specify/memory/constitution.md`
 - **F-Specs**: `.specify/specs/F-*.md`
-- **RFC 6762**: `RFC Docs/rfc6762.txt`
+- **RFC 6762**: `RFC%20Docs/RFC-6762-Multicast-DNS.txt`

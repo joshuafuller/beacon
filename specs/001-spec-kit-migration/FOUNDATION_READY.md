@@ -18,9 +18,9 @@ The Beacon project foundation is **FULLY READY** for feature development. All gu
 
 ### 1. RFCs 6762 & 6763 - PRIMARY TECHNICAL AUTHORITY ✅
 
-**Location**: `/RFC Docs/`
-- ✅ [RFC 6762: Multicast DNS](../RFC%20Docs/RFC-6762-Multicast-DNS.txt) - 184 KB, 1,410 lines
-- ✅ [RFC 6763: DNS-Based Service Discovery](../RFC%20Docs/RFC-6763-DNS-SD.txt) - 125 KB, 969 lines
+**Location**: `/RFC%20Docs/`
+- ✅ [RFC 6762: Multicast DNS](../../RFC%20Docs/RFC-6762-Multicast-DNS.txt) - 184 KB, 1,410 lines
+- ✅ [RFC 6763: DNS-Based Service Discovery](../../RFC%20Docs/RFC-6763-DNS-SD.txt) - 125 KB, 969 lines
 
 **Status**: PRIMARY TECHNICAL AUTHORITY for all Beacon development
 **Note**: RFC requirements override all other concerns (Constitution Principle I)
@@ -42,7 +42,7 @@ The Beacon project foundation is **FULLY READY** for feature development. All gu
 
 ### 3. BEACON_FOUNDATIONS v1.1 - Common Knowledge ✅
 
-**Location**: `docs/BEACON_FOUNDATIONS.md`
+**Location**: `.specify/specs/BEACON_FOUNDATIONS.md`
 **Content**:
 - §4: Beacon Architecture overview
 - §5: Terminology glossary (Querier, Responder, Probe, Announce, etc.)
