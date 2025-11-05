@@ -9,15 +9,12 @@ run:
   timeout: 5m
   tests: true
   build-tags: []
-  skip-dirs:
-    - vendor
-    - .semgrep-tests  # TDD test files with intentional violations
   skip-files: []
   modules-download-mode: readonly
 
 output:
   formats:
-    colored-line-number:
+    - format: colored-line-number
       path: stdout
   print-issued-lines: true
   print-linter-name: true
@@ -81,6 +78,9 @@ issues:
   exclude-use-default: false
   max-issues-per-linter: 0
   max-same-issues: 0
+  exclude-dirs:
+    - vendor
+    - .semgrep-tests  # TDD test files with intentional violations
 
   exclude-rules:
     # Exclude some linters from running on tests files
