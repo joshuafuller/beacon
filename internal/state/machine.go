@@ -1,3 +1,25 @@
+// Package state implements the mDNS service registration state machine per RFC 6762 §8.
+//
+// WHY THIS PACKAGE EXISTS:
+// RFC 6762 §8 mandates a specific sequence before a service can be considered "established":
+// 1. Probing phase (~750ms): Send 3 probe queries to detect naming conflicts
+// 2. Announcing phase (~1s): Send 2 unsolicited announcements to inform the network
+// 3. Established: Service is now discoverable by other mDNS clients
+//
+// This package enforces RFC-compliant timing, handles conflicts, and coordinates state transitions.
+//
+// DESIGN RATIONALE:
+// - Goroutine-per-service: Each service registration runs independently in its own goroutine (R001)
+// - Context-aware: All operations respect context cancellation per F-9
+// - Testable: State machine is decoupled from transport for unit testing
+//
+// RFC COMPLIANCE:
+// - RFC 6762 §8.1: Probing (3 probes, 250ms apart)
+// - RFC 6762 §8.2: Conflict detection via simultaneous probe tie-breaking
+// - RFC 6762 §8.3: Announcing (2 announcements, 1s apart)
+// - RFC 6762 §9: Conflict resolution via service renaming
+//
+// PRIMARY TECHNICAL AUTHORITY: RFC 6762 §§8-9 (Probing, Announcing, Conflict Resolution)
 package state
 
 import (
@@ -6,6 +28,42 @@ import (
 )
 
 // Machine coordinates the service registration state machine per RFC 6762 §8.
+//
+// WHY: RFC 6762 §8 requires a multi-phase registration process to prevent naming conflicts
+// and ensure all network participants are aware of the new service.
+//
+// OPERATION:
+// The machine orchestrates three phases:
+//   1. Probing Phase (RFC 6762 §8.1):
+//      - Duration: ~750ms (3 probes × 250ms intervals)
+//      - Purpose: Detect if another device is already using this name
+//      - Action: Send probe queries (type ANY) and listen for responses
+//      - Outcome: Either no conflict (proceed to announcing) or conflict detected (stop)
+//
+//   2. Announcing Phase (RFC 6762 §8.3):
+//      - Duration: ~1s (2 announcements × 1s intervals)
+//      - Purpose: Inform network that we're claiming this name
+//      - Action: Send unsolicited multicast responses with all records (PTR, SRV, TXT, A)
+//      - Outcome: Service is now established and discoverable
+//
+//   3. Established State:
+//      - Service is fully registered and responding to queries
+//      - Responder handles incoming queries via query handler goroutine
+//
+// CONFLICT HANDLING:
+// If a conflict is detected during probing (RFC 6762 §8.2):
+//   - Machine transitions to ConflictDetected state
+//   - Caller (Responder.Register) renames service per RFC 6762 §9 (append "-2", "-3", etc.)
+//   - Probing restarts with new name (max 10 rename attempts per FR-032)
+//
+// State flow:
+//
+//	Initial → Probing → Announcing → Established
+//	Probing → ConflictDetected (if conflict)
+//
+// THREAD SAFETY:
+// - Machine uses sync.RWMutex to protect state reads/writes
+// - State transitions notify test hooks WITHOUT holding lock to prevent deadlocks
 //
 // State flow:
 //
