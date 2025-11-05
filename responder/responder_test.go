@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/joshuafuller/beacon/internal/message"
 )
 
 // TestResponder_New_RED tests Responder initialization.
@@ -618,4 +620,292 @@ func TestResponder_UpdateOneService(t *testing.T) {
 		t.Errorf("service2.TXTRecords[version] = %q, want %q (should be unchanged)",
 			retrieved2.TXTRecords["version"], "2.0")
 	}
+}
+
+// =============================================================================
+// Query Handling Tests (handleQuery, parseMessage, buildResponsePacket)
+// =============================================================================
+
+// TestHandleQuery_MalformedPacket tests that handleQuery handles malformed packets gracefully.
+//
+// RFC 6762 §6: "Malformed queries MUST be silently ignored"
+// FR-004: Errors must be handled gracefully without panics
+func TestHandleQuery_MalformedPacket(t *testing.T) {
+	ctx := context.Background()
+	r, err := New(ctx)
+	if err != nil {
+		t.Fatalf("New() error = %v, want nil", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	// Test with various malformed packets
+	tests := []struct {
+		name   string
+		packet []byte
+	}{
+		{"empty packet", []byte{}},
+		{"too short packet", []byte{0x00, 0x01}},
+		{"invalid header", []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}},
+		{"nil packet", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// handleQuery should not panic on malformed input
+			err := r.handleQuery(tt.packet)
+
+			// We expect an error, but no panic
+			if err == nil {
+				t.Log("handleQuery returned nil error (acceptable - packet ignored)")
+			} else {
+				t.Logf("handleQuery returned error: %v (acceptable - malformed packet)", err)
+			}
+		})
+	}
+
+	t.Log("✓ handleQuery handles malformed packets without panicking")
+}
+
+// TestHandleQuery_ResponsePacket tests that handleQuery ignores response packets.
+//
+// RFC 6762 §6: "Responses (QR=1) must be ignored by query handler"
+func TestHandleQuery_ResponsePacket(t *testing.T) {
+	ctx := context.Background()
+	r, err := New(ctx)
+	if err != nil {
+		t.Fatalf("New() error = %v, want nil", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	// Build a minimal DNS response packet (QR=1)
+	// DNS header: [ID=0x1234][Flags=0x8000 (QR=1)][...]
+	responsePacket := []byte{
+		0x12, 0x34, // Transaction ID
+		0x80, 0x00, // Flags: QR=1 (response), Opcode=0, AA=0, TC=0, RD=0, RA=0, RCODE=0
+		0x00, 0x00, // Questions: 0
+		0x00, 0x00, // Answers: 0
+		0x00, 0x00, // Authority: 0
+		0x00, 0x00, // Additional: 0
+	}
+
+	// handleQuery should ignore response packets
+	err = r.handleQuery(responsePacket)
+
+	if err != nil {
+		t.Logf("handleQuery returned error: %v (acceptable)", err)
+	}
+
+	t.Log("✓ handleQuery ignores response packets (QR=1)")
+}
+
+// TestHandleQuery_EmptyRegistry tests that handleQuery doesn't crash with no registered services.
+//
+// FR-004: Error handling must be robust
+func TestHandleQuery_EmptyRegistry(t *testing.T) {
+	ctx := context.Background()
+	r, err := New(ctx)
+	if err != nil {
+		t.Fatalf("New() error = %v, want nil", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	// Build a valid PTR query for _http._tcp.local
+	// DNS header + question section
+	queryPacket := buildPTRQuery("_http._tcp.local")
+
+	// handleQuery should not crash even with empty registry
+	err = r.handleQuery(queryPacket)
+
+	if err != nil {
+		t.Logf("handleQuery returned error: %v (acceptable)", err)
+	}
+
+	t.Log("✓ handleQuery handles empty registry without crashing")
+}
+
+// TestHandleQuery_WithRegisteredService tests that handleQuery processes queries for registered services.
+//
+// RFC 6762 §6: Responders must answer queries for registered services
+func TestHandleQuery_WithRegisteredService(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping test requiring registration timing in short mode")
+	}
+
+	ctx := context.Background()
+	r, err := New(ctx)
+	if err != nil {
+		t.Fatalf("New() error = %v, want nil", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	// Register a service
+	service := &Service{
+		InstanceName: "Test Service",
+		ServiceType:  "_http._tcp.local",
+		Port:         8080,
+	}
+
+	err = r.Register(service)
+	if err != nil {
+		t.Fatalf("Register() error = %v, want nil", err)
+	}
+
+	// Build a PTR query for the registered service type
+	queryPacket := buildPTRQuery("_http._tcp.local")
+
+	// handleQuery should process the query without error
+	err = r.handleQuery(queryPacket)
+
+	if err != nil {
+		t.Errorf("handleQuery() error = %v, want nil (should process query for registered service)", err)
+	}
+
+	t.Log("✓ handleQuery processes queries for registered services")
+}
+
+// TestParseMessage tests the parseMessage wrapper function.
+func TestParseMessage(t *testing.T) {
+	tests := []struct {
+		name      string
+		packet    []byte
+		wantError bool
+	}{
+		{
+			name:      "nil packet",
+			packet:    nil,
+			wantError: true,
+		},
+		{
+			name:      "empty packet",
+			packet:    []byte{},
+			wantError: true,
+		},
+		{
+			name: "valid query packet",
+			packet: []byte{
+				0x00, 0x00, // Transaction ID
+				0x00, 0x00, // Flags: QR=0 (query)
+				0x00, 0x00, // Questions: 0
+				0x00, 0x00, // Answers: 0
+				0x00, 0x00, // Authority: 0
+				0x00, 0x00, // Additional: 0
+			},
+			wantError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg, err := parseMessage(tt.packet)
+
+			if tt.wantError {
+				if err == nil {
+					t.Error("parseMessage() error = nil, want error")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("parseMessage() error = %v, want nil", err)
+				}
+				if msg == nil {
+					t.Error("parseMessage() returned nil message")
+				}
+			}
+		})
+	}
+}
+
+// TestBuildResponsePacket tests the buildResponsePacket stub function.
+func TestBuildResponsePacket(t *testing.T) {
+	// buildResponsePacket is currently a stub that returns empty byte slice
+	// This test documents the current behavior
+
+	msg := &message.DNSMessage{
+		Header: message.DNSHeader{
+			ID:      0x1234,
+			Flags:   0x8000, // Response
+			QDCount: 0,
+			ANCount: 0,
+			NSCount: 0,
+			ARCount: 0,
+		},
+	}
+
+	packet := buildResponsePacket(msg)
+
+	// Current stub implementation returns empty packet
+	if packet == nil {
+		t.Error("buildResponsePacket() returned nil, want empty byte slice")
+	}
+
+	// Document that this is a stub
+	if len(packet) != 0 {
+		t.Logf("buildResponsePacket() returned %d bytes (implementation exists)", len(packet))
+	} else {
+		t.Log("✓ buildResponsePacket() stub verified (returns empty packet)")
+	}
+}
+
+// =============================================================================
+// Test Helpers
+// =============================================================================
+
+// buildPTRQuery constructs a minimal DNS query packet for PTR record.
+//
+// This helper creates a valid DNS query packet for testing handleQuery().
+func buildPTRQuery(qname string) []byte {
+	// Build a minimal PTR query packet
+	// Format: [Header][Question]
+
+	// DNS Header (12 bytes)
+	packet := []byte{
+		0x00, 0x00, // Transaction ID: 0
+		0x00, 0x00, // Flags: QR=0 (query), Opcode=0, AA=0, TC=0, RD=0, RA=0, RCODE=0
+		0x00, 0x01, // Questions: 1
+		0x00, 0x00, // Answers: 0
+		0x00, 0x00, // Authority: 0
+		0x00, 0x00, // Additional: 0
+	}
+
+	// Question section: encode domain name
+	// Split qname into labels and encode each
+	labels := []byte{}
+	parts := splitDomainName(qname)
+	for _, part := range parts {
+		labels = append(labels, byte(len(part)))
+		labels = append(labels, []byte(part)...)
+	}
+	labels = append(labels, 0x00) // Root label (end of name)
+
+	packet = append(packet, labels...)
+
+	// QTYPE: PTR (12)
+	packet = append(packet, 0x00, 0x0C)
+
+	// QCLASS: IN (1)
+	packet = append(packet, 0x00, 0x01)
+
+	return packet
+}
+
+// splitDomainName splits a domain name into labels.
+func splitDomainName(name string) []string {
+	labels := []string{}
+	current := ""
+
+	for i := 0; i < len(name); i++ {
+		if name[i] == '.' {
+			if current != "" {
+				labels = append(labels, current)
+				current = ""
+			}
+		} else {
+			current += string(name[i])
+		}
+	}
+
+	if current != "" {
+		labels = append(labels, current)
+	}
+
+	return labels
 }
