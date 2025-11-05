@@ -578,3 +578,187 @@ func TestParseMessage_WithCompression(t *testing.T) {
 		t.Errorf("Answer NAME = %q, want %q (decompressed per RFC 1035 §4.1.4)", parsed.Answers[0].NAME, testLocalName)
 	}
 }
+
+// TestParseMessage_WithAuthority tests parsing messages with authority section.
+//
+// Coverage improvement: ParseMessage authority section parsing (66.7% → target 100%)
+func TestParseMessage_WithAuthority(t *testing.T) {
+	// Build DNS message with authority section
+	// Header: ID=0x1234, QR=1, OPCODE=0, AA=0, TC=0, RD=0, RA=0, RCODE=0
+	// QDCount=0, ANCount=0, NSCount=1, ARCount=0
+	msg := []byte{
+		0x12, 0x34, // ID
+		0x80, 0x00, // Flags: QR=1
+		0x00, 0x00, // QDCount = 0
+		0x00, 0x00, // ANCount = 0
+		0x00, 0x01, // NSCount = 1 (authority section)
+		0x00, 0x00, // ARCount = 0
+	}
+
+	// Authority record: "example.local" A IN
+	authority := []byte{
+		0x07, 'e', 'x', 'a', 'm', 'p', 'l', 'e',
+		0x05, 'l', 'o', 'c', 'a', 'l',
+		0x00,
+		0x00, 0x01, // TYPE = A
+		0x00, 0x01, // CLASS = IN
+		0x00, 0x00, 0x00, 0x3c, // TTL = 60
+		0x00, 0x04, // RDLENGTH = 4
+		10, 0, 0, 1, // RDATA = 10.0.0.1
+	}
+	msg = append(msg, authority...)
+
+	parsed, err := ParseMessage(msg)
+	if err != nil {
+		t.Fatalf("ParseMessage failed: %v", err)
+	}
+
+	// Verify authority section parsed
+	if len(parsed.Authorities) != 1 {
+		t.Errorf("len(Authorities) = %d, want 1", len(parsed.Authorities))
+	}
+
+	if parsed.Authorities[0].NAME != "example.local" {
+		t.Errorf("Authority NAME = %q, want \"example.local\"", parsed.Authorities[0].NAME)
+	}
+}
+
+// TestParseMessage_WithAdditional tests parsing messages with additional section.
+//
+// Coverage improvement: ParseMessage additional section parsing (66.7% → target 100%)
+func TestParseMessage_WithAdditional(t *testing.T) {
+	// Build DNS message with additional section
+	// Header: ID=0x5678, QR=1, OPCODE=0, AA=0, TC=0, RD=0, RA=0, RCODE=0
+	// QDCount=0, ANCount=0, NSCount=0, ARCount=1
+	msg := []byte{
+		0x56, 0x78, // ID
+		0x80, 0x00, // Flags: QR=1
+		0x00, 0x00, // QDCount = 0
+		0x00, 0x00, // ANCount = 0
+		0x00, 0x00, // NSCount = 0
+		0x00, 0x01, // ARCount = 1 (additional section)
+	}
+
+	// Additional record: "host.local" A IN
+	additional := []byte{
+		0x04, 'h', 'o', 's', 't',
+		0x05, 'l', 'o', 'c', 'a', 'l',
+		0x00,
+		0x00, 0x01, // TYPE = A
+		0x00, 0x01, // CLASS = IN
+		0x00, 0x00, 0x00, 0x78, // TTL = 120
+		0x00, 0x04, // RDLENGTH = 4
+		192, 168, 1, 50, // RDATA = 192.168.1.50
+	}
+	msg = append(msg, additional...)
+
+	parsed, err := ParseMessage(msg)
+	if err != nil {
+		t.Fatalf("ParseMessage failed: %v", err)
+	}
+
+	// Verify additional section parsed
+	if len(parsed.Additionals) != 1 {
+		t.Errorf("len(Additionals) = %d, want 1", len(parsed.Additionals))
+	}
+
+	if parsed.Additionals[0].NAME != "host.local" {
+		t.Errorf("Additional NAME = %q, want \"host.local\"", parsed.Additionals[0].NAME)
+	}
+}
+
+// TestParseMessage_AllSections tests parsing a complete DNS message with all sections.
+//
+// Validates comprehensive parsing: question, answer, authority, and additional sections.
+//
+// Coverage improvement: ParseMessage full message parsing
+func TestParseMessage_AllSections(t *testing.T) {
+	// Build complete DNS message with all sections
+	// Header: QDCount=1, ANCount=1, NSCount=1, ARCount=1
+	msg := []byte{
+		0xAB, 0xCD, // ID
+		0x84, 0x00, // Flags: QR=1, AA=1
+		0x00, 0x01, // QDCount = 1
+		0x00, 0x01, // ANCount = 1
+		0x00, 0x01, // NSCount = 1
+		0x00, 0x01, // ARCount = 1
+	}
+
+	// Question: "service.local" A IN
+	question := []byte{
+		0x07, 's', 'e', 'r', 'v', 'i', 'c', 'e',
+		0x05, 'l', 'o', 'c', 'a', 'l',
+		0x00,
+		0x00, 0x01, // QTYPE = A
+		0x00, 0x01, // QCLASS = IN
+	}
+	msg = append(msg, question...)
+
+	// Answer: "service.local" A IN with compression
+	answer := []byte{
+		0xC0, 0x0C, // Compression pointer to question name
+		0x00, 0x01, // TYPE = A
+		0x00, 0x01, // CLASS = IN
+		0x00, 0x00, 0x00, 0x78, // TTL = 120
+		0x00, 0x04, // RDLENGTH = 4
+		10, 10, 10, 10, // RDATA = 10.10.10.10
+	}
+	msg = append(msg, answer...)
+
+	// Authority: "local" NS IN
+	authority := []byte{
+		0x05, 'l', 'o', 'c', 'a', 'l',
+		0x00,
+		0x00, 0x02, // TYPE = NS
+		0x00, 0x01, // CLASS = IN
+		0x00, 0x00, 0x00, 0x3c, // TTL = 60
+		0x00, 0x02, // RDLENGTH = 2
+		0xC0, 0x0C, // RDATA = compression pointer
+	}
+	msg = append(msg, authority...)
+
+	// Additional: "ns.local" A IN
+	additional := []byte{
+		0x02, 'n', 's',
+		0xC0, 0x14, // Compression pointer to "local"
+		0x00, 0x01, // TYPE = A
+		0x00, 0x01, // CLASS = IN
+		0x00, 0x00, 0x00, 0x78, // TTL = 120
+		0x00, 0x04, // RDLENGTH = 4
+		192, 168, 1, 1, // RDATA = 192.168.1.1
+	}
+	msg = append(msg, additional...)
+
+	parsed, err := ParseMessage(msg)
+	if err != nil {
+		t.Fatalf("ParseMessage failed: %v", err)
+	}
+
+	// Verify all sections
+	if len(parsed.Questions) != 1 {
+		t.Errorf("len(Questions) = %d, want 1", len(parsed.Questions))
+	}
+	if len(parsed.Answers) != 1 {
+		t.Errorf("len(Answers) = %d, want 1", len(parsed.Answers))
+	}
+	if len(parsed.Authorities) != 1 {
+		t.Errorf("len(Authorities) = %d, want 1", len(parsed.Authorities))
+	}
+	if len(parsed.Additionals) != 1 {
+		t.Errorf("len(Additionals) = %d, want 1", len(parsed.Additionals))
+	}
+
+	// Verify content
+	if parsed.Questions[0].QNAME != "service.local" {
+		t.Errorf("Question QNAME = %q, want \"service.local\"", parsed.Questions[0].QNAME)
+	}
+	if parsed.Answers[0].NAME != "service.local" {
+		t.Errorf("Answer NAME = %q, want \"service.local\"", parsed.Answers[0].NAME)
+	}
+	if parsed.Authorities[0].NAME != "local" {
+		t.Errorf("Authority NAME = %q, want \"local\"", parsed.Authorities[0].NAME)
+	}
+	if parsed.Additionals[0].NAME != "ns.local" {
+		t.Errorf("Additional NAME = %q, want \"ns.local\"", parsed.Additionals[0].NAME)
+	}
+}

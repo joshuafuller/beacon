@@ -457,3 +457,261 @@ func TestParseEncodeName_Roundtrip(t *testing.T) {
 		})
 	}
 }
+
+// TestEncodeServiceInstanceName tests encoding of service instance names per RFC 6763 §4.3.
+//
+// RFC 6763 §4.3: The instance name is a single DNS label that may contain arbitrary
+// UTF-8 text, including spaces. The instance label is prepended to the service type
+// to form the full service instance name.
+//
+// Format: <Instance>.<ServiceType>
+// Example: "My Printer._http._tcp.local"
+//
+// Coverage improvement: EncodeServiceInstanceName (0% → 100%)
+func TestEncodeServiceInstanceName(t *testing.T) {
+	tests := []struct {
+		name         string
+		instanceName string
+		serviceType  string
+		wantErr      bool
+		errType      string
+		validate     func(t *testing.T, encoded []byte)
+	}{
+		{
+			name:         "valid - simple name",
+			instanceName: "MyPrinter",
+			serviceType:  "_http._tcp.local",
+			wantErr:      false,
+			validate: func(t *testing.T, encoded []byte) {
+				// First byte should be length of "MyPrinter"
+				if encoded[0] != 9 {
+					t.Errorf("first byte = %d, want 9 (length of MyPrinter)", encoded[0])
+				}
+				// Should contain "MyPrinter" bytes
+				if string(encoded[1:10]) != "MyPrinter" {
+					t.Errorf("instance name = %q, want MyPrinter", string(encoded[1:10]))
+				}
+				// Should end with null terminator
+				if encoded[len(encoded)-1] != 0 {
+					t.Error("encoded name should end with null terminator")
+				}
+			},
+		},
+		{
+			name:         "valid - name with spaces",
+			instanceName: "My Awesome Printer",
+			serviceType:  "_http._tcp.local",
+			wantErr:      false,
+			validate: func(t *testing.T, encoded []byte) {
+				// RFC 6763 §4.3: Instance names may contain spaces
+				if encoded[0] != 18 {
+					t.Errorf("first byte = %d, want 18 (length)", encoded[0])
+				}
+				if string(encoded[1:19]) != "My Awesome Printer" {
+					t.Errorf("instance name = %q, want 'My Awesome Printer'", string(encoded[1:19]))
+				}
+			},
+		},
+		{
+			name:         "valid - unicode UTF-8",
+			instanceName: "Printer™",
+			serviceType:  "_http._tcp.local",
+			wantErr:      false,
+			validate: func(t *testing.T, encoded []byte) {
+				// RFC 6763 §4.3: UTF-8 text allowed in instance names
+				length := encoded[0]
+				instanceBytes := encoded[1 : 1+length]
+				if string(instanceBytes) != "Printer™" {
+					t.Errorf("instance name = %q, want 'Printer™'", string(instanceBytes))
+				}
+			},
+		},
+		{
+			name:         "valid - 63 character max length",
+			instanceName: strings.Repeat("a", 63),
+			serviceType:  "_http._tcp.local",
+			wantErr:      false,
+			validate: func(t *testing.T, encoded []byte) {
+				// RFC 1035 §2.3.4: Labels are 1-63 octets
+				if encoded[0] != 63 {
+					t.Errorf("first byte = %d, want 63 (max label length)", encoded[0])
+				}
+			},
+		},
+		{
+			name:         "valid - single character",
+			instanceName: "X",
+			serviceType:  "_http._tcp.local",
+			wantErr:      false,
+			validate: func(t *testing.T, encoded []byte) {
+				if encoded[0] != 1 {
+					t.Errorf("first byte = %d, want 1", encoded[0])
+				}
+				if encoded[1] != 'X' {
+					t.Errorf("instance name = %c, want X", encoded[1])
+				}
+			},
+		},
+		{
+			name:         "valid - special characters",
+			instanceName: "My-Printer_v2.0",
+			serviceType:  "_http._tcp.local",
+			wantErr:      false,
+			validate: func(t *testing.T, encoded []byte) {
+				length := encoded[0]
+				if string(encoded[1:1+length]) != "My-Printer_v2.0" {
+					t.Errorf("instance name incorrect")
+				}
+			},
+		},
+		{
+			name:         "invalid - empty instance name",
+			instanceName: "",
+			serviceType:  "_http._tcp.local",
+			wantErr:      true,
+			errType:      "ValidationError",
+		},
+		{
+			name:         "invalid - exceeds 63 octets",
+			instanceName: strings.Repeat("a", 64),
+			serviceType:  "_http._tcp.local",
+			wantErr:      true,
+			errType:      "ValidationError",
+		},
+		{
+			name:         "invalid - service type malformed",
+			instanceName: "MyPrinter",
+			serviceType:  "invalid..local",
+			wantErr:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			encoded, err := EncodeServiceInstanceName(tt.instanceName, tt.serviceType)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Error("EncodeServiceInstanceName() error = nil, want error")
+					return
+				}
+
+				// Check error type if specified
+				if tt.errType == "ValidationError" {
+					var valErr *errors.ValidationError
+					if !goerrors.As(err, &valErr) {
+						t.Errorf("error type = %T, want *errors.ValidationError", err)
+					}
+				}
+
+				t.Logf("Got expected error: %v", err)
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("EncodeServiceInstanceName() error = %v, want nil", err)
+			}
+
+			if encoded == nil {
+				t.Fatal("EncodeServiceInstanceName() returned nil encoded bytes")
+			}
+
+			// Run validation if provided
+			if tt.validate != nil {
+				tt.validate(t, encoded)
+			}
+		})
+	}
+}
+
+// TestEncodeServiceInstanceName_Roundtrip tests that encoded service instance names
+// can be parsed back correctly.
+//
+// This validates the encoding format is compatible with DNS parsing.
+//
+// Coverage improvement: EncodeServiceInstanceName integration with ParseName
+func TestEncodeServiceInstanceName_Roundtrip(t *testing.T) {
+	tests := []struct {
+		instanceName string
+		serviceType  string
+	}{
+		{"MyPrinter", "_http._tcp.local"},
+		{"My Awesome Printer", "_ipp._tcp.local"},
+		{"Printer-2", "_http._tcp.local"},
+		{"X", "_ssh._tcp.local"},
+		{strings.Repeat("a", 63), "_http._tcp.local"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.instanceName, func(t *testing.T) {
+			// Encode
+			encoded, err := EncodeServiceInstanceName(tt.instanceName, tt.serviceType)
+			if err != nil {
+				t.Fatalf("EncodeServiceInstanceName() error = %v", err)
+			}
+
+			// Parse back the instance label
+			parsedName, offset, err := ParseName(encoded, 0)
+			if err != nil {
+				t.Fatalf("ParseName() error = %v", err)
+			}
+
+			// The parsed name should be: instanceName.serviceType
+			expected := tt.instanceName + "." + tt.serviceType
+			if parsedName != expected {
+				t.Errorf("roundtrip failed: got %q, want %q", parsedName, expected)
+			}
+
+			// Verify offset is at end (null terminator)
+			if offset != len(encoded) {
+				t.Errorf("offset = %d, want %d (end of encoded data)", offset, len(encoded))
+			}
+		})
+	}
+}
+
+// TestEncodeServiceInstanceName_Structure tests the wire format structure.
+//
+// Validates the encoded format matches DNS wire format expectations:
+// - Instance label length prefix
+// - Instance label data
+// - Service type labels (encoded normally)
+// - Null terminator
+//
+// Coverage improvement: EncodeServiceInstanceName wire format validation
+func TestEncodeServiceInstanceName_Structure(t *testing.T) {
+	instanceName := "MyPrinter"
+	serviceType := "_http._tcp.local"
+
+	encoded, err := EncodeServiceInstanceName(instanceName, serviceType)
+	if err != nil {
+		t.Fatalf("EncodeServiceInstanceName() error = %v", err)
+	}
+
+	// Expected structure:
+	// 0x09 "MyPrinter" 0x05 "_http" 0x04 "_tcp" 0x05 "local" 0x00
+	//  ^      ^          ^     ^      ^     ^     ^     ^      ^
+	//  len    data       len  data   len  data   len  data    null
+
+	t.Logf("Encoded bytes: % x", encoded)
+	t.Logf("Encoded length: %d bytes", len(encoded))
+
+	// Verify structure
+	if encoded[0] != 9 {
+		t.Errorf("instance label length = %d, want 9", encoded[0])
+	}
+
+	if string(encoded[1:10]) != "MyPrinter" {
+		t.Errorf("instance label = %q, want MyPrinter", string(encoded[1:10]))
+	}
+
+	// Next should be service type labels
+	if encoded[10] != 5 {
+		t.Errorf("first service label length = %d, want 5 (_http)", encoded[10])
+	}
+
+	// Last byte should be null terminator
+	if encoded[len(encoded)-1] != 0 {
+		t.Errorf("last byte = 0x%02x, want 0x00 (null terminator)", encoded[len(encoded)-1])
+	}
+}
