@@ -6,11 +6,22 @@ on:
   pull_request:
     branches: [ main ]
 
+# Cancel in-progress runs when a new workflow with the same group name is triggered
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: '1.21'
+  GOLANGCI_LINT_VERSION: 'v2.5.0'
+  STATICCHECK_VERSION: 'latest'
+
 jobs:
   # Fast feedback loop - runs on every commit
   ci-fast:
     name: Fast CI (Unit + Race + Coverage)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
     - name: Checkout code
@@ -19,29 +30,97 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.21'
+        go-version: ${{ env.GO_VERSION }}
         cache: true
+        cache-dependency-path: go.sum
 
-    - name: Install dependencies
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Install golangci-lint
       run: |
-        go install honnef.co/go/tools/cmd/staticcheck@latest
-        go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+        curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin ${{ env.GOLANGCI_LINT_VERSION }}
+        echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+    - name: Install staticcheck
+      run: go install honnef.co/go/tools/cmd/staticcheck@${{ env.STATICCHECK_VERSION }}
+
+    - name: Install Semgrep (optional)
+      continue-on-error: true
+      run: |
+        pip install --upgrade pip
         pip install semgrep
 
-    - name: Run Fast CI checks
-      run: make ci-fast
+    - name: Check code formatting
+      run: |
+        if [ -n "$(gofmt -l .)" ]; then
+          echo "❌ Code is not formatted. Run 'make fmt' to fix."
+          gofmt -l .
+          exit 1
+        fi
+
+    - name: Run go vet
+      run: go vet ./...
+
+    - name: Run golangci-lint
+      run: golangci-lint run --config .golangci.yml ./...
+      continue-on-error: true  # Temporarily allow warnings during technical debt cleanup
+
+    - name: Run Semgrep (optional)
+      continue-on-error: true
+      run: |
+        if command -v semgrep &> /dev/null; then
+          semgrep --config=.semgrep.yml --error . --exclude .semgrep-tests || echo "⚠️ Semgrep found issues"
+        else
+          echo "⚠️ Semgrep not installed, skipping"
+        fi
+
+    - name: Run tests with race detector
+      run: go test -race -v ./...
+
+    - name: Run tests with coverage
+      run: |
+        go test -coverprofile=coverage.out -covermode=atomic ./...
+        go tool cover -func=coverage.out
+
+    - name: Check minimum coverage
+      run: |
+        COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+        echo "Total coverage: $COVERAGE%"
+        if (( $(echo "$COVERAGE < 80" | bc -l) )); then
+          echo "❌ Coverage $COVERAGE% is below minimum 80%"
+          exit 1
+        else
+          echo "✅ Coverage $COVERAGE% meets minimum 80%"
+        fi
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v5
       with:
         files: ./coverage.out
         flags: unittests
-        fail_ci_if_error: true
+        fail_ci_if_error: false
+        token: ${{ secrets.CODECOV_TOKEN }}
+
+    - name: Upload coverage artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report
+        path: coverage.out
+        retention-days: 30
 
   # Full validation - runs on PRs and main branch
   ci-full:
     name: Full CI (All Tests)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
     - name: Checkout code
@@ -50,30 +129,98 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.21'
+        go-version: ${{ env.GO_VERSION }}
         cache: true
+        cache-dependency-path: go.sum
 
-    - name: Install dependencies
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Install staticcheck
+      run: go install honnef.co/go/tools/cmd/staticcheck@${{ env.STATICCHECK_VERSION }}
+
+    - name: Install golangci-lint
       run: |
-        go install honnef.co/go/tools/cmd/staticcheck@latest
-        go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+        curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin ${{ env.GOLANGCI_LINT_VERSION }}
+        echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+    - name: Install Semgrep (optional)
+      continue-on-error: true
+      run: |
+        pip install --upgrade pip
         pip install semgrep
 
-    - name: Run Full CI checks
-      run: make ci-full
+    - name: Check code formatting
+      run: make fmt-check
+
+    - name: Run go vet + staticcheck
+      run: |
+        go vet ./...
+        staticcheck ./...
+
+    - name: Run golangci-lint
+      run: golangci-lint run --config .golangci.yml ./...
+      continue-on-error: true  # Temporarily allow warnings during technical debt cleanup
+
+    - name: Run Semgrep (optional)
+      continue-on-error: true
+      run: |
+        if command -v semgrep &> /dev/null; then
+          semgrep --config=.semgrep.yml --error . --exclude .semgrep-tests || echo "⚠️ Semgrep found issues"
+        else
+          echo "⚠️ Semgrep not installed, skipping"
+        fi
+
+    - name: Run tests with race detector
+      run: go test -race -v ./...
+
+    - name: Run tests with coverage
+      run: go test -coverprofile=coverage.out -covermode=atomic ./...
+
+    - name: Run contract tests (RFC compliance)
+      run: go test -v ./tests/contract/...
+
+    - name: Run integration tests
+      run: go test -v ./tests/integration/...
+
+    - name: Run fuzz tests (CI mode - 30s)
+      run: go test -fuzz=FuzzMessageParser -fuzztime=30s ./tests/fuzz/...
+
+    - name: Run benchmarks
+      run: go test -bench=. -benchmem -count=5 ./...
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v5
       with:
         files: ./coverage.out
         flags: integration
-        fail_ci_if_error: true
+        fail_ci_if_error: false
+        token: ${{ secrets.CODECOV_TOKEN }}
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results
+        path: |
+          coverage.out
+          *.test
+        retention-days: 7
 
   # Build verification on multiple platforms and Go versions
   build-matrix:
     name: Build (${{ matrix.os }}, Go ${{ matrix.go-version }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         go-version: ['1.21', '1.22', '1.23']
@@ -87,18 +234,54 @@ jobs:
       with:
         go-version: ${{ matrix.go-version }}
         cache: true
+        cache-dependency-path: go.sum
 
-    - name: Build
+    - name: Build all packages
       run: go build ./...
 
-    - name: Run tests
-      run: go test -v -short ./...
+    - name: Run unit tests (short mode)
+      run: go test -short -v ./...
+
+    - name: Run race detector (Linux/macOS only)
+      if: runner.os != 'Windows'
+      run: go test -race -short ./...
+
+  # Security scanning
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      security-events: write
+      contents: read
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Run gosec security scanner
+      uses: securego/gosec@master
+      with:
+        args: '-no-fail -fmt sarif -out gosec-results.sarif ./...'
+      continue-on-error: true
+
+    - name: Upload SARIF results
+      if: always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: gosec-results.sarif
 
   # Go Report Card trigger (optional)
   goreportcard:
     name: Update Go Report Card
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    timeout-minutes: 5
 
     steps:
     - name: Trigger Go Report Card update

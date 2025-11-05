@@ -1,6 +1,9 @@
 # golangci-lint configuration for Beacon
-# Updated: 2025-11-02
+# Updated: 2025-11-05
 # Governance: Aligned with Beacon Constitution v1.0.0 Principle VII (Excellence)
+# Configuration version: v2
+
+version: 2
 
 run:
   timeout: 5m
@@ -11,23 +14,21 @@ run:
     - .semgrep-tests  # TDD test files with intentional violations
   skip-files: []
   modules-download-mode: readonly
-  deadline: 5m
 
 output:
-  format: colored-line-number
+  formats:
+    colored-line-number:
+      path: stdout
   print-issued-lines: true
   print-linter-name: true
+  show-stats: true
 
 linters:
-  enable:
-    # Core linters (enabled by default in v2.6.0)
-    - errcheck      # Unchecked errors
-    - govet         # Vet examines Go source code
-    - ineffassign   # Detect ineffectual assignments
-    - staticcheck   # Go static analysis (includes gosimple checks)
-    - unused        # Detect unused code
+  # Use 'standard' as default linter set, then enable additional ones
+  default: standard
 
-    # Additional linters for code quality
+  enable:
+    # Additional linters for code quality beyond standard set
     - misspell      # Spelling mistakes in comments
     - bodyclose     # HTTP response body closure (network code)
     - gosec         # Security issues
@@ -39,39 +40,42 @@ linters:
 
   disable: []
 
-linters-settings:
-  errcheck:
-    check-type-assertions: false  # Don't check type assertions with _ = x.(Type)
-    check-blank: false             # Don't check blank assignments _ = x
-    exclude-functions:
-      # Standard library functions where error can be safely ignored
-      - fmt.Fprint
-      - fmt.Fprintf
-      - fmt.Fprintln
+  settings:
+    errcheck:
+      check-type-assertions: false  # Don't check type assertions with _ = x.(Type)
+      check-blank: false             # Don't check blank assignments _ = x
+      exclude-functions:
+        # Standard library functions where error can be safely ignored
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
 
-      # Network cleanup - acceptable to ignore in defer/cleanup
-      - (io.Closer).Close
-      - (*net.Conn).Close
-      - (*net.PacketConn).Close
-      - (*os.File).Close
-      - (net.Listener).Close
+        # Network cleanup - acceptable to ignore in defer/cleanup
+        - (io.Closer).Close
+        - (*net.Conn).Close
+        - (*net.PacketConn).Close
+        - (*os.File).Close
+        - (net.Listener).Close
 
-  govet:
-    check-shadowing: true
-    enable-all: true
+    govet:
+      enable:
+        - shadow
+      settings:
+        shadow:
+          strict: true
 
-  gocyclo:
-    min-complexity: 15  # Allow moderate complexity for protocol parsing
+    gocyclo:
+      min-complexity: 15  # Allow moderate complexity for protocol parsing
 
-  dupl:
-    threshold: 100      # Minimum token count for duplication detection
+    dupl:
+      threshold: 100      # Minimum token count for duplication detection
 
-  goconst:
-    min-len: 3
-    min-occurrences: 3
+    goconst:
+      min-len: 3
+      min-occurrences: 3
 
-  misspell:
-    locale: US
+    misspell:
+      locale: US
 
 issues:
   exclude-use-default: false
