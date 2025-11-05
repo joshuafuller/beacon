@@ -1,4 +1,7 @@
 // Package responder manages mDNS service registration and response logic.
+//
+// This package implements the internal service registry for tracking registered
+// mDNS services and building responses to queries per RFC 6762 §6.
 package responder
 
 import (
@@ -6,13 +9,49 @@ import (
 	"sync"
 )
 
-// Registry manages registered mDNS services with thread-safe access.
+// Registry manages registered mDNS services with thread-safe concurrent access.
 //
-// R006 Decision: Use sync.RWMutex for concurrent access
-//   - Multiple concurrent readers (Get operations)
-//   - Single writer at a time (Register/Remove operations)
+// RFC 6762 §6: Responding to Queries
 //
-// T013: Implement Registry with sync.RWMutex
+// The registry maintains a thread-safe map of registered services, enabling:
+//  1. Concurrent service registration/unregistration (write operations)
+//  2. Concurrent service lookups during query response (read operations)
+//  3. Service type enumeration for RFC 6763 §9 service discovery
+//
+// Thread-safety is critical because:
+//  - Query handler goroutine continuously reads registry for response matching
+//  - Application goroutines concurrently register/unregister services
+//  - Multiple services can be registered/queried simultaneously
+//
+// Design Decision:
+//   - R006: sync.RWMutex enables multiple concurrent readers (Get, List)
+//     while serializing writers (Register, Remove)
+//   - Map key is InstanceName (unique per service instance)
+//   - Duplicate detection prevents name collisions
+//
+// Functional Requirements:
+//   - FR-203: Multi-service support with concurrent access
+//   - FR-204: Fast service lookup for query response
+//   - FR-027: Service type enumeration for RFC 6763 §9
+//   - T013: Thread-safe registry implementation
+//
+// Example:
+//
+//	registry := NewRegistry()
+//
+//	// Register service (write lock)
+//	service := &Service{InstanceName: "My Printer", ServiceType: "_ipp._tcp.local", Port: 631}
+//	if err := registry.Register(service); err != nil {
+//	    return err
+//	}
+//
+//	// Query service (read lock - concurrent with other reads)
+//	if svc, found := registry.Get("My Printer"); found {
+//	    fmt.Printf("Found service on port %d\n", svc.Port)
+//	}
+//
+//	// List all service types (read lock)
+//	types := registry.ListServiceTypes() // ["_ipp._tcp.local", "_http._tcp.local"]
 type Registry struct {
 	mu       sync.RWMutex
 	services map[string]*Service
