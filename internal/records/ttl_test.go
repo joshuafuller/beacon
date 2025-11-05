@@ -210,3 +210,92 @@ func TestTTL_CreatedAtTimestamp(t *testing.T) {
 
 // Note: RecordTTL, GetRemainingTTL, IsExpired, GetTTLForRecordType, and NewRecordTTL
 // are now implemented in ttl.go (T017 GREEN phase)
+
+// TestGetTTLForRecordType tests RFC 6762 §10 TTL values for all record types.
+//
+// RFC 6762 §10 specifies different TTLs for different record types:
+// - A/AAAA records (hostnames): 4500 seconds (75 minutes)
+// - Service records (PTR, SRV, TXT): 120 seconds (2 minutes)
+//
+// Coverage improvement: GetTTLForRecordType (75% → 100%)
+func TestGetTTLForRecordType(t *testing.T) {
+	tests := []struct {
+		name       string
+		recordType protocol.RecordType
+		wantTTL    uint32
+		rfcNote    string
+	}{
+		{
+			name:       "A record uses TTLHostname (4500s)",
+			recordType: protocol.RecordTypeA,
+			wantTTL:    protocol.TTLHostname,
+			rfcNote:    "RFC 6762 §10: hostname records use 4500s",
+		},
+		{
+			name:       "PTR record uses TTLService (120s)",
+			recordType: protocol.RecordTypePTR,
+			wantTTL:    protocol.TTLService,
+			rfcNote:    "RFC 6762 §10: service discovery records use 120s",
+		},
+		{
+			name:       "SRV record uses TTLService (120s)",
+			recordType: protocol.RecordTypeSRV,
+			wantTTL:    protocol.TTLService,
+			rfcNote:    "RFC 6762 §10: service discovery records use 120s",
+		},
+		{
+			name:       "TXT record uses TTLService (120s)",
+			recordType: protocol.RecordTypeTXT,
+			wantTTL:    protocol.TTLService,
+			rfcNote:    "RFC 6762 §10: service discovery records use 120s",
+		},
+		{
+			name:       "AAAA record (unknown type) defaults to TTLService",
+			recordType: protocol.RecordType(28), // AAAA = 28 (not yet defined in protocol)
+			wantTTL:    protocol.TTLService,
+			rfcNote:    "Default case: unknown types use TTLService",
+		},
+		{
+			name:       "NS record (unknown type) defaults to TTLService",
+			recordType: protocol.RecordType(2), // NS = 2 (not defined in protocol)
+			wantTTL:    protocol.TTLService,
+			rfcNote:    "Default case: unknown types use TTLService",
+		},
+		{
+			name:       "CNAME record (unknown type) defaults to TTLService",
+			recordType: protocol.RecordType(5), // CNAME = 5 (not defined in protocol)
+			wantTTL:    protocol.TTLService,
+			rfcNote:    "Default case: unknown types use TTLService",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := GetTTLForRecordType(tt.recordType)
+
+			if got != tt.wantTTL {
+				t.Errorf("GetTTLForRecordType(%v) = %d, want %d (%s)",
+					tt.recordType, got, tt.wantTTL, tt.rfcNote)
+			}
+		})
+	}
+}
+
+// TestGetTTLForRecordType_Values validates the actual TTL constant values.
+//
+// Ensures protocol constants match RFC 6762 §10 requirements.
+//
+// Coverage improvement: Validates TTL constant correctness
+func TestGetTTLForRecordType_Values(t *testing.T) {
+	// RFC 6762 §10: Hostname records use 4500 seconds (75 minutes)
+	if protocol.TTLHostname != 4500 {
+		t.Errorf("protocol.TTLHostname = %d, want 4500 (RFC 6762 §10: 75 minutes)",
+			protocol.TTLHostname)
+	}
+
+	// RFC 6762 §10: Service discovery records use 120 seconds (2 minutes)
+	if protocol.TTLService != 120 {
+		t.Errorf("protocol.TTLService = %d, want 120 (RFC 6762 §10: 2 minutes)",
+			protocol.TTLService)
+	}
+}

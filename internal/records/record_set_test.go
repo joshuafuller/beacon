@@ -464,3 +464,180 @@ func TestResourceRecord_CanMulticast_ProbeDefense(t *testing.T) {
 		t.Error("CanMulticast() = true immediately, want false (1 second minimum for regular responses)")
 	}
 }
+
+// TestBuildARecord_EdgeCases tests buildARecord with various IPv4 address edge cases.
+//
+// buildARecord has special handling for invalid IPv4 addresses (not 4 bytes).
+// Per the code comment: "Invalid IPv4 address - return placeholder"
+//
+// Coverage improvement: buildARecord (66.7% → 100%)
+func TestBuildARecord_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name        string
+		ipv4Address []byte
+		wantIP      []byte
+		description string
+	}{
+		{
+			name:        "valid IPv4 address (4 bytes)",
+			ipv4Address: []byte{192, 168, 1, 100},
+			wantIP:      []byte{192, 168, 1, 100},
+			description: "Normal case: valid 4-byte IPv4 address",
+		},
+		{
+			name:        "empty IPv4 address",
+			ipv4Address: []byte{},
+			wantIP:      []byte{0, 0, 0, 0},
+			description: "Edge case: empty slice gets placeholder 0.0.0.0",
+		},
+		{
+			name:        "nil IPv4 address",
+			ipv4Address: nil,
+			wantIP:      []byte{0, 0, 0, 0},
+			description: "Edge case: nil gets placeholder 0.0.0.0",
+		},
+		{
+			name:        "too short IPv4 address (3 bytes)",
+			ipv4Address: []byte{192, 168, 1},
+			wantIP:      []byte{0, 0, 0, 0},
+			description: "Edge case: < 4 bytes gets placeholder 0.0.0.0",
+		},
+		{
+			name:        "too long IPv4 address (5 bytes)",
+			ipv4Address: []byte{192, 168, 1, 100, 255},
+			wantIP:      []byte{0, 0, 0, 0},
+			description: "Edge case: > 4 bytes gets placeholder 0.0.0.0",
+		},
+		{
+			name:        "loopback address",
+			ipv4Address: []byte{127, 0, 0, 1},
+			wantIP:      []byte{127, 0, 0, 1},
+			description: "Valid case: loopback 127.0.0.1",
+		},
+		{
+			name:        "broadcast address",
+			ipv4Address: []byte{255, 255, 255, 255},
+			wantIP:      []byte{255, 255, 255, 255},
+			description: "Valid case: broadcast 255.255.255.255",
+		},
+		{
+			name:        "zero address",
+			ipv4Address: []byte{0, 0, 0, 0},
+			wantIP:      []byte{0, 0, 0, 0},
+			description: "Valid case: 0.0.0.0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := &ServiceInfo{
+				InstanceName: "Test Service",
+				ServiceType:  "_http._tcp.local",
+				Hostname:     "testhost.local",
+				Port:         8080,
+				IPv4Address:  tt.ipv4Address,
+			}
+
+			record := buildARecord(service)
+
+			// Verify record was created
+			if record == nil {
+				t.Fatal("buildARecord() returned nil")
+			}
+
+			// Verify record type
+			if record.Type != protocol.RecordTypeA {
+				t.Errorf("Type = %v, want RecordTypeA", record.Type)
+			}
+
+			// Verify hostname
+			if record.Name != "testhost.local" {
+				t.Errorf("Name = %q, want \"testhost.local\"", record.Name)
+			}
+
+			// Verify TTL per RFC 6762 §10
+			wantTTL := uint32(4500)
+			if record.TTL != wantTTL {
+				t.Errorf("TTL = %d, want %d (RFC 6762 §10: 4500s for hostname records)",
+					record.TTL, wantTTL)
+			}
+
+			// Verify cache-flush bit (A is unique)
+			if !record.CacheFlush {
+				t.Error("CacheFlush = false, want true (A is unique record)")
+			}
+
+			// Verify IPv4 address
+			gotIP := record.Data
+
+			if len(gotIP) != 4 {
+				t.Errorf("Data length = %d, want 4 bytes", len(gotIP))
+			}
+
+			for i := 0; i < 4 && i < len(gotIP); i++ {
+				if gotIP[i] != tt.wantIP[i] {
+					t.Errorf("Data[%d] = %d, want %d (%s)", i, gotIP[i], tt.wantIP[i], tt.description)
+				}
+			}
+
+			// Verify service.IPv4Address was modified if it was invalid
+			if len(tt.ipv4Address) != 4 {
+				// Should have been set to placeholder
+				if len(service.IPv4Address) != 4 {
+					t.Errorf("service.IPv4Address length = %d, want 4 (should be fixed to placeholder)",
+						len(service.IPv4Address))
+				}
+				for i := 0; i < 4 && i < len(service.IPv4Address); i++ {
+					if service.IPv4Address[i] != 0 {
+						t.Errorf("service.IPv4Address[%d] = %d, want 0 (placeholder)", i, service.IPv4Address[i])
+					}
+				}
+			}
+
+			t.Logf("✓ %s", tt.description)
+		})
+	}
+}
+
+// TestBuildARecord_RFC6762_Compliance tests RFC 6762 compliance of buildARecord.
+//
+// Validates that A records conform to RFC 6762 requirements.
+//
+// Coverage improvement: buildARecord RFC validation
+func TestBuildARecord_RFC6762_Compliance(t *testing.T) {
+	service := &ServiceInfo{
+		InstanceName: "My Service",
+		ServiceType:  "_http._tcp.local",
+		Hostname:     "myhost.local",
+		Port:         8080,
+		IPv4Address:  []byte{10, 0, 0, 1},
+	}
+
+	record := buildARecord(service)
+
+	// RFC 6762 §10: Hostname records use 4500 seconds (75 minutes)
+	if record.TTL != 4500 {
+		t.Errorf("TTL = %d, want 4500 (RFC 6762 §10: hostname records)", record.TTL)
+	}
+
+	// RFC 6762 §10.2: A records are unique (cache-flush bit set)
+	if !record.CacheFlush {
+		t.Error("CacheFlush = false, want true (RFC 6762 §10.2: unique records)")
+	}
+
+	// RFC 1035 §3.2.2: Class IN
+	if record.Class != protocol.ClassIN {
+		t.Errorf("Class = %v, want ClassIN (RFC 1035 §3.2.2)", record.Class)
+	}
+
+	// RFC 1035 §3.2.2: Type A
+	if record.Type != protocol.RecordTypeA {
+		t.Errorf("Type = %v, want RecordTypeA (RFC 1035 §3.2.2)", record.Type)
+	}
+
+	// RFC 1035 §3.4.1: A record RDATA is 4 octets
+	data := record.Data
+	if len(data) != 4 {
+		t.Errorf("Data length = %d, want 4 (RFC 1035 §3.4.1: A record is 4 octets)", len(data))
+	}
+}
