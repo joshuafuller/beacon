@@ -343,3 +343,134 @@ func TestRegistry_ListServiceTypes_Empty(t *testing.T) {
 func formatInstanceName(prefix string, id int) string {
 	return prefix + "-" + string(rune('0'+id))
 }
+
+// TestRegistry_List tests listing all registered service instance names.
+//
+// Used by responder.handleQuery() to iterate over all services when processing queries.
+func TestRegistry_List(t *testing.T) {
+	registry := NewRegistry()
+
+	// Empty registry should return empty list
+	names := registry.List()
+	if len(names) != 0 {
+		t.Errorf("List() on empty registry = %d names, want 0", len(names))
+	}
+
+	// Register multiple services
+	services := []*Service{
+		{InstanceName: "Service 1", ServiceType: "_http._tcp.local", Port: 8080},
+		{InstanceName: "Service 2", ServiceType: "_ssh._tcp.local", Port: 22},
+		{InstanceName: "Service 3", ServiceType: "_ftp._tcp.local", Port: 21},
+	}
+
+	for _, svc := range services {
+		if err := registry.Register(svc); err != nil {
+			t.Fatalf("Register(%q) error = %v", svc.InstanceName, err)
+		}
+	}
+
+	// List should return all 3 instance names
+	names = registry.List()
+	if len(names) != 3 {
+		t.Errorf("List() count = %d, want 3", len(names))
+	}
+
+	// Verify all expected names are present
+	expectedNames := map[string]bool{
+		"Service 1": false,
+		"Service 2": false,
+		"Service 3": false,
+	}
+
+	for _, name := range names {
+		if _, expected := expectedNames[name]; expected {
+			expectedNames[name] = true
+		} else {
+			t.Errorf("List() returned unexpected name %q", name)
+		}
+	}
+
+	// Check all expected names were found
+	for name, found := range expectedNames {
+		if !found {
+			t.Errorf("List() missing expected name %q", name)
+		}
+	}
+}
+
+// TestRegistry_List_AfterRemoval tests List() after removing services.
+func TestRegistry_List_AfterRemoval(t *testing.T) {
+	registry := NewRegistry()
+
+	// Register 3 services
+	services := []*Service{
+		{InstanceName: "Service 1", ServiceType: "_http._tcp.local", Port: 8080},
+		{InstanceName: "Service 2", ServiceType: "_ssh._tcp.local", Port: 22},
+		{InstanceName: "Service 3", ServiceType: "_ftp._tcp.local", Port: 21},
+	}
+
+	for _, svc := range services {
+		_ = registry.Register(svc)
+	}
+
+	// Remove one service
+	_ = registry.Remove("Service 2")
+
+	// List should return 2 names
+	names := registry.List()
+	if len(names) != 2 {
+		t.Errorf("List() after removal count = %d, want 2", len(names))
+	}
+
+	// Verify Service 2 is not in the list
+	for _, name := range names {
+		if name == "Service 2" {
+			t.Error("List() contains removed service 'Service 2'")
+		}
+	}
+}
+
+// TestRegistry_List_Concurrent tests List() under concurrent access.
+func TestRegistry_List_Concurrent(t *testing.T) {
+	registry := NewRegistry()
+
+	// Pre-populate with services
+	for i := 0; i < 10; i++ {
+		svc := &Service{
+			InstanceName: formatInstanceName("Service", i),
+			ServiceType:  "_http._tcp.local",
+			Port:         8080 + i,
+		}
+		_ = registry.Register(svc)
+	}
+
+	var wg sync.WaitGroup
+
+	// Concurrent List() calls
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			names := registry.List()
+			if len(names) < 10 {
+				t.Errorf("List() count = %d, want at least 10", len(names))
+			}
+		}()
+	}
+
+	// Concurrent modifications while listing
+	for i := 10; i < 20; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			svc := &Service{
+				InstanceName: formatInstanceName("Service", id),
+				ServiceType:  "_http._tcp.local",
+				Port:         8080 + id,
+			}
+			_ = registry.Register(svc)
+		}(i)
+	}
+
+	wg.Wait()
+}

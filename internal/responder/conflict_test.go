@@ -173,3 +173,85 @@ func TestConflictDetector_MultipleRecords(t *testing.T) {
 		t.Error("CompareMultipleRecords() = true, want false (they have higher port)")
 	}
 }
+
+// TestConflictDetector_CompareMultipleRecords_EdgeCases tests edge cases in multi-record comparison.
+//
+// Covers additional scenarios beyond the basic test to reach higher coverage.
+func TestConflictDetector_CompareMultipleRecords_EdgeCases(t *testing.T) {
+	detector := NewConflictDetector()
+
+	tests := []struct {
+		name         string
+		ourRecords   [][]byte
+		theirRecords [][]byte
+		wantWin      bool
+		description  string
+	}{
+		{
+			name:         "we have more records - we win",
+			ourRecords:   [][]byte{{0x01}, {0x02}, {0x03}},
+			theirRecords: [][]byte{{0x01}, {0x02}},
+			wantWin:      true,
+			description:  "RFC 6762 §8.2.1: longer list wins when all compared records match",
+		},
+		{
+			name:         "they have more records - they win",
+			ourRecords:   [][]byte{{0x01}, {0x02}},
+			theirRecords: [][]byte{{0x01}, {0x02}, {0x03}},
+			wantWin:      false,
+			description:  "RFC 6762 §8.2.1: longer list wins when all compared records match",
+		},
+		{
+			name:         "identical records - they win (equal length)",
+			ourRecords:   [][]byte{{0x01}, {0x02}},
+			theirRecords: [][]byte{{0x01}, {0x02}},
+			wantWin:      false,
+			description:  "Equal length and identical records - no winner",
+		},
+		{
+			name:         "we win on first record",
+			ourRecords:   [][]byte{{0x02}, {0x01}},
+			theirRecords: [][]byte{{0x01}, {0x02}},
+			wantWin:      true,
+			description:  "First record comparison determines winner",
+		},
+		{
+			name:         "they win on second record",
+			ourRecords:   [][]byte{{0x01}, {0x01}},
+			theirRecords: [][]byte{{0x01}, {0x02}},
+			wantWin:      false,
+			description:  "First records match, second record comparison determines winner",
+		},
+		{
+			name:         "empty lists - no winner",
+			ourRecords:   [][]byte{},
+			theirRecords: [][]byte{},
+			wantWin:      false,
+			description:  "Empty lists are considered equal",
+		},
+		{
+			name:         "we have records, they have empty - we win",
+			ourRecords:   [][]byte{{0x01}},
+			theirRecords: [][]byte{},
+			wantWin:      true,
+			description:  "Non-empty list beats empty list",
+		},
+		{
+			name:         "they have records, we have empty - they win",
+			ourRecords:   [][]byte{},
+			theirRecords: [][]byte{{0x01}},
+			wantWin:      false,
+			description:  "Empty list loses to non-empty list",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotWin := detector.CompareMultipleRecords(tt.ourRecords, tt.theirRecords)
+			if gotWin != tt.wantWin {
+				t.Errorf("CompareMultipleRecords() = %v, want %v (%s)",
+					gotWin, tt.wantWin, tt.description)
+			}
+		})
+	}
+}
