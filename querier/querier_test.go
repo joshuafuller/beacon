@@ -2,6 +2,7 @@ package querier
 
 import (
 	"context"
+	"net"
 	"testing"
 	"time"
 )
@@ -159,34 +160,392 @@ func TestClose(t *testing.T) {
 	t.Log("✓ Close() completed successfully")
 }
 
+// TestWithInterfaces verifies WithInterfaces option validation.
+//
+// Tests that the option correctly sets explicit interface list and validates input.
+func TestWithInterfaces(t *testing.T) {
+	tests := []struct {
+		name        string
+		ifaces      []net.Interface
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "valid interface list",
+			ifaces: []net.Interface{
+				{Name: "eth0", Index: 1},
+			},
+			expectError: false,
+		},
+		{
+			name:        "empty interface list",
+			ifaces:      []net.Interface{},
+			expectError: true,
+			errorMsg:    "interface list cannot be empty",
+		},
+		{
+			name:        "nil interface list",
+			ifaces:      nil,
+			expectError: true,
+			errorMsg:    "interface list cannot be empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := New(WithInterfaces(tt.ifaces))
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Expected error containing %q, got nil", tt.errorMsg)
+				} else if !contains(err.Error(), tt.errorMsg) {
+					t.Errorf("Expected error containing %q, got: %v", tt.errorMsg, err)
+				} else {
+					t.Logf("✓ Correctly rejected with error: %v", err)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("New(WithInterfaces) failed: %v", err)
+			}
+			defer func() { _ = q.Close() }()
+
+			// Verify explicit interfaces were set
+			if len(q.explicitInterfaces) != len(tt.ifaces) {
+				t.Errorf("explicitInterfaces length = %d, want %d",
+					len(q.explicitInterfaces), len(tt.ifaces))
+			}
+		})
+	}
+}
+
+// TestWithInterfaceFilter verifies WithInterfaceFilter option validation.
+//
+// Tests that the option correctly sets custom filter and validates input.
+func TestWithInterfaceFilter(t *testing.T) {
+	t.Run("valid filter function", func(t *testing.T) {
+		filter := func(iface net.Interface) bool {
+			return iface.Name == "eth0"
+		}
+
+		q, err := New(WithInterfaceFilter(filter))
+		if err != nil {
+			t.Fatalf("New(WithInterfaceFilter) failed: %v", err)
+		}
+		defer func() { _ = q.Close() }()
+
+		// Verify filter was set
+		if q.interfaceFilter == nil {
+			t.Error("interfaceFilter was not set")
+		}
+
+		t.Log("✓ Filter function set successfully")
+	})
+
+	t.Run("nil filter function", func(t *testing.T) {
+		_, err := New(WithInterfaceFilter(nil))
+		if err == nil {
+			t.Error("Expected error for nil filter, got nil")
+		} else if !contains(err.Error(), "filter function cannot be nil") {
+			t.Errorf("Expected error about nil filter, got: %v", err)
+		} else {
+			t.Logf("✓ Correctly rejected nil filter: %v", err)
+		}
+	})
+}
+
+// TestWithRateLimit verifies WithRateLimit option.
+//
+// Tests that rate limiting can be enabled/disabled.
+func TestWithRateLimit(t *testing.T) {
+	tests := []struct {
+		name    string
+		enabled bool
+	}{
+		{"rate limiting enabled", true},
+		{"rate limiting disabled", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := New(WithRateLimit(tt.enabled))
+			if err != nil {
+				t.Fatalf("New(WithRateLimit(%v)) failed: %v", tt.enabled, err)
+			}
+			defer func() { _ = q.Close() }()
+
+			if q.rateLimitEnabled != tt.enabled {
+				t.Errorf("rateLimitEnabled = %v, want %v",
+					q.rateLimitEnabled, tt.enabled)
+			}
+
+			t.Logf("✓ Rate limiting set to %v", tt.enabled)
+		})
+	}
+}
+
+// TestWithRateLimitThreshold verifies WithRateLimitThreshold option validation.
+//
+// Tests threshold validation (must be > 0).
+func TestWithRateLimitThreshold(t *testing.T) {
+	tests := []struct {
+		name        string
+		threshold   int
+		expectError bool
+	}{
+		{"valid threshold", 100, false},
+		{"minimum threshold", 1, false},
+		{"high threshold", 10000, false},
+		{"zero threshold", 0, true},
+		{"negative threshold", -1, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := New(WithRateLimitThreshold(tt.threshold))
+
+			if tt.expectError {
+				if err == nil {
+					t.Error("Expected error for invalid threshold, got nil")
+				} else if !contains(err.Error(), "threshold must be greater than 0") {
+					t.Errorf("Expected threshold validation error, got: %v", err)
+				} else {
+					t.Logf("✓ Correctly rejected threshold %d: %v", tt.threshold, err)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("New(WithRateLimitThreshold(%d)) failed: %v",
+					tt.threshold, err)
+			}
+			defer func() { _ = q.Close() }()
+
+			if q.rateLimitThreshold != tt.threshold {
+				t.Errorf("rateLimitThreshold = %d, want %d",
+					q.rateLimitThreshold, tt.threshold)
+			}
+
+			t.Logf("✓ Threshold set to %d", tt.threshold)
+		})
+	}
+}
+
+// TestWithRateLimitCooldown verifies WithRateLimitCooldown option validation.
+//
+// Tests cooldown validation (must be > 0).
+func TestWithRateLimitCooldown(t *testing.T) {
+	tests := []struct {
+		name        string
+		cooldown    time.Duration
+		expectError bool
+	}{
+		{"valid cooldown", 60 * time.Second, false},
+		{"short cooldown", 1 * time.Second, false},
+		{"long cooldown", 5 * time.Minute, false},
+		{"zero cooldown", 0, true},
+		{"negative cooldown", -1 * time.Second, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := New(WithRateLimitCooldown(tt.cooldown))
+
+			if tt.expectError {
+				if err == nil {
+					t.Error("Expected error for invalid cooldown, got nil")
+				} else if !contains(err.Error(), "cooldown must be greater than 0") {
+					t.Errorf("Expected cooldown validation error, got: %v", err)
+				} else {
+					t.Logf("✓ Correctly rejected cooldown %v: %v", tt.cooldown, err)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("New(WithRateLimitCooldown(%v)) failed: %v",
+					tt.cooldown, err)
+			}
+			defer func() { _ = q.Close() }()
+
+			if q.rateLimitCooldown != tt.cooldown {
+				t.Errorf("rateLimitCooldown = %v, want %v",
+					q.rateLimitCooldown, tt.cooldown)
+			}
+
+			t.Logf("✓ Cooldown set to %v", tt.cooldown)
+		})
+	}
+}
+
 // TestResourceRecordAccessors validates the type-safe accessor methods.
 //
-// This test ensures AsA, AsPTR, AsSRV, AsTXT return nil/empty for wrong types.
+// This test ensures AsA, AsPTR, AsSRV, AsTXT return nil/empty for wrong types
+// and handle malformed data gracefully.
 func TestResourceRecordAccessors(t *testing.T) {
-	// Test AsA on non-A record
-	ptrRecord := ResourceRecord{
-		Name: "test.local",
-		Type: RecordTypePTR,
-		Data: "target.local",
+	// Test all combinations of record types and accessor methods
+	tests := []struct {
+		name     string
+		record   ResourceRecord
+		expectA  bool
+		expectPTR bool
+		expectSRV bool
+		expectTXT bool
+	}{
+		{
+			name: "A record",
+			record: ResourceRecord{
+				Name: "test.local",
+				Type: RecordTypeA,
+				Data: net.IPv4(192, 168, 1, 1),
+			},
+			expectA: true,
+		},
+		{
+			name: "PTR record",
+			record: ResourceRecord{
+				Name: "test.local",
+				Type: RecordTypePTR,
+				Data: "target.local",
+			},
+			expectPTR: true,
+		},
+		{
+			name: "SRV record",
+			record: ResourceRecord{
+				Name: "test.local",
+				Type: RecordTypeSRV,
+				Data: SRVData{
+					Target:   "server.local",
+					Priority: 0,
+					Weight:   0,
+					Port:     8080,
+				},
+			},
+			expectSRV: true,
+		},
+		{
+			name: "TXT record",
+			record: ResourceRecord{
+				Name: "test.local",
+				Type: RecordTypeTXT,
+				Data: []string{"key=value", "version=1"},
+			},
+			expectTXT: true,
+		},
+		{
+			name: "A record with wrong data type",
+			record: ResourceRecord{
+				Name: "test.local",
+				Type: RecordTypeA,
+				Data: "not an IP", // Wrong type
+			},
+			// All should return nil/empty
+		},
+		{
+			name: "SRV record with wrong data type",
+			record: ResourceRecord{
+				Name: "test.local",
+				Type: RecordTypeSRV,
+				Data: "not SRVData", // Wrong type
+			},
+			// All should return nil/empty
+		},
 	}
 
-	if ip := ptrRecord.AsA(); ip != nil {
-		t.Errorf("AsA() on PTR record returned %v, expected nil", ip)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Test AsA()
+			ip := tt.record.AsA()
+			if tt.expectA {
+				if ip == nil {
+					t.Error("AsA() returned nil for A record")
+				}
+			} else {
+				if ip != nil {
+					t.Errorf("AsA() returned %v, expected nil", ip)
+				}
+			}
+
+			// Test AsPTR()
+			ptr := tt.record.AsPTR()
+			if tt.expectPTR {
+				if ptr == "" {
+					t.Error("AsPTR() returned empty string for PTR record")
+				}
+			} else {
+				if ptr != "" {
+					t.Errorf("AsPTR() returned %q, expected empty string", ptr)
+				}
+			}
+
+			// Test AsSRV()
+			srv := tt.record.AsSRV()
+			if tt.expectSRV {
+				if srv == nil {
+					t.Error("AsSRV() returned nil for SRV record")
+				}
+			} else {
+				if srv != nil {
+					t.Errorf("AsSRV() returned %v, expected nil", srv)
+				}
+			}
+
+			// Test AsTXT()
+			txt := tt.record.AsTXT()
+			if tt.expectTXT {
+				if txt == nil {
+					t.Error("AsTXT() returned nil for TXT record")
+				}
+			} else {
+				if txt != nil {
+					t.Errorf("AsTXT() returned %v, expected nil", txt)
+				}
+			}
+		})
 	}
 
-	if ptr := ptrRecord.AsPTR(); ptr == "" {
-		t.Error("AsPTR() on PTR record returned empty string")
+	t.Log("✓ Type-safe accessors validated for all record types and error cases")
+}
+
+// TestRecordTypeString verifies RecordType.String() returns correct names.
+func TestRecordTypeString(t *testing.T) {
+	tests := []struct {
+		recordType RecordType
+		expected   string
+	}{
+		{RecordTypeA, "A"},
+		{RecordTypePTR, "PTR"},
+		{RecordTypeSRV, "SRV"},
+		{RecordTypeTXT, "TXT"},
 	}
 
-	if srv := ptrRecord.AsSRV(); srv != nil {
-		t.Errorf("AsSRV() on PTR record returned %v, expected nil", srv)
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			got := tt.recordType.String()
+			if got != tt.expected {
+				t.Errorf("RecordType(%d).String() = %q, want %q",
+					tt.recordType, got, tt.expected)
+			}
+		})
 	}
 
-	if txt := ptrRecord.AsTXT(); txt != nil {
-		t.Errorf("AsTXT() on PTR record returned %v, expected nil", txt)
-	}
+	t.Log("✓ RecordType.String() validated for all types")
+}
 
-	t.Log("✓ Type-safe accessors return nil/empty for wrong record types")
+// contains is a helper to check if a string contains a substring.
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) &&
+		(s == substr || len(s) > len(substr) &&
+		func() bool {
+			for i := 0; i <= len(s)-len(substr); i++ {
+				if s[i:i+len(substr)] == substr {
+					return true
+				}
+			}
+			return false
+		}())
 }
 
 // ==============================================================================
