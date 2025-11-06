@@ -49,10 +49,12 @@ func (m *MockTransport) Send(_ context.Context, packet []byte, dest net.Addr) er
 
 // Receive is not implemented in mock (querier doesn't use it in current tests).
 //
+// 007-interface-specific-addressing: Updated to return interfaceIndex (T012-T013)
 // Future: Can be extended to return pre-configured responses.
-func (m *MockTransport) Receive(_ context.Context) ([]byte, net.Addr, error) {
+func (m *MockTransport) Receive(_ context.Context) ([]byte, net.Addr, int, error) {
 	// Not needed for current tests
-	return nil, nil, nil
+	// Return 0 for interfaceIndex (unknown/mock interface)
+	return nil, nil, 0, nil
 }
 
 // Close marks the transport as closed.

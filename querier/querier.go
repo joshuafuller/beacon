@@ -343,7 +343,7 @@ func (q *Querier) receiveLoop() {
 			// FR-006: Receive with short timeout to check context periodically
 			// T034: Migrated from network.ReceiveResponse to transport.Receive()
 			ctx, cancel := context.WithTimeout(q.ctx, 100*time.Millisecond)
-			responseMsg, srcAddr, err := q.transport.Receive(ctx)
+			responseMsg, srcAddr, _, err := q.transport.Receive(ctx) // interfaceIndex not used by querier
 			cancel()
 
 			if err != nil {
