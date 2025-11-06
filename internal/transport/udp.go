@@ -85,14 +85,15 @@ func NewUDPv4Transport() (*UDPv4Transport, error) {
 
 	// T009: Enable interface index in control messages (RFC 6762 §15 compliance)
 	// Platform-specific: IP_PKTINFO on Linux, IP_RECVIF on macOS/BSD
+	// NOTE: This may fail on Windows (not supported). We treat this as non-fatal
+	// to allow graceful degradation to interfaceIndex=0 (single-interface behavior).
+	// When control messages are unavailable, Receive() will return interfaceIndex=0,
+	// triggering fallback to getLocalIPv4() per RFC 6762 §15 best-effort compliance.
 	err = ipv4Conn.SetControlMessage(ipv4.FlagInterface, true)
 	if err != nil {
-		_ = conn.Close() // Clean up on error
-		return nil, &errors.NetworkError{
-			Operation: "enable control messages",
-			Err:       err,
-			Details:   "failed to set IP_PKTINFO/IP_RECVIF for interface index extraction",
-		}
+		// TODO T032: Add debug logging when F-6 is implemented
+		// For now, silently continue - control messages are best-effort.
+		// interfaceIndex will be 0 when cm=nil, triggering graceful degradation.
 	}
 
 	return &UDPv4Transport{

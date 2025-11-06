@@ -139,7 +139,6 @@ func DefaultPolicy() InterfaceResolutionPolicy {
 //   - IPv4 address must be 4 bytes
 //   - IPv4 address must not be loopback (127.0.0.0/8)
 //   - IPv4 address must not be unspecified (0.0.0.0)
-//
 func IsValidIPv4ForResponse(ip net.IP) bool {
 	ipv4 := ip.To4()
 	if ipv4 == nil {
