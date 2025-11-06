@@ -209,19 +209,19 @@ System picks: 10.0.1.10 (Management VLAN IP) as default
 System picks: 192.168.1.100 (Physical interface) as default
 
 ┌─────────────────────────────────────────────────────────────┐
-│ Query from Physical Network (192.168.1.0/24)               │
+│ Query from Physical Network (192.168.1.0/24)                │
 ├─────────────────────────────────────────────────────────────┤
-│ Response: api._http._tcp.local. 120 IN A 192.168.1.100    │
-│ Connection: ✅ SUCCESS                                       │
+│ Response: api._http._tcp.local. 120 IN A 192.168.1.100      │
+│ Connection: ✅ SUCCESS                                     │
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
-│ Query from Docker Container (172.17.0.0/16)                │
+│ Query from Docker Container (172.17.0.0/16)                 │
 ├─────────────────────────────────────────────────────────────┤
-│ Response: api._http._tcp.local. 120 IN A 192.168.1.100    │
+│ Response: api._http._tcp.local. 120 IN A 192.168.1.100      │
 │ Connection: ❌ FAILS (container cannot reach physical IP)   │
 │                                                             │
-│ Expected: Should receive docker0 bridge IP (172.17.0.1)    │
+│ Expected: Should receive docker0 bridge IP (172.17.0.1)     │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -233,19 +233,19 @@ System picks: 192.168.1.100 (Physical interface) as default
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ Query from Physical Network (192.168.1.0/24)               │
+│ Query from Physical Network (192.168.1.0/24)                │
 ├─────────────────────────────────────────────────────────────┤
 │ Interface: eth0 (IfIndex=2)                                 │
-│ Response: api._http._tcp.local. 120 IN A 192.168.1.100    │
-│ Connection: ✅ SUCCESS                                       │
+│ Response: api._http._tcp.local. 120 IN A 192.168.1.100      │
+│ Connection: ✅ SUCCESS                                      │
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
-│ Query from Docker Container (172.17.0.0/16)                │
+│ Query from Docker Container (172.17.0.0/16)                 │
 ├─────────────────────────────────────────────────────────────┤
 │ Interface: docker0 (IfIndex=3)                              │
-│ Response: api._http._tcp.local. 120 IN A 172.17.0.1       │
-│ Connection: ✅ SUCCESS                                       │
+│ Response: api._http._tcp.local. 120 IN A 172.17.0.1         │
+│ Connection: ✅ SUCCESS                                      │
 │                                                             │
 │ Result: Container can reach host via bridge IP ✅           │
 └─────────────────────────────────────────────────────────────┘
@@ -276,15 +276,15 @@ Same behavior as Example 1: Single IP for all queries
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ Platform: Windows (control messages unavailable)           │
+│ Platform: Windows (control messages unavailable)            │
 ├─────────────────────────────────────────────────────────────┤
 │ Control message: cm = nil                                   │
 │ Interface index: 0 (unknown)                                │
-│ Resolution: Fallback to getLocalIPv4() → 192.168.1.100    │
+│ Resolution: Fallback to getLocalIPv4() → 192.168.1.100      │
 │                                                             │
-│ Response: myapp._http._tcp.local. 120 IN A 192.168.1.100  │
+│ Response: myapp._http._tcp.local. 120 IN A 192.168.1.100    │
 │                                                             │
-│ Behavior: Same as before fix (single-interface behavior)   │
+│ Behavior: Same as before fix (single-interface behavior)    │
 │ Status: ⚠️ Best-effort RFC compliance                       │
 └─────────────────────────────────────────────────────────────┘
 ```
