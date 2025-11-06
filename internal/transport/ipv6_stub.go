@@ -32,9 +32,11 @@ func (t *UDPv6Transport) Send(_ context.Context, _ []byte, _ net.Addr) error {
 }
 
 // Receive waits for an incoming IPv6 packet (stub).
-func (t *UDPv6Transport) Receive(_ context.Context) ([]byte, net.Addr, error) {
+//
+// 007-interface-specific-addressing: Updated to return interfaceIndex
+func (t *UDPv6Transport) Receive(_ context.Context) ([]byte, net.Addr, int, error) {
 	// Stub: Full implementation in M1.1
-	return nil, nil, nil
+	return nil, nil, 0, nil
 }
 
 // Close releases IPv6 resources (stub).

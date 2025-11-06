@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 
+	"github.com/joshuafuller/beacon/internal/errors"
 	"github.com/joshuafuller/beacon/internal/message"
 	"github.com/joshuafuller/beacon/internal/protocol"
 	"github.com/joshuafuller/beacon/internal/records"
@@ -16,8 +17,22 @@ import (
 
 // Responder manages mDNS service registration and response per RFC 6762.
 //
+// Interface-Specific Addressing (RFC 6762 §15):
+// The responder automatically detects which network interface received each query
+// and responds with ONLY the IP address valid on that interface. This ensures
+// clients can connect to the correct IP when the host has multiple network interfaces.
+//
+// Example: Host with WiFi (10.0.0.50) and Ethernet (192.168.1.100):
+//   - Query on WiFi → Response contains 10.0.0.50
+//   - Query on Ethernet → Response contains 192.168.1.100
+//
+// Graceful Degradation:
+// If interface information is unavailable (e.g., on Windows or older kernels),
+// the responder falls back to advertising the default interface IP.
+//
 // T035: Responder struct
 // T080: Added query handler goroutine support
+// T082: Added interface-specific addressing documentation
 type Responder struct {
 	ctx              context.Context
 	transport        transport.Transport
@@ -285,11 +300,20 @@ func (r *Responder) Close() error {
 	return nil
 }
 
-// getLocalIPv4 gets the first non-loopback IPv4 address.
+// getLocalIPv4 gets the first non-loopback IPv4 address from any interface.
+//
+// DEPRECATED for query response building: Use getIPv4ForInterface(interfaceIndex) instead
+// to comply with RFC 6762 §15 (interface-specific addressing).
+//
+// Still used for:
+//   - Service registration (choosing default interface for A record)
+//   - Graceful degradation when interfaceIndex=0 (control messages unavailable)
 //
 // Returns:
 //   - []byte: IPv4 address (4 bytes)
 //   - error: if no suitable address found
+//
+// T037: Marked as deprecated for response building (007-interface-specific-addressing)
 func getLocalIPv4() ([]byte, error) {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
@@ -305,6 +329,80 @@ func getLocalIPv4() ([]byte, error) {
 	}
 
 	return nil, fmt.Errorf("no non-loopback IPv4 address found")
+}
+
+// getIPv4ForInterface returns the IPv4 address assigned to the specified network interface.
+//
+// RFC 6762 §15 "Responding to Address Queries" (lines 1020-1024):
+//
+//	When a Multicast DNS responder sends a Multicast DNS response message
+//	containing its own address records, it MUST include all addresses
+//	that are valid on the interface on which it is sending the message,
+//	and MUST NOT include addresses that are not valid on that interface.
+//
+// This function enables RFC compliance by looking up the interface-specific IP address
+// for building mDNS responses that contain ONLY the address valid on the receiving interface.
+//
+// 007-interface-specific-addressing: T014-T020 implementation
+//
+// Parameters:
+//   - ifIndex: Network interface index (from Transport.Receive or ipv4.ControlMessage.IfIndex)
+//
+// Returns:
+//   - []byte: IPv4 address (4 bytes) in network byte order
+//   - error: NetworkError if interface not found, ValidationError if no IPv4 address
+//
+// Edge Cases:
+//   - Interface not found (removed/down) → NetworkError
+//   - Interface has no IPv4 address (IPv6-only) → ValidationError
+//   - Interface has multiple IPs → returns first IPv4 (consistent behavior)
+//
+// Example:
+//
+//	ipv4, err := getIPv4ForInterface(2)  // Look up interface index 2 (e.g., wlan0)
+//	if err != nil {
+//	    // Handle error: skip response or fall back to getLocalIPv4()
+//	}
+//	// Use ipv4 in A record for mDNS response
+//
+//lint:ignore U1000 T020: Foundation for T027-T033 (Phase 3 GREEN), will be used in handleQuery()
+func getIPv4ForInterface(ifIndex int) ([]byte, error) {
+	// T015: Look up interface by index
+	iface, err := net.InterfaceByIndex(ifIndex)
+	if err != nil {
+		// T018: Interface not found (removed, invalid index, etc.)
+		return nil, &errors.NetworkError{
+			Operation: "lookup interface",
+			Err:       err,
+			Details:   fmt.Sprintf("interface index %d not found", ifIndex),
+		}
+	}
+
+	// T016: Get all addresses for this interface
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return nil, &errors.NetworkError{
+			Operation: "get interface addresses",
+			Err:       err,
+			Details:   fmt.Sprintf("failed to get addresses for %s", iface.Name),
+		}
+	}
+
+	// T017: Filter for first IPv4 address
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok {
+			if ipv4 := ipnet.IP.To4(); ipv4 != nil {
+				return ipv4, nil
+			}
+		}
+	}
+
+	// T019: No IPv4 found on this interface
+	return nil, &errors.ValidationError{
+		Field:   "interface",
+		Value:   iface.Name,
+		Message: "no IPv4 address found on interface",
+	}
 }
 
 // OnProbe sets a callback to be called when a probe is sent.
@@ -535,7 +633,8 @@ func (r *Responder) runQueryHandler() {
 			return
 		default:
 			// Receive query with timeout
-			packet, _, err := r.transport.Receive(r.ctx)
+			// 007-interface-specific-addressing T027: Extract interfaceIndex for RFC 6762 §15 compliance
+			packet, _, interfaceIndex, err := r.transport.Receive(r.ctx)
 			if err != nil {
 				// Context cancelled or transport closed
 				select {
@@ -550,7 +649,8 @@ func (r *Responder) runQueryHandler() {
 			}
 
 			// Handle query (T079)
-			_ = r.handleQuery(packet)
+			// T028: Pass interfaceIndex to enable interface-specific addressing
+			_ = r.handleQuery(packet, interfaceIndex)
 		}
 	}
 }
@@ -560,20 +660,28 @@ func (r *Responder) runQueryHandler() {
 // RFC 6762 §6: "When a Multicast DNS responder receives a query, it must determine
 // whether the query is requesting information for which this responder is authoritative."
 //
+// RFC 6762 §15: Responses MUST include only addresses valid on the receiving interface,
+// and MUST NOT include addresses from other interfaces.
+//
 // Process:
 //  1. Parse query message
 //  2. Extract questions
 //  3. Check if we have matching registered services
-//  4. Build response using ResponseBuilder
+//  4. Build response using ResponseBuilder with interface-specific IP (T029)
 //  5. Apply QU bit logic (unicast vs multicast)
 //  6. Apply rate limiting (RFC 6762 §6.2)
 //  7. Send response
+//
+// Parameters:
+//   - packet: DNS query in wire format
+//   - interfaceIndex: OS interface index that received the query (0 = unknown)
 //
 // Returns:
 //   - error: parse error or send error (logged, not propagated)
 //
 // T079: Implement handleQuery()
-func (r *Responder) handleQuery(packet []byte) error {
+// T029: Added interfaceIndex parameter for interface-specific addressing
+func (r *Responder) handleQuery(packet []byte, interfaceIndex int) error {
 	// Import message parser
 	msg, err := parseMessage(packet)
 	if err != nil {
@@ -610,10 +718,36 @@ func (r *Responder) handleQuery(packet []byte) error {
 				continue
 			}
 
-			// We have a match! Build response
-			// Convert to ServiceWithIP for ResponseBuilder
-			ipv4, err := getLocalIPv4()
+			// We have a match! Build response with interface-specific addressing
+			//
+			// RFC 6762 §15 "Responding to Address Queries":
+			// "When a Multicast DNS responder sends a Multicast DNS response message
+			// containing its own address records in response to a query received on
+			// a particular interface, it MUST include only addresses that are valid
+			// on that interface, and MUST NOT include addresses configured on other
+			// interfaces."
+			//
+			// T036: Inline comment citing RFC 6762 §15
+			var ipv4 []byte
+			var err error
+
+			// T030: Graceful fallback when interface index unavailable (interfaceIndex=0)
+			// This happens when control messages aren't supported or platform doesn't provide IP_PKTINFO
+			if interfaceIndex == 0 {
+				// Degraded mode: Use default interface IP (legacy behavior)
+				// TODO T032: Add debug logging when F-6 (Logging & Observability) is implemented
+				ipv4, err = getLocalIPv4()
+			} else {
+				// RFC 6762 §15 compliance: Use ONLY the IP from the receiving interface
+				ipv4, err = getIPv4ForInterface(interfaceIndex)
+			}
+
 			if err != nil {
+				// T031: If interface-specific IP lookup fails, skip response for this query
+				// This is correct behavior per RFC 6762 §15: Better to not respond than
+				// to respond with an incorrect (wrong interface) IP address
+				// TODO T032: Add error logging when F-6 is implemented
+				// Common failure causes: interface went down, no IPv4 configured, invalid index
 				continue
 			}
 

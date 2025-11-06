@@ -37,18 +37,25 @@ type Transport interface {
 
 	// Receive waits for an incoming packet, respecting context cancellation/deadline.
 	//
+	// 007-interface-specific-addressing: Added interfaceIndex return value for RFC 6762 §15 compliance.
+	//
 	// Parameters:
 	//   - ctx: Context for cancellation and deadline propagation
 	//
 	// Returns:
 	//   - packet: DNS response message in wire format
 	//   - srcAddr: Source address of the response
+	//   - interfaceIndex: OS interface index that received the packet (from IP_PKTINFO/IP_RECVIF)
+	//                     Zero (0) indicates interface unknown (graceful degradation)
 	//   - error: NetworkError on timeout or receive failure
+	//
+	// RFC 6762 §15: Interface index enables building responses with addresses valid on
+	// the receiving interface only (MUST include interface IP, MUST NOT include other IPs).
 	//
 	// Context handling (F-9 REQ-F9-7):
 	//   - ctx.Done(): Return immediately on cancellation
 	//   - ctx.Deadline(): Propagate deadline to socket SetReadDeadline
-	Receive(ctx context.Context) (packet []byte, srcAddr net.Addr, err error)
+	Receive(ctx context.Context) (packet []byte, srcAddr net.Addr, interfaceIndex int, err error)
 
 	// Close releases network resources.
 	//

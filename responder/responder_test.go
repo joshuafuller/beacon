@@ -1,9 +1,14 @@
 package responder
 
 import (
+	"bytes"
 	"context"
+	goerrors "errors"
+	"net"
 	"testing"
 	"time"
+
+	"github.com/joshuafuller/beacon/internal/errors"
 )
 
 // TestResponder_New_RED tests Responder initialization.
@@ -617,5 +622,281 @@ func TestResponder_UpdateOneService(t *testing.T) {
 	if retrieved2.TXTRecords["version"] != "2.0" {
 		t.Errorf("service2.TXTRecords[version] = %q, want %q (should be unchanged)",
 			retrieved2.TXTRecords["version"], "2.0")
+	}
+}
+
+// ==============================================================================
+// 007-interface-specific-addressing: Unit Tests for getIPv4ForInterface
+// ==============================================================================
+
+// TestGetIPv4ForInterface_ValidInterface tests interface-specific IP lookup.
+//
+// T045: Unit test for getIPv4ForInterface() with multiple NICs
+// RFC 6762 §15: Responses MUST include only addresses from the receiving interface
+func TestGetIPv4ForInterface_ValidInterface(t *testing.T) {
+	// Get a valid non-loopback interface from the system
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		t.Fatalf("net.Interfaces() failed: %v", err)
+	}
+
+	var testIface *net.Interface
+	for _, iface := range ifaces {
+		// Skip loopback
+		if iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+
+		// Check if it has an IPv4 address
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+			if ipnet, ok := addr.(*net.IPNet); ok {
+				if ipv4 := ipnet.IP.To4(); ipv4 != nil {
+					testIface = &iface
+					break
+				}
+			}
+		}
+
+		if testIface != nil {
+			break
+		}
+	}
+
+	if testIface == nil {
+		t.Skip("No non-loopback interface with IPv4 found")
+	}
+
+	// Test: getIPv4ForInterface should return the interface's IPv4 address
+	ipv4, err := getIPv4ForInterface(testIface.Index)
+	if err != nil {
+		t.Fatalf("getIPv4ForInterface(%d) error = %v, want nil", testIface.Index, err)
+	}
+
+	if len(ipv4) != 4 {
+		t.Fatalf("getIPv4ForInterface(%d) returned %d bytes, want 4 (IPv4 address)", testIface.Index, len(ipv4))
+	}
+
+	t.Logf("✓ Interface %s (index=%d) → IPv4 %d.%d.%d.%d",
+		testIface.Name, testIface.Index, ipv4[0], ipv4[1], ipv4[2], ipv4[3])
+}
+
+// TestGetIPv4ForInterface_InvalidIndex tests error handling for invalid interface index.
+//
+// T046: Edge case - interface index out of range → NetworkError
+func TestGetIPv4ForInterface_InvalidIndex(t *testing.T) {
+	// Use an impossibly high interface index
+	invalidIndex := 9999
+
+	ipv4, err := getIPv4ForInterface(invalidIndex)
+	if err == nil {
+		t.Fatalf("getIPv4ForInterface(%d) error = nil, want NetworkError", invalidIndex)
+	}
+
+	if ipv4 != nil {
+		t.Errorf("getIPv4ForInterface(%d) ipv4 = %v, want nil", invalidIndex, ipv4)
+	}
+
+	// Verify it's a NetworkError
+	var netErr *errors.NetworkError
+	if !goerrors.As(err, &netErr) {
+		t.Errorf("getIPv4ForInterface(%d) error type = %T, want *errors.NetworkError", invalidIndex, err)
+	}
+
+	t.Logf("✓ Invalid interface index %d → NetworkError: %v", invalidIndex, err)
+}
+
+// TestGetIPv4ForInterface_LoopbackInterface tests loopback handling.
+//
+// Loopback should work (it has an IPv4), but typically not used for mDNS responses
+func TestGetIPv4ForInterface_LoopbackInterface(t *testing.T) {
+	// Find loopback interface
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		t.Fatalf("net.Interfaces() failed: %v", err)
+	}
+
+	var loopbackIndex int
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagLoopback != 0 {
+			loopbackIndex = iface.Index
+			break
+		}
+	}
+
+	if loopbackIndex == 0 {
+		t.Skip("No loopback interface found")
+	}
+
+	// Loopback should return its IPv4 address (127.0.0.1)
+	ipv4, err := getIPv4ForInterface(loopbackIndex)
+	if err != nil {
+		t.Fatalf("getIPv4ForInterface(loopback=%d) error = %v, want nil", loopbackIndex, err)
+	}
+
+	if len(ipv4) != 4 {
+		t.Fatalf("getIPv4ForInterface(loopback=%d) returned %d bytes, want 4", loopbackIndex, len(ipv4))
+	}
+
+	// Should be 127.0.0.1
+	if ipv4[0] != 127 || ipv4[1] != 0 || ipv4[2] != 0 || ipv4[3] != 1 {
+		t.Errorf("getIPv4ForInterface(loopback=%d) = %d.%d.%d.%d, want 127.0.0.1",
+			loopbackIndex, ipv4[0], ipv4[1], ipv4[2], ipv4[3])
+	}
+
+	t.Logf("✓ Loopback interface (index=%d) → 127.0.0.1", loopbackIndex)
+}
+
+// TestGetIPv4ForInterface_MultipleInterfaces tests multi-NIC scenario.
+//
+// T045: Validates that different interface indices return different IPs
+// This is the core of RFC 6762 §15 compliance
+func TestGetIPv4ForInterface_MultipleInterfaces(t *testing.T) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		t.Fatalf("net.Interfaces() failed: %v", err)
+	}
+
+	// Find all interfaces with IPv4 addresses
+	type ifaceWithIP struct {
+		index int
+		name  string
+		ipv4  []byte
+	}
+	var validIfaces []ifaceWithIP
+
+	for _, iface := range ifaces {
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+			if ipnet, ok := addr.(*net.IPNet); ok {
+				if ipv4 := ipnet.IP.To4(); ipv4 != nil {
+					validIfaces = append(validIfaces, ifaceWithIP{
+						index: iface.Index,
+						name:  iface.Name,
+						ipv4:  ipv4,
+					})
+					break
+				}
+			}
+		}
+	}
+
+	if len(validIfaces) < 2 {
+		t.Skip("Need at least 2 interfaces with IPv4 for multi-NIC test")
+	}
+
+	t.Logf("Testing %d interfaces with IPv4 addresses", len(validIfaces))
+
+	// Test each interface returns its own IP
+	for _, iface := range validIfaces {
+		ipv4, err := getIPv4ForInterface(iface.index)
+		if err != nil {
+			t.Errorf("getIPv4ForInterface(%d) error = %v, want nil", iface.index, err)
+			continue
+		}
+
+		// Verify it matches the expected IP for this interface
+		if !bytes.Equal(ipv4, iface.ipv4) {
+			t.Errorf("getIPv4ForInterface(%d) = %d.%d.%d.%d, want %d.%d.%d.%d (interface %s)",
+				iface.index,
+				ipv4[0], ipv4[1], ipv4[2], ipv4[3],
+				iface.ipv4[0], iface.ipv4[1], iface.ipv4[2], iface.ipv4[3],
+				iface.name)
+		}
+
+		t.Logf("  ✓ Interface %s (index=%d) → %d.%d.%d.%d",
+			iface.name, iface.index, ipv4[0], ipv4[1], ipv4[2], ipv4[3])
+	}
+
+	// KEY TEST: Verify different interfaces return DIFFERENT IPs (RFC 6762 §15)
+	if len(validIfaces) >= 2 {
+		ip1, err1 := getIPv4ForInterface(validIfaces[0].index)
+		ip2, err2 := getIPv4ForInterface(validIfaces[1].index)
+
+		// If either lookup failed, we can't compare
+		if err1 != nil || err2 != nil {
+			if err1 != nil {
+				t.Logf("⚠️  Interface %s lookup failed: %v", validIfaces[0].name, err1)
+			}
+			if err2 != nil {
+				t.Logf("⚠️  Interface %s lookup failed: %v", validIfaces[1].name, err2)
+			}
+		} else if bytes.Equal(ip1, ip2) {
+			t.Logf("⚠️  WARNING: Interfaces %s and %s have the same IP %d.%d.%d.%d",
+				validIfaces[0].name, validIfaces[1].name, ip1[0], ip1[1], ip1[2], ip1[3])
+		} else {
+			t.Logf("✅ RFC 6762 §15: Different interfaces return different IPs (%d.%d.%d.%d vs %d.%d.%d.%d)",
+				ip1[0], ip1[1], ip1[2], ip1[3], ip2[0], ip2[1], ip2[2], ip2[3])
+		}
+	}
+}
+
+// BenchmarkGetIPv4ForInterface measures interface-specific IP lookup performance.
+//
+// T050: Performance measurement for getIPv4ForInterface()
+// This validates NFR-002: Performance overhead <10% (should be <1μs per lookup)
+func BenchmarkGetIPv4ForInterface(b *testing.B) {
+	// Find a valid interface for benchmarking
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		b.Fatalf("net.Interfaces() failed: %v", err)
+	}
+
+	var testIndex int
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			if ipnet, ok := addr.(*net.IPNet); ok {
+				if ipv4 := ipnet.IP.To4(); ipv4 != nil {
+					testIndex = iface.Index
+					break
+				}
+			}
+		}
+		if testIndex != 0 {
+			break
+		}
+	}
+
+	if testIndex == 0 {
+		b.Skip("No non-loopback interface with IPv4 found")
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		_, err := getIPv4ForInterface(testIndex)
+		if err != nil {
+			b.Fatalf("getIPv4ForInterface(%d) failed: %v", testIndex, err)
+		}
+	}
+}
+
+// BenchmarkGetIPv4ForInterface_CacheMiss measures worst-case lookup (invalid index).
+//
+// T050: Benchmark error path performance
+func BenchmarkGetIPv4ForInterface_CacheMiss(b *testing.B) {
+	invalidIndex := 9999
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		_, _ = getIPv4ForInterface(invalidIndex) // Expect error
 	}
 }

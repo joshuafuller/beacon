@@ -6,6 +6,8 @@ import (
 	"net"
 	"strconv"
 
+	"golang.org/x/net/ipv4"
+
 	"github.com/joshuafuller/beacon/internal/errors"
 	"github.com/joshuafuller/beacon/internal/protocol"
 )
@@ -16,10 +18,13 @@ import (
 // - Migrates logic from internal/network/socket.go (CreateSocket, SendQuery, ReceiveResponse)
 // - Adds context support for cancellation and deadlines (F-9 REQ-F9-7)
 // - Fixes error propagation in Close() (FR-004)
+// - 007-interface-specific-addressing: Extracts interface index from control messages (RFC 6762 §15)
 //
 // T020: Migrate internal/network/socket.go CreateSocket logic to make T011 pass
+// T007-T011: Add ipv4.PacketConn wrapper for control message access
 type UDPv4Transport struct {
-	conn net.PacketConn
+	conn     net.PacketConn   // Raw UDP connection
+	ipv4Conn *ipv4.PacketConn // Wrapper for control message access (IP_PKTINFO/IP_RECVIF)
 }
 
 // NewUDPv4Transport creates a UDP multicast transport bound to mDNS port 5353.
@@ -74,7 +79,26 @@ func NewUDPv4Transport() (*UDPv4Transport, error) {
 		}
 	}
 
-	return &UDPv4Transport{conn: conn}, nil
+	// T008-T009: Wrap connection with ipv4.PacketConn to enable control message access
+	// This allows extracting interface index from IP_PKTINFO (Linux) or IP_RECVIF (macOS/BSD)
+	ipv4Conn := ipv4.NewPacketConn(conn)
+
+	// T009: Enable interface index in control messages (RFC 6762 §15 compliance)
+	// Platform-specific: IP_PKTINFO on Linux, IP_RECVIF on macOS/BSD
+	err = ipv4Conn.SetControlMessage(ipv4.FlagInterface, true)
+	if err != nil {
+		_ = conn.Close() // Clean up on error
+		return nil, &errors.NetworkError{
+			Operation: "enable control messages",
+			Err:       err,
+			Details:   "failed to set IP_PKTINFO/IP_RECVIF for interface index extraction",
+		}
+	}
+
+	return &UDPv4Transport{
+		conn:     conn,
+		ipv4Conn: ipv4Conn,
+	}, nil
 }
 
 // Send transmits a packet to the specified destination address.
@@ -126,16 +150,19 @@ func (t *UDPv4Transport) Send(ctx context.Context, packet []byte, dest net.Addr)
 // This migrates ReceiveResponse() from internal/network/socket.go:118-155
 // with context support added for F-9 REQ-F9-7.
 //
+// 007-interface-specific-addressing T010-T011: Extract interface index from control messages.
+//
 // FR-006: System MUST receive responses with configurable timeout
 // FR-013: System MUST return NetworkError for timeout or receive errors
 // F-9 REQ-F9-7: Context propagation (M1.1 alignment)
+// RFC 6762 §15: Interface index enables interface-specific IP addressing
 //
 // T023: Migrate internal/network ReceiveResponse, add ctx.Done() checking to make T014-T015 pass
-func (t *UDPv4Transport) Receive(ctx context.Context) ([]byte, net.Addr, error) {
+func (t *UDPv4Transport) Receive(ctx context.Context) ([]byte, net.Addr, int, error) {
 	// Check context cancellation before receive
 	select {
 	case <-ctx.Done():
-		return nil, nil, &errors.NetworkError{
+		return nil, nil, 0, &errors.NetworkError{
 			Operation: "receive response",
 			Err:       ctx.Err(),
 			Details:   "context canceled before receive",
@@ -147,7 +174,7 @@ func (t *UDPv4Transport) Receive(ctx context.Context) ([]byte, net.Addr, error) 
 	if deadline, ok := ctx.Deadline(); ok {
 		err := t.conn.SetReadDeadline(deadline)
 		if err != nil {
-			return nil, nil, &errors.NetworkError{
+			return nil, nil, 0, &errors.NetworkError{
 				Operation: "set read timeout",
 				Err:       err,
 				Details:   fmt.Sprintf("failed to set deadline %v", deadline),
@@ -162,30 +189,37 @@ func (t *UDPv4Transport) Receive(ctx context.Context) ([]byte, net.Addr, error) 
 
 	buffer := *bufPtr
 
-	// Read response
-	n, srcAddr, err := t.conn.ReadFrom(buffer)
+	// T010-T011: Read with control messages to get interface index
+	n, cm, srcAddr, err := t.ipv4Conn.ReadFrom(buffer)
 	if err != nil {
 		// Check if it's a timeout error
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			return nil, nil, &errors.NetworkError{
+			return nil, nil, 0, &errors.NetworkError{
 				Operation: "receive response",
 				Err:       err,
 				Details:   "timeout",
 			}
 		}
 
-		return nil, nil, &errors.NetworkError{
+		return nil, nil, 0, &errors.NetworkError{
 			Operation: "receive response",
 			Err:       err,
 			Details:   "failed to read from socket",
 		}
 	}
 
+	// T011: Extract interface index from control message
+	// Zero (0) indicates interface unknown (graceful degradation if control messages unavailable)
+	interfaceIndex := 0
+	if cm != nil {
+		interfaceIndex = cm.IfIndex
+	}
+
 	// T054: Return copy to caller (pool owns buffer, caller owns result)
 	// This ensures caller can use result after buffer is returned to pool
 	result := make([]byte, n)
 	copy(result, buffer[:n])
-	return result, srcAddr, nil
+	return result, srcAddr, interfaceIndex, nil
 }
 
 // Close releases network resources.
