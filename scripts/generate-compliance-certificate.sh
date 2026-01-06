@@ -14,8 +14,11 @@ implemented=$(grep "^- ✅ \*\*Complete\*\*: " "$REQUIREMENTS_FILE" | head -1 | 
 compliance_pct=$(grep "^- ✅ \*\*Complete\*\*: " "$REQUIREMENTS_FILE" | head -1 | sed 's/.*(\([0-9]*\)%).*/\1/')
 
 must_total=$(grep "^- \*\*MUST\*\*: " "$REQUIREMENTS_FILE" | head -1 | awk '{print $3}')
-p0_missing=$(grep "^- ❌ Missing: " "$REQUIREMENTS_FILE" | grep -A1 "P0 (MUST)" | tail -1 | awk '{print $4}')
-p0_complete=$(grep "^- ✅ Complete: " "$REQUIREMENTS_FILE" | grep -A2 "P0 (MUST)" | tail -1 | awk '{print $4}')
+
+# Extract P0 gap analysis from the section (use grep with context)
+p0_section=$(grep -A 6 "### P0 (MUST) Gap Analysis" "$REQUIREMENTS_FILE")
+p0_missing=$(echo "$p0_section" | grep "^- ❌ Missing: " | awk '{print $4}')
+p0_complete=$(echo "$p0_section" | grep "^- ✅ Complete: " | awk '{print $4}')
 
 # Get current date
 cert_date=$(date '+%B %d, %Y')
