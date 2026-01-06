@@ -299,6 +299,7 @@ make test
 ---
 
 ## Recent Changes
+- 008-documentation-production-polish: Added Go 1.21+ (matches Beacon minimum version), Markdown (GitHub Flavored), Hugo 0.120+ (static site)
 
 ### 007-interface-specific-addressing (Core Complete - 2025-11-06)
 **Branch**: 007-interface-specific-addressing
@@ -311,33 +312,14 @@ Multi-interface hosts (WiFi + Ethernet, multi-NIC servers) were advertising the 
 **Solution**:
 - Extract interface index from IP_PKTINFO (Linux) / IP_RECVIF (macOS/BSD) control messages
 - Use interface-specific IP resolver `getIPv4ForInterface(interfaceIndex)` in response building
-- Graceful fallback to default IP when control messages unavailable (interfaceIndex=0)
 
 **Achievements**:
-- ✅ **US1**: Multi-interface hosts advertise correct IP per interface (RFC 6762 §15)
-- ✅ **US2**: Multi-NIC server VLAN isolation validated
-- ✅ **US3**: Docker/VPN interface handling with F-10 compatibility
-- ✅ **Test Coverage**: Transport + responder unit tests, integration tests
-- ✅ **RFC Compliance**: All 5 success criteria met (SC-001 through SC-005)
-- ✅ **Performance**: <1% overhead (429μs/lookup, well under 100ms requirement)
-- ✅ **Zero Regressions**: All existing tests pass
 
 **Key Changes**:
-- [Transport.Receive()](internal/transport/transport.go) - Added 4th return value `interfaceIndex`
-- [UDPv4Transport](internal/transport/udp.go) - Control message extraction via `golang.org/x/net/ipv4`
-- [getIPv4ForInterface()](responder/responder.go) - Interface-specific IP resolver
-- [handleQuery()](responder/responder.go) - RFC 6762 §15 compliant response building
 
 **Testing**:
-- Unit tests: `TestGetIPv4ForInterface_*`, `TestUDPv4Transport_ReceiveWithInterface`
-- Integration: `TestMultiNICServer_VLANIsolation`, `TestDockerVPNExclusion`
-- Contract: RFC 6762 §15 compliance validated
-- All core tests: ✅ PASS (querier, responder, internal/*, contract, fuzz)
 
 **Documentation**:
-- [IMPLEMENTATION_SUMMARY.md](specs/007-interface-specific-addressing/IMPLEMENTATION_SUMMARY.md)
-- [spec.md](specs/007-interface-specific-addressing/spec.md) - Requirements and success criteria
-- [tasks.md](specs/007-interface-specific-addressing/tasks.md) - 73/116 tasks complete
 
 **Remaining**: Optional documentation (T085-T089), manual testing (T090-T099)
 
@@ -349,38 +331,12 @@ Multi-interface hosts (WiFi + Ethernet, multi-NIC servers) were advertising the 
 **Summary**: Full mDNS responder implementation with RFC 6762/6763 compliance
 
 **Achievements**:
-- ✅ **US1**: Service registration with probing and announcing (RFC 6762 §8)
-- ✅ **US2**: Conflict resolution with lexicographic tie-breaking (RFC 6762 §8.2)
-- ✅ **US3**: Query response with PTR/SRV/TXT/A records (RFC 6762 §6)
-- ✅ **US4**: Cache coherency via known-answer suppression (RFC 6762 §7.1)
-- ✅ **US5**: Multi-service support and service enumeration (RFC 6763 §9)
-- ✅ **Security Audit**: STRONG security posture, zero panics on malformed input
-- ✅ **Code Review**: Grade A, clean architecture (F-2 compliance)
-- ✅ **Performance**: Grade A+ (4.8μs response, 20,833x under 100ms requirement)
 
 **New Public APIs**:
-- `responder.New(options...)` - Create responder with functional options
-- `responder.Register(service)` - Register service with probing/announcing
-- `responder.Unregister(instanceName)` - Unregister service with goodbye
-- `responder.UpdateService(service)` - Update TXT records
-- `responder.GetService(instanceName)` - Query service by name
-- `responder.Service` - Service definition (InstanceName, ServiceType, Port, TXT, etc.)
-- `responder.ConflictDetector` - RFC 6762 §8.2 tie-breaking logic
 
 **Key Files Created**:
-- `responder/` - Public API (responder.go, service.go, options.go, conflict_detector.go)
-- `internal/responder/` - Implementation (registry.go, response_builder.go, known_answer.go)
-- `internal/state/` - State machine (machine.go, prober.go, announcer.go)
-- `internal/records/` - Record construction (record_set.go, ttl.go)
-- `internal/security/` - Validation and rate limiting (validation.go, rate_limiter.go)
-- `internal/message/name.go` - RFC 6763 §4.3 DNS name encoding
-- `tests/contract/` - 36 RFC compliance tests (36/36 PASS)
-- `tests/fuzz/` - 4 fuzzers (109,471 executions, 0 crashes)
 
 **Documentation**:
-- `specs/006-mdns-responder/SECURITY_AUDIT.md` - Security validation report
-- `specs/006-mdns-responder/CODE_REVIEW.md` - Code quality review
-- `specs/006-mdns-responder/PERFORMANCE_ANALYSIS.md` - Performance profiling
 
 **Remaining**: T123-T126 (documentation updates), T116-T117 (deferred - require macOS/Avahi)
 
@@ -392,8 +348,6 @@ Multi-interface hosts (WiFi + Ethernet, multi-NIC servers) were advertising the 
 **Summary**: Production-ready socket configuration, security, and interface management
 
 **Achievements**:
-- ✅ SO_REUSEPORT socket options (Avahi/Bonjour coexistence on port 5353)
-- ✅ Platform-specific socket configuration (Linux, macOS, Windows)
 
 **New Public APIs**:
 
@@ -703,3 +657,5 @@ gofmt -l . | grep . && echo "Files need formatting"
 ## Active Technologies
 - Go 1.21+ + Standard library + `golang.org/x/sys` (platform-specific socket options from M1.1), `golang.org/x/net` (multicast group management from M1.1, interface index extraction via `ipv4.PacketConn` from 007-interface-specific-addressing)
 - In-memory (registered services, resource record sets with TTLs) (006-mdns-responder)
+- Go 1.21+ (matches Beacon minimum version), Markdown (GitHub Flavored), Hugo 0.120+ (static site) (008-documentation-production-polish)
+- Static files (markdown, examples, site content) in Git repository, no database required (008-documentation-production-polish)
