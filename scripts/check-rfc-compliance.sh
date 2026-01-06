@@ -53,24 +53,38 @@ if [[ ! -f "$REQUIREMENTS_FILE" ]]; then
 fi
 
 # Extract statistics from requirements file
-total_reqs=$(grep -c "^#### RFC676" "$REQUIREMENTS_FILE" || echo 0)
-must_reqs=$(grep -A2 "^#### RFC676" "$REQUIREMENTS_FILE" | grep "Type.*: MUST$" | wc -l || echo 0)
-should_reqs=$(grep -A2 "^#### RFC676" "$REQUIREMENTS_FILE" | grep "Type.*: SHOULD" | wc -l || echo 0)
-may_reqs=$(grep -A2 "^#### RFC676" "$REQUIREMENTS_FILE" | grep "Type.*: MAY" | wc -l || echo 0)
+# Parse from Summary section (lines 7-29 typically)
+total_reqs=$(grep "^\*\*Total Requirements\*\*: " "$REQUIREMENTS_FILE" | sed 's/[^0-9]//g')
+must_reqs=$(grep "^\- \*\*MUST\*\*: " "$REQUIREMENTS_FILE" | head -1 | awk '{print $3}')
+should_reqs=$(grep "^\- \*\*SHOULD\*\*: " "$REQUIREMENTS_FILE" | head -1 | awk '{print $3}')
+may_reqs=$(grep "^\- \*\*MAY\*\*: " "$REQUIREMENTS_FILE" | head -1 | awk '{print $3}')
 
-# Count implementation status
-implemented=$(grep "Status.*: ✅" "$REQUIREMENTS_FILE" | wc -l || echo 0)
-partial=$(grep "Status.*: ⚠️" "$REQUIREMENTS_FILE" | wc -l || echo 0)
-missing=$(grep "Status.*: ❌" "$REQUIREMENTS_FILE" | wc -l || echo 0)
+# Implementation status from "Implementation Status" section
+# Format: "- ✅ **Complete**: 183 (97%)"
+# Fields: $1=-, $2=✅, $3=**Complete**:, $4=183
+implemented=$(grep "\*\*Complete\*\*: " "$REQUIREMENTS_FILE" | head -1 | awk '{print $4}')
+partial=$(grep "\*\*Partial\*\*: " "$REQUIREMENTS_FILE" | head -1 | awk '{print $4}')
+missing=$(grep "\*\*Missing\*\*: " "$REQUIREMENTS_FILE" | head -1 | awk '{print $4}')
 
-# Count P0 gaps (MUST requirements not implemented)
-p0_gaps=$(grep -B5 "Status.*: ❌" "$REQUIREMENTS_FILE" | grep "Priority.*: P0" | wc -l || echo 0)
+# P0 gaps from "P0 (MUST) Gap Analysis" section
+# Format: "- ❌ Missing: 0"
+p0_gaps=$(grep "^\- .*Missing: " "$REQUIREMENTS_FILE" | grep -v "Total P0" | head -1 | awk '{print $4}')
+
+# Set defaults if parsing failed
+total_reqs=${total_reqs:-0}
+must_reqs=${must_reqs:-0}
+should_reqs=${should_reqs:-0}
+may_reqs=${may_reqs:-0}
+implemented=${implemented:-0}
+partial=${partial:-0}
+missing=${missing:-0}
+p0_gaps=${p0_gaps:-0}
 
 # Calculate compliance percentage
 if [[ $total_reqs -gt 0 ]]; then
-    compliance_pct=$(echo "scale=1; ($implemented + $partial * 0.5) / $total_reqs * 100" | bc)
+    compliance_pct=$(awk "BEGIN {printf \"%.1f\", ($implemented + $partial * 0.5) / $total_reqs * 100}")
 else
-    compliance_pct=0
+    compliance_pct=0.0
 fi
 
 # Print summary
