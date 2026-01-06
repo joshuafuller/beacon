@@ -1,86 +1,51 @@
-Implement Task 1 from @fix_plan.md RIGHT NOW. Do not ask for permission. Write the code files directly.
+Focus on P1 tasks from @fix_plan.md - increase test coverage to 80%+.
 
-## Task 1: Goodbye Packets - IMPLEMENT NOW
+## Current Status
+- RFC Features (P0): ✅ COMPLETE (4/4 implemented)
+- Test Coverage: 66.2% → Need 80%+ (+13.8%)
+- @fix_plan.md has full task breakdown
 
-Step 1: Add this test to responder/responder_test.go:
+## Priority Tasks (Do in Order)
 
-```go
-func TestUnregister_SendsGoodbyePackets(t *testing.T) {
-    var sentPacket []byte
-    mockTransport := &MockTransport{
-        sendFunc: func(ctx context.Context, packet []byte, dest net.Addr) error {
-            sentPacket = packet
-            return nil
-        },
-    }
+### 1. handleQuery Coverage Tests
+Add tests to `responder/handlequery_test.go`:
+- Test PTR query handling (_services._dns-sd._udp.local)
+- Test service type PTR query (_http._tcp.local)
+- Test service instance queries (SRV, TXT, A)
+- Test query parsing edge cases (malformed, truncated)
+- Test interface index extraction
+- Test error paths (parse failures, unknown types)
+- Test known-answer suppression logic
+- Complete TestHandleQuery_RejectsWrongSubnet (currently SKIPPED)
 
-    r := &Responder{
-        transport: mockTransport,
-        registry: newRegistry(),
-        ipv4Address: "192.168.1.100",
-    }
+### 2. collectResponses Coverage Tests
+Add tests to `querier/collectresponses_test.go`:
+- Test timeout behavior (context cancellation)
+- Test duplicate response handling
+- Test response collection with multiple answers
+- Test edge cases (empty responses, malformed packets)
+- Test context cancellation mid-collection
+- Test buffer pool interaction
 
-    service := Service{
-        InstanceName: "test",
-        ServiceType: "_http._tcp",
-        Domain: "local",
-        Port: 8080,
-    }
-    r.Register(context.Background(), service)
+### 3. Public API Coverage Tests
+Create `querier/options_test.go` (NEW FILE):
+- Test WithInterfaces() - custom interface selection
+- Test WithInterfaceFilter() - interface filtering function
+- Test WithRateLimit() - rate limiting configuration
+- Test WithRateLimitThreshold() - threshold configuration
+- Test WithRateLimitCooldown() - cooldown configuration
 
-    err := r.Unregister("test._http._tcp.local")
-    if err != nil {
-        t.Fatalf("Unregister failed: %v", err)
-    }
+## After Each Test File
+1. Run tests: `go test ./[package] -v`
+2. Check coverage: `make test-coverage-report`
+3. Mark tasks complete in @fix_plan.md (change [ ] to [x])
+4. Continue to next file
 
-    if sentPacket == nil {
-        t.Fatal("Expected goodbye packet to be sent, got nil")
-    }
-}
-```
-
-Step 2: Add this function to internal/records/record_set.go:
-
-```go
-// BuildGoodbyeRecords creates DNS records with TTL=0 for service goodbye (RFC 6762 §9.4)
-func BuildGoodbyeRecords(service Service, ipv4 string) []DNSRecord {
-    records := BuildRecordSet(service, ipv4)
-    for i := range records {
-        records[i].TTL = 0
-    }
-    return records
-}
-```
-
-Step 3: Update Unregister() in responder/responder.go (around line 266):
-
-Replace the TODO comment with:
-
-```go
-service, exists := r.registry.Get(instanceName)
-if !exists {
-    return nil
-}
-
-goodbyeRecords := records.BuildGoodbyeRecords(service, r.ipv4Address)
-goodbyePacket := message.BuildResponse(goodbyeRecords)
-r.transport.Send(context.Background(), goodbyePacket, &net.UDPAddr{
-    IP: net.ParseIP("224.0.0.251"),
-    Port: 5353,
-})
-
-r.registry.Remove(instanceName)
-return nil
-```
-
-Step 4: Run the test:
+## Verification
 ```bash
 export PATH=$PATH:$HOME/go_installation/go/bin
-go test ./responder -run TestUnregister_SendsGoodbyePackets -v
+make test-coverage-report | grep "total.*statements"
+# Target: XX.X% ≥ 80.0%
 ```
 
-Step 5: Mark complete in @fix_plan.md - change the 4 checkboxes under T1 from [ ] to [x]
-
-After completing Task 1, move to Task 2 (Source Address Validation) and implement it the same way.
-
-DO NOT ask "would you like me to" or "shall I proceed". Just write the code files.
+Write the test files directly. Do not ask for permission.
