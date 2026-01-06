@@ -185,3 +185,12 @@ mem.prof
 # Keep all templates
 !.specify/templates/
 !.specify/templates/*.md
+
+#############
+# Ralph Wiggum Loop Control
+#############
+
+# Ralph loop internal files (not part of codebase)
+.claude/RALPH_PROMPT.md
+.claude/ralph-loop.local.md
+.claude/.agent/
