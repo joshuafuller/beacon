@@ -42,7 +42,7 @@ func TestHandleQuery_MalformedPacket(t *testing.T) {
 	// Malformed packet: too short (header requires 12 bytes minimum)
 	malformedPacket := []byte{0x00, 0x01, 0x02}
 
-	err = r.handleQuery(malformedPacket, 0)
+	err = r.handleQuery(malformedPacket, nil, 0)
 	if err == nil {
 		t.Error("handleQuery(malformed) = nil, want error")
 	}
@@ -68,7 +68,7 @@ func TestHandleQuery_ResponsePacket(t *testing.T) {
 	binary.BigEndian.PutUint16(responsePacket[2:4], 0x8000) // Flags: QR=1 (response)
 	// All counts are 0
 
-	err = r.handleQuery(responsePacket, 0)
+	err = r.handleQuery(responsePacket, nil, 0)
 	if err != nil {
 		t.Errorf("handleQuery(response) = %v, want nil (responses should be ignored)", err)
 	}
@@ -89,7 +89,7 @@ func TestHandleQuery_QueryWithNonPTRRecord(t *testing.T) {
 	// Build query packet with A record query (not PTR)
 	packet := buildDNSQuery("_http._tcp.local", uint16(protocol.RecordTypeA))
 
-	err = r.handleQuery(packet, 0)
+	err = r.handleQuery(packet, nil, 0)
 	if err != nil {
 		t.Errorf("handleQuery(A query) = %v, want nil (non-PTR queries should be ignored)", err)
 	}
@@ -110,7 +110,7 @@ func TestHandleQuery_PTRQueryNoMatchingService(t *testing.T) {
 	// Build PTR query for service type that's NOT registered
 	packet := buildDNSQuery("_http._tcp.local", uint16(protocol.RecordTypePTR))
 
-	err = r.handleQuery(packet, 0)
+	err = r.handleQuery(packet, nil, 0)
 	if err != nil {
 		t.Errorf("handleQuery(PTR no match) = %v, want nil", err)
 	}
@@ -145,7 +145,7 @@ func TestHandleQuery_PTRQueryMatchingService(t *testing.T) {
 	packet := buildDNSQuery("_http._tcp.local", uint16(protocol.RecordTypePTR))
 
 	// handleQuery should process this and send a response
-	err = r.handleQuery(packet, 0)
+	err = r.handleQuery(packet, nil, 0)
 	if err != nil {
 		t.Errorf("handleQuery(PTR match) = %v, want nil", err)
 	}
@@ -179,7 +179,7 @@ func TestHandleQuery_InterfaceIndexZero(t *testing.T) {
 	packet := buildDNSQuery("_http._tcp.local", uint16(protocol.RecordTypePTR))
 
 	// Call with interfaceIndex=0 to trigger fallback
-	err = r.handleQuery(packet, 0)
+	err = r.handleQuery(packet, nil, 0)
 	if err != nil {
 		t.Errorf("handleQuery(interfaceIndex=0) = %v, want nil", err)
 	}
@@ -213,7 +213,7 @@ func TestHandleQuery_InterfaceSpecificAddressing(t *testing.T) {
 
 	// Try with a real interface index (1 is typically loopback)
 	// Note: This may fail on some systems, but exercises the code path
-	err = r.handleQuery(packet, 1)
+	err = r.handleQuery(packet, nil, 1)
 	// Don't fail on error - we're testing code execution, not system config
 	_ = err
 }
@@ -244,7 +244,7 @@ func TestHandleQuery_ServiceTypeNoMatch(t *testing.T) {
 	// Query for SSH service (not registered)
 	packet := buildDNSQuery("_ssh._tcp.local", uint16(protocol.RecordTypePTR))
 
-	err = r.handleQuery(packet, 0)
+	err = r.handleQuery(packet, nil, 0)
 	if err != nil {
 		t.Errorf("handleQuery(type mismatch) = %v, want nil", err)
 	}

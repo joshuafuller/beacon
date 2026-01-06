@@ -359,3 +359,28 @@ func (rs *RecordSet) buildRecordKey(rr *ResourceRecord) string {
 	// Binary data encoded as string for map key
 	return fmt.Sprintf("%d:%d:%s:%s", rr.Type, rr.Class, rr.Name, string(rr.Data))
 }
+
+// BuildGoodbyeRecords creates DNS records with TTL=0 for service goodbye (RFC 6762 §10.1).
+//
+// RFC 6762 §10.1: "To provide immediate notification when a host shuts down or a service
+// ceases to be available, [...] a Multicast DNS responder SHOULD send an unsolicited
+// Multicast DNS response packet [...] with the Resource Record's TTL set to zero."
+//
+// Parameters:
+//   - service: Service information
+//
+// Returns:
+//   - []*message.ResourceRecord: All records with TTL=0 (PTR, SRV, TXT, A)
+//
+// Task 1: Goodbye packet record builder
+func BuildGoodbyeRecords(service *ServiceInfo) []*message.ResourceRecord {
+	// Build normal record set
+	records := BuildRecordSet(service)
+
+	// Set TTL=0 for all records (goodbye signal)
+	for _, record := range records {
+		record.TTL = 0
+	}
+
+	return records
+}

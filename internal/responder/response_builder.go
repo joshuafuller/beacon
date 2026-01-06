@@ -163,8 +163,15 @@ func (rb *ResponseBuilder) BuildResponse(service *ServiceWithIP, query *message.
 	estimatedSize := rb.EstimatePacketSize(response)
 	if estimatedSize > rb.maxPacketSize {
 		// R005: Gracefully truncate additional records
+		originalAdditionalCount := len(response.Additionals)
 		response.Additionals = rb.truncateAdditionals(response, estimatedSize)
 		response.Header.ARCount = uint16(len(response.Additionals))
+
+		// RFC 6762 §6.5: Set TC bit when truncated
+		// Bit 9 (TC=1): 0x0200
+		if len(response.Additionals) < originalAdditionalCount {
+			response.Header.Flags |= 0x0200 // Set TC bit
+		}
 	}
 
 	return response, nil
