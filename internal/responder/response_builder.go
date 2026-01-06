@@ -3,6 +3,7 @@ package responder
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/joshuafuller/beacon/internal/message"
 	"github.com/joshuafuller/beacon/internal/protocol"
@@ -323,10 +324,9 @@ func (rb *ResponseBuilder) ApplyKnownAnswerSuppression(ourRecord *message.Resour
 //
 // T092: Helper for known-answer matching
 func recordsMatch(a, b *message.ResourceRecord) bool {
-	// Name comparison (case-insensitive per DNS spec)
-	// TODO: Implement proper DNS name comparison (case-insensitive)
-	// For now, use simple string comparison
-	if a.Name != b.Name {
+	// Name comparison (case-insensitive per RFC 1035 §2.3.3)
+	// DNS names are case-insensitive: "example.local" == "EXAMPLE.LOCAL"
+	if !strings.EqualFold(a.Name, b.Name) {
 		return false
 	}
 

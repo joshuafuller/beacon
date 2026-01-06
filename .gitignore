@@ -194,3 +194,14 @@ mem.prof
 .claude/RALPH_PROMPT.md
 .claude/ralph-loop.local.md
 .claude/.agent/
+
+# Ralph loop control files
+.call_count
+.last_reset
+.exit_signals
+.circuit_breaker_state
+.circuit_breaker_history
+.response_analysis
+.last_output_length
+progress.json
+status.json

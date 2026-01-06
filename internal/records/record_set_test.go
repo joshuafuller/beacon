@@ -464,3 +464,137 @@ func TestResourceRecord_CanMulticast_ProbeDefense(t *testing.T) {
 		t.Error("CanMulticast() = true immediately, want false (1 second minimum for regular responses)")
 	}
 }
+
+// =============================================================================
+// buildARecord() Tests - Coverage Increase from 66.7% to 90%+
+// =============================================================================
+
+// TestBuildARecord_ValidIPv4 tests A record construction with valid IPv4 address.
+//
+// Coverage: buildARecord line 221-234 (happy path)
+// RFC 6762 §10: Hostname records use 4500 seconds (75 minutes) TTL
+func TestBuildARecord_ValidIPv4(t *testing.T) {
+	service := &ServiceInfo{
+		Hostname:    "myhost.local",
+		IPv4Address: []byte{192, 168, 1, 100},
+	}
+
+	record := buildARecord(service)
+
+	// Verify record structure
+	if record.Name != "myhost.local" {
+		t.Errorf("buildARecord() Name = %q, want %q", record.Name, "myhost.local")
+	}
+
+	if record.Type != protocol.RecordTypeA {
+		t.Errorf("buildARecord() Type = %v, want %v", record.Type, protocol.RecordTypeA)
+	}
+
+	if record.Class != protocol.ClassIN {
+		t.Errorf("buildARecord() Class = %v, want %v", record.Class, protocol.ClassIN)
+	}
+
+	// RFC 6762 §10: A records use 4500 seconds (75 minutes)
+	wantTTL := uint32(4500)
+	if record.TTL != wantTTL {
+		t.Errorf("buildARecord() TTL = %d, want %d (RFC 6762 §10)", record.TTL, wantTTL)
+	}
+
+	// Verify IPv4 address data
+	if len(record.Data) != 4 {
+		t.Errorf("buildARecord() Data length = %d, want 4", len(record.Data))
+	}
+
+	wantIP := []byte{192, 168, 1, 100}
+	for i := 0; i < 4; i++ {
+		if record.Data[i] != wantIP[i] {
+			t.Errorf("buildARecord() Data[%d] = %d, want %d", i, record.Data[i], wantIP[i])
+		}
+	}
+
+	// A is a unique record - should have cache-flush bit set
+	if !record.CacheFlush {
+		t.Error("buildARecord() CacheFlush = false, want true (A is unique record)")
+	}
+
+	t.Log("✓ buildARecord() with valid IPv4 creates correct A record")
+}
+
+// TestBuildARecord_InvalidIPv4_TooShort tests invalid IPv4 (< 4 bytes).
+//
+// Coverage: buildARecord line 221-225 (error path - invalid IPv4)
+// When IPv4 address is invalid, function should use placeholder 0.0.0.0
+func TestBuildARecord_InvalidIPv4_TooShort(t *testing.T) {
+	service := &ServiceInfo{
+		Hostname:    "myhost.local",
+		IPv4Address: []byte{192, 168}, // Only 2 bytes - invalid!
+	}
+
+	record := buildARecord(service)
+
+	// Should create placeholder 0.0.0.0
+	wantIP := []byte{0, 0, 0, 0}
+	if len(record.Data) != 4 {
+		t.Errorf("buildARecord(invalid) Data length = %d, want 4", len(record.Data))
+	}
+
+	for i := 0; i < 4; i++ {
+		if record.Data[i] != wantIP[i] {
+			t.Errorf("buildARecord(invalid) Data[%d] = %d, want %d (placeholder 0.0.0.0)", i, record.Data[i], wantIP[i])
+		}
+	}
+
+	t.Log("✓ buildARecord() with invalid IPv4 creates placeholder 0.0.0.0")
+}
+
+// TestBuildARecord_InvalidIPv4_TooLong tests invalid IPv4 (> 4 bytes).
+//
+// Coverage: buildARecord line 221-225 (error path - invalid IPv4)
+func TestBuildARecord_InvalidIPv4_TooLong(t *testing.T) {
+	service := &ServiceInfo{
+		Hostname:    "myhost.local",
+		IPv4Address: []byte{192, 168, 1, 100, 1}, // 5 bytes - invalid!
+	}
+
+	record := buildARecord(service)
+
+	// Should create placeholder 0.0.0.0
+	wantIP := []byte{0, 0, 0, 0}
+	if len(record.Data) != 4 {
+		t.Errorf("buildARecord(invalid) Data length = %d, want 4", len(record.Data))
+	}
+
+	for i := 0; i < 4; i++ {
+		if record.Data[i] != wantIP[i] {
+			t.Errorf("buildARecord(invalid) Data[%d] = %d, want %d (placeholder 0.0.0.0)", i, record.Data[i], wantIP[i])
+		}
+	}
+
+	t.Log("✓ buildARecord() with too-long IPv4 creates placeholder 0.0.0.0")
+}
+
+// TestBuildARecord_EmptyIPv4 tests empty IPv4 address.
+//
+// Coverage: buildARecord line 221-225 (error path - empty IPv4)
+func TestBuildARecord_EmptyIPv4(t *testing.T) {
+	service := &ServiceInfo{
+		Hostname:    "myhost.local",
+		IPv4Address: []byte{}, // Empty - invalid!
+	}
+
+	record := buildARecord(service)
+
+	// Should create placeholder 0.0.0.0
+	wantIP := []byte{0, 0, 0, 0}
+	if len(record.Data) != 4 {
+		t.Errorf("buildARecord(empty) Data length = %d, want 4", len(record.Data))
+	}
+
+	for i := 0; i < 4; i++ {
+		if record.Data[i] != wantIP[i] {
+			t.Errorf("buildARecord(empty) Data[%d] = %d, want %d (placeholder 0.0.0.0)", i, record.Data[i], wantIP[i])
+		}
+	}
+
+	t.Log("✓ buildARecord() with empty IPv4 creates placeholder 0.0.0.0")
+}
