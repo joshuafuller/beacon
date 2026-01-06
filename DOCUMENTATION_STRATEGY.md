@@ -438,11 +438,72 @@ jobs:
 | Web Server | HTTP server with mDNS announcement | High |
 | Multi-Service | Single app, multiple services | High |
 | Service Updates | Dynamic TXT record changes | Medium |
-| Multi-Interface | WiFi + Ethernet configuration | Medium |
+| **Multi-Interface Subnet Bridge** | **Bridge mDNS across network interfaces/subnets (IoT)** | **High** |
 | Custom Service Type | Define your own service type | Medium |
 | Logging Integration | With slog/logrus/zap | High |
 
 **Total: 6 examples, ~600 lines**
+
+##### **Multi-Interface Subnet Bridge - Detailed Specification**
+
+**File**: `examples/intermediate/multi-interface-bridge/`
+**Use Case**: IoT devices that need to bridge mDNS traffic across multiple network interfaces or subnets
+
+**Problem Solved**:
+Many IoT devices (e.g., edge gateways, smart home hubs) connect to multiple networks simultaneously:
+- WiFi + Ethernet
+- Multiple VLANs
+- Bridging isolated subnets
+
+By default, mDNS traffic is local to each interface. This example shows how to:
+1. Listen for mDNS traffic on multiple interfaces
+2. Forward queries/responses between interfaces
+3. Handle interface-specific IP addressing (RFC 6762 §15)
+4. Configure which interfaces to bridge
+
+**Key Features**:
+```go
+// Listen on multiple interfaces
+interfaces := []string{"eth0", "wlan0"}
+
+// Configure bridging behavior
+bridge := &Bridge{
+    Interfaces: interfaces,
+    AllowForwarding: true,
+    FilterRules: []Rule{
+        // Don't bridge between VPN and LAN
+        {From: "vpn0", To: "eth0", Allow: false},
+    },
+}
+
+// Start bridging
+if err := bridge.Start(ctx); err != nil {
+    log.Fatal(err)
+}
+```
+
+**Technical Requirements**:
+- Uses Beacon's interface-specific addressing (007-interface-specific-addressing)
+- Correctly handles multicast group membership per interface
+- Respects RFC 6762 §15 (interface-specific IP addresses in responses)
+- Configurable forwarding rules for security
+
+**Expected Output**:
+```
+2024-01-06 10:30:00 Bridge started
+2024-01-06 10:30:00 Listening on eth0 (192.168.1.100)
+2024-01-06 10:30:00 Listening on wlan0 (192.168.2.100)
+2024-01-06 10:30:05 Query received on eth0: _http._tcp.local
+2024-01-06 10:30:05 Forwarding query to wlan0
+2024-01-06 10:30:06 Response received on wlan0: MyDevice._http._tcp.local
+2024-01-06 10:30:06 Forwarding response to eth0 (with interface-specific IP)
+```
+
+**Security Considerations**:
+- Validate that bridging is intentional (avoid accidental exposure)
+- Provide allowlist/blocklist for service types
+- Rate limiting to prevent amplification attacks
+- Documentation on when NOT to bridge (security zones)
 
 #### **Advanced Examples (P2 - Post v1.1)**
 
