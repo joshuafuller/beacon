@@ -174,7 +174,7 @@ func BuildResponse(answers []*ResourceRecord) ([]byte, error) {
 
 	// Add answer records
 	for _, answer := range answers {
-		answerBytes, err := serializeResourceRecord(answer)
+		answerBytes, err := SerializeResourceRecord(answer)
 		if err != nil {
 			return nil, err
 		}
@@ -242,7 +242,7 @@ func buildResponseHeader(answerCount int) []byte {
 // RFC 6762 §10.2: Cache-flush bit (bit 15 of CLASS) for unique records
 //
 // T012: Serialize resource records with cache-flush support
-func serializeResourceRecord(rr *ResourceRecord) ([]byte, error) {
+func SerializeResourceRecord(rr *ResourceRecord) ([]byte, error) {
 	if rr == nil {
 		return nil, &errors.ValidationError{
 			Field:   "ResourceRecord",

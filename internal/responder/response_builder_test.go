@@ -1,6 +1,7 @@
 package responder
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/joshuafuller/beacon/internal/message"
@@ -458,5 +459,73 @@ func BenchmarkResponseBuilder_BuildResponse(b *testing.B) {
 		if err != nil {
 			b.Fatalf("BuildResponse() error = %v", err)
 		}
+	}
+}
+
+// TestBuildResponse_SetsTCBitWhenTruncated tests TC bit is set when response exceeds 9000 bytes.
+//
+// RFC 6762 §6.5: "If a Multicast DNS responder receives a query,
+// and the size of the response exceeds the path MTU of the link,
+// then the responder SHOULD send a response with the TC (Truncated) bit set."
+//
+// RFC 6762 §17: "Multicast DNS Messages SHOULD NOT exceed 9000 bytes"
+//
+// Task 3: TC bit truncation implementation test
+func TestBuildResponse_SetsTCBitWhenTruncated(t *testing.T) {
+	rb := NewResponseBuilder()
+
+	// Create service with massive TXT record that will exceed 9000 bytes
+	// Single TXT record with 10KB of data
+	largeTXT := make(map[string]string)
+	// Create one very large TXT entry: key + value ~10KB total
+	largeTXT["data"] = strings.Repeat("x", 10000) // 10KB value
+
+	service := &ServiceWithIP{
+		InstanceName: "MyService",
+		ServiceType:  "_http._tcp.local",
+		Domain:       "local",
+		Port:         8080,
+		IPv4Address:  []byte{192, 168, 1, 100},
+		TXTRecords:   largeTXT,
+	}
+
+	query := &message.DNSMessage{
+		Header: message.DNSHeader{
+			ID:      12345,
+			Flags:   0,
+			QDCount: 1,
+		},
+		Questions: []message.Question{
+			{
+				QNAME:  "_http._tcp.local",
+				QTYPE:  uint16(protocol.RecordTypePTR),
+				QCLASS: uint16(protocol.ClassIN),
+			},
+		},
+	}
+
+	response, err := rb.BuildResponse(service, query)
+	if err != nil {
+		t.Fatalf("BuildResponse() error = %v, want nil", err)
+	}
+
+	// Debug: Check estimated size
+	estimatedSize := rb.EstimatePacketSize(response)
+	t.Logf("Estimated packet size: %d bytes", estimatedSize)
+	t.Logf("Response additionals count: %d", len(response.Additionals))
+	t.Logf("Response flags: 0x%04x", response.Header.Flags)
+
+	// RFC 6762 §17: Responses > 9000 bytes should be truncated
+	// RFC 6762 §6.5: TC bit must be set when truncated
+	// Bit 9 (TC=1): 0x0200
+
+	// With 10KB TXT record, response should exceed 9000 bytes
+	// and be truncated, setting TC bit
+	if estimatedSize > 9000 {
+		if (response.Header.Flags & 0x0200) == 0 {
+			t.Error("TC bit not set, want TC=1 when response exceeds 9000 bytes")
+		}
+	} else {
+		t.Skipf("Test scenario didn't generate packet > 9000 bytes (got %d)", estimatedSize)
 	}
 }

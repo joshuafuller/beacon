@@ -49,15 +49,17 @@ func WithTimeout(timeout time.Duration) Option {
 //	eth0 := ifaces[0]
 //	q, _ := querier.New(querier.WithInterfaces([]net.Interface{eth0}))
 //
-// If the provided list is empty, New() returns an error.
+// If the provided list is empty, the default interface selection logic is used
+// (same as not calling WithInterfaces at all).
+//
+// FR-011 Compliance: Empty list is accepted and treated as "use all interfaces"
 func WithInterfaces(ifaces []net.Interface) Option {
 	return func(q *Querier) error {
+		// FR-011: Accept empty list - use default interface selection
+		// This allows callers to conditionally pass interfaces without special casing
 		if len(ifaces) == 0 {
-			return &errors.ValidationError{
-				Field:   "interfaces",
-				Value:   ifaces,
-				Message: "interface list cannot be empty",
-			}
+			// Don't set explicitInterfaces - use default selection
+			return nil
 		}
 
 		// Set explicit interface list (overrides filter)
@@ -83,14 +85,15 @@ func WithInterfaces(ifaces []net.Interface) Option {
 //   - Excludes VPN (utun*, tun*, ppp*, wg*, tailscale*, wireguard*)
 //   - Excludes Docker (docker0, veth*, br-*)
 //   - Excludes loopback, down, and non-multicast interfaces
+//
+// FR-012 Compliance: Nil filter is accepted and treated as "accept all interfaces"
 func WithInterfaceFilter(filter func(net.Interface) bool) Option {
 	return func(q *Querier) error {
+		// FR-012: Accept nil filter - use default interface selection
+		// This allows callers to conditionally set filters without special casing
 		if filter == nil {
-			return &errors.ValidationError{
-				Field:   "interfaceFilter",
-				Value:   nil,
-				Message: "filter function cannot be nil",
-			}
+			// Don't set custom filter - use default selection
+			return nil
 		}
 
 		// Set custom filter (will be ignored if explicit list is set)

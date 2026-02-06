@@ -1,0 +1,12 @@
+⚠️  RALPH REMINDER ⚠️
+
+FIRST ACTION REQUIRED:
+Run this command to check current coverage:
+  make test-coverage-report | grep "total.*statements"
+
+DO NOT ASSUME any coverage numbers from this prompt!
+ALWAYS verify current state before starting work.
+
+DO NOT EXIT until coverage check shows ≥80.0%
+
+This will take 3-7 days of autonomous work!

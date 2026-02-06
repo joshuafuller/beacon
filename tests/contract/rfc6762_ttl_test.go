@@ -2,9 +2,12 @@ package contract
 
 import (
 	"context"
+	"encoding/binary"
 	"testing"
 
+	"github.com/joshuafuller/beacon/internal/message"
 	"github.com/joshuafuller/beacon/internal/protocol"
+	"github.com/joshuafuller/beacon/internal/transport"
 	"github.com/joshuafuller/beacon/responder"
 )
 
@@ -159,10 +162,9 @@ func TestRFC6762_TTL_HostnameRecords(t *testing.T) {
 // FR-033: System MUST send goodbye announcements (TTL=0) on service removal
 // T115: Contract test for RFC 6762 §10.1 goodbye packets
 func TestRFC6762_TTL_GoodbyePackets(t *testing.T) {
-	t.Skip("Deferred: Goodbye packet functionality not yet implemented (TODO in Responder.Unregister)")
-
 	ctx := context.Background()
-	r, err := responder.New(ctx)
+	mock := transport.NewMockTransport()
+	r, err := responder.New(ctx, responder.WithTransport(mock))
 	if err != nil {
 		t.Fatalf("responder.New() error = %v, want nil", err)
 	}
@@ -180,16 +182,70 @@ func TestRFC6762_TTL_GoodbyePackets(t *testing.T) {
 		t.Fatalf("Register() error = %v, want nil", err)
 	}
 
+	// Record send count before unregister to isolate goodbye packets
+	callsBefore := len(mock.SendCalls())
+
 	// Unregister the service
 	err = r.Unregister("Test Service")
 	if err != nil {
 		t.Fatalf("Unregister() error = %v, want nil", err)
 	}
 
-	// TODO: Capture goodbye packets
-	// When goodbye packet functionality is implemented:
-	// 1. Capture the last multicast message
-	// 2. Parse the message
-	// 3. Verify all records have TTL = 0
-	// 4. Verify record types match original announcement (PTR, SRV, TXT, A)
+	// Get sends after unregister (these are the goodbye packets)
+	allCalls := mock.SendCalls()
+	goodbyeCalls := allCalls[callsBefore:]
+
+	if len(goodbyeCalls) == 0 {
+		t.Fatal("No goodbye packet sent on Unregister()")
+	}
+
+	// Parse the goodbye packet and verify TTL=0 for all records
+	goodbyePacket := goodbyeCalls[0].Packet
+	if len(goodbyePacket) < 12 {
+		t.Fatalf("Goodbye packet too short: %d bytes", len(goodbyePacket))
+	}
+
+	// Verify it's a response (QR=1, AA=1)
+	flags := binary.BigEndian.Uint16(goodbyePacket[2:4])
+	if flags&0x8000 == 0 {
+		t.Error("Goodbye packet QR bit not set")
+	}
+
+	parsed, err := message.ParseMessage(goodbyePacket)
+	if err != nil {
+		t.Fatalf("ParseMessage(goodbye) error = %v", err)
+	}
+
+	if len(parsed.Answers) == 0 {
+		t.Fatal("Goodbye packet has 0 answer records, want >= 1")
+	}
+
+	// Verify all records have TTL=0
+	for i, ans := range parsed.Answers {
+		if ans.TTL != 0 {
+			t.Errorf("Goodbye answer[%d] TTL = %d, want 0 (RFC 6762 §10.1)", i, ans.TTL)
+		}
+	}
+
+	// Verify expected record types are present
+	foundTypes := make(map[uint16]bool)
+	for _, ans := range parsed.Answers {
+		foundTypes[ans.TYPE] = true
+	}
+
+	wantTypes := []struct {
+		rtype uint16
+		name  string
+	}{
+		{uint16(protocol.RecordTypePTR), "PTR"},
+		{uint16(protocol.RecordTypeSRV), "SRV"},
+		{uint16(protocol.RecordTypeTXT), "TXT"},
+		{uint16(protocol.RecordTypeA), "A"},
+	}
+
+	for _, wt := range wantTypes {
+		if !foundTypes[wt.rtype] {
+			t.Errorf("Goodbye packet missing %s record", wt.name)
+		}
+	}
 }

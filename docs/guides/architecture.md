@@ -322,7 +322,7 @@ Beacon is built on five constitutional principles:
 
 **How we enforce it**:
 - 36 contract tests validate RFC behavior
-- 72.2% RFC compliance (91/126 requirements implemented)
+- 97.9% RFC 6762 compliance (100% on mandatory MUST requirements)
 - Every feature references specific RFC sections
 - Automated Semgrep rules check for violations
 

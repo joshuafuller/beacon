@@ -185,3 +185,51 @@ mem.prof
 # Keep all templates
 !.specify/templates/
 !.specify/templates/*.md
+
+#############
+# Compiled Example Binaries
+#############
+
+# Example binaries (compiled from Go source)
+examples/*/main
+examples/*/*/main
+examples/*/test-*
+examples/*/*/test-*
+
+# Compiled Go binaries (root level)
+/main
+
+#############
+# Agent Debris
+#############
+
+# P0/P1 status and audit files
+P[0-9]_*.md
+
+# Ralph loop files
+RALPH_*.md
+
+# Verification and build scripts
+verify_*.sh
+check_ralph.sh
+build_*.py
+
+#############
+# Ralph Wiggum Loop Control
+#############
+
+# Ralph loop internal files (not part of codebase)
+.claude/RALPH_PROMPT.md
+.claude/ralph-loop.local.md
+.claude/.agent/
+
+# Ralph loop control files
+.call_count
+.last_reset
+.exit_signals
+.circuit_breaker_state
+.circuit_breaker_history
+.response_analysis
+.last_output_length
+progress.json
+status.json

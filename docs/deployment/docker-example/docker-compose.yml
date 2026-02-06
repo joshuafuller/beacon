@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  beacon-responder:
+    build:
+      context: ../../..
+      dockerfile: docs/deployment/docker-example/Dockerfile
+    container_name: beacon-responder
+    network_mode: "host"  # Required for multicast
+    restart: unless-stopped
+    environment:
+      - LOG_LEVEL=info
+      - SERVICE_NAME=My Docker Service
+      - SERVICE_PORT=8080
+    # Health check
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.25'
+          memory: 64M

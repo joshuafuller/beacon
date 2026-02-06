@@ -25,6 +25,8 @@ package state
 import (
 	"context"
 	"sync"
+
+	"github.com/joshuafuller/beacon/internal/transport"
 )
 
 // Machine coordinates the service registration state machine per RFC 6762 §8.
@@ -76,6 +78,7 @@ import (
 type Machine struct {
 	prober         *Prober
 	announcer      *Announcer
+	transport      transport.Transport
 	mu             sync.RWMutex
 	onStateChange  func(State)
 	currentState   State
@@ -168,6 +171,13 @@ func (sm *Machine) setState(newState State) {
 	if sm.onStateChange != nil {
 		sm.onStateChange(newState)
 	}
+}
+
+// SetTransport sets the transport used by prober and announcer to send packets on the wire.
+func (sm *Machine) SetTransport(t transport.Transport) {
+	sm.transport = t
+	sm.prober.SetTransport(t)
+	sm.announcer.SetTransport(t)
 }
 
 // SetInjectConflict is a test hook to inject conflict during probing.

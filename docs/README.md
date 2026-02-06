@@ -44,7 +44,7 @@ Welcome to the Beacon documentation! This guide will help you find exactly what 
 ### 🔬 **I want to UNDERSTAND the internals** (Researchers/Architects)
 
 **Technical Documentation**:
-- [RFC Compliance Matrix](internals/rfc-compliance/RFC_COMPLIANCE_MATRIX.md) - 72.2% RFC 6762/6763 compliant
+- [RFC Compliance Matrix](internals/rfc-compliance/RFC_COMPLIANCE_MATRIX.md) - RFC 6762/6763 compliance tracking
 - [Functional Requirements Matrix](internals/rfc-compliance/FUNCTIONAL_REQUIREMENTS_MATRIX.md) - All 61 FRs with traceability
 - [Compliance Dashboard](internals/rfc-compliance/COMPLIANCE_DASHBOARD.md) - Quick status overview
 
