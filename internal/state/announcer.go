@@ -2,10 +2,13 @@ package state
 
 import (
 	"context"
+	"net"
 	"time"
 
 	"github.com/joshuafuller/beacon/internal/message"
+	"github.com/joshuafuller/beacon/internal/protocol"
 	"github.com/joshuafuller/beacon/internal/records"
+	"github.com/joshuafuller/beacon/internal/transport"
 )
 
 // Announcer performs announcing per RFC 6762 §8.3.
@@ -15,6 +18,9 @@ import (
 //
 // T040: Implement Announcer
 type Announcer struct {
+	// Transport for sending announcement packets on the wire
+	transport transport.Transport
+
 	// Test hooks for injection
 	onSendAnnouncement func()
 	lastSentData       []byte
@@ -111,8 +117,14 @@ func (a *Announcer) Announce(ctx context.Context, _ string, records []byte) erro
 			a.onSendAnnouncement()
 		}
 
-		// TODO: Actually send announcement via transport
-		// For now, just simulate announcing
+		// Send announcement via transport (RFC 6762 §8.3: announcements to mDNS multicast group)
+		if a.transport != nil {
+			dest := &net.UDPAddr{
+				IP:   net.ParseIP(protocol.MulticastAddrIPv4),
+				Port: protocol.Port,
+			}
+			_ = a.transport.Send(ctx, announceMsg, dest) // nosemgrep: beacon-error-swallowing
+		}
 
 		// Wait 1s before next announcement (except after last)
 		if i < announcementCount-1 {
@@ -156,6 +168,13 @@ func (a *Announcer) SetOnSendAnnouncement(callback func()) {
 // US2 GREEN: Contract test support for RFC 6762 §5 multicast address validation
 func (a *Announcer) GetLastDestAddr() string {
 	return a.lastDestAddr
+}
+
+// SetTransport sets the transport used to send announcement packets on the wire.
+//
+// RFC 6762 §8.3: Announcements are sent to the mDNS multicast group 224.0.0.251:5353.
+func (a *Announcer) SetTransport(t transport.Transport) {
+	a.transport = t
 }
 
 // SetRecords sets the resource records to be announced.

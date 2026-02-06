@@ -1,6 +1,7 @@
 package responder
 
 import (
+	"github.com/joshuafuller/beacon/internal/security"
 	"github.com/joshuafuller/beacon/internal/transport"
 )
 
@@ -30,6 +31,27 @@ type Option func(*Responder) error
 func WithTransport(t transport.Transport) Option {
 	return func(r *Responder) error {
 		r.transport = t
+		return nil
+	}
+}
+
+// WithRateLimiter sets a custom rate limiter for the responder.
+//
+// If not provided, a default rate limiter is created with:
+//   - 100 queries/second per source IP
+//   - 60 second cooldown after threshold exceeded
+//   - 10,000 max tracked source IPs
+//
+// Parameters:
+//   - rl: Custom rate limiter configuration
+//
+// Returns:
+//   - Option: Configuration function
+//
+// FR-026: Per-source-IP rate limiting
+func WithRateLimiter(rl *security.RateLimiter) Option {
+	return func(r *Responder) error {
+		r.rateLimiter = rl
 		return nil
 	}
 }

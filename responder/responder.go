@@ -6,11 +6,14 @@ import (
 	"net"
 	"os"
 
+	"time"
+
 	"github.com/joshuafuller/beacon/internal/errors"
 	"github.com/joshuafuller/beacon/internal/message"
 	"github.com/joshuafuller/beacon/internal/protocol"
 	"github.com/joshuafuller/beacon/internal/records"
 	"github.com/joshuafuller/beacon/internal/responder"
+	"github.com/joshuafuller/beacon/internal/security"
 	"github.com/joshuafuller/beacon/internal/state"
 	"github.com/joshuafuller/beacon/internal/transport"
 )
@@ -41,6 +44,7 @@ type Responder struct {
 	injectConflict   bool                       // Test hook: inject conflict during probing
 	responseBuilder  *responder.ResponseBuilder // RFC 6762 §6 response construction
 	recordSet        *records.RecordSet         // Per-record rate limiting tracker
+	rateLimiter      *security.RateLimiter      // Per-source-IP rate limiting (FR-026)
 	queryHandlerDone chan struct{}              // Signal query handler shutdown
 
 	// US2 GREEN: Store last machine for message capture (contract test support)
@@ -79,6 +83,7 @@ func New(ctx context.Context, opts ...Option) (*Responder, error) {
 		hostname:         hostname,
 		responseBuilder:  responder.NewResponseBuilder(),
 		recordSet:        records.NewRecordSet(),
+		rateLimiter:      security.NewRateLimiter(100, 60*time.Second, 10000),
 		queryHandlerDone: make(chan struct{}),
 	}
 
@@ -161,6 +166,9 @@ func (r *Responder) Register(service *Service) error {
 		// Create and run state machine
 		machine := state.NewMachine()
 		serviceName := service.InstanceName + "." + service.ServiceType
+
+		// Wire transport so probes and announcements are sent on the wire
+		machine.SetTransport(r.transport)
 
 		// Apply test hooks (if any)
 		if r.injectConflict {
@@ -288,7 +296,12 @@ func (r *Responder) Unregister(serviceID string) error {
 		IP:   net.ParseIP("224.0.0.251"),
 		Port: 5353,
 	}
-	_ = r.transport.Send(r.ctx, goodbyePacket, dest) // nosemgrep: beacon-error-swallowing
+	// RFC 6762 §10.1: Goodbye is best-effort (SHOULD, not MUST).
+	// Log but don't fail if send errors.
+	if err := r.transport.Send(r.ctx, goodbyePacket, dest); err != nil { // nosemgrep: beacon-error-swallowing
+		// Best-effort: goodbye failed but we still remove from registry below
+		_ = err
+	}
 
 	// Remove from registry using instance name
 	if err := r.registry.Remove(svc.InstanceName); err != nil {
@@ -869,8 +882,16 @@ func (r *Responder) handleQuery(packet []byte, srcAddr net.Addr, interfaceIndex 
 				continue
 			}
 
-			// TODO: T083 - Apply per-record rate limiting before sending
-			// For now, skip rate limiting
+			// Per-source-IP rate limiting (FR-026, RFC 6762 §6.2)
+			if r.rateLimiter != nil && srcAddr != nil {
+				srcIP := srcAddr.String()
+				if udpAddr, ok := srcAddr.(*net.UDPAddr); ok {
+					srcIP = udpAddr.IP.String()
+				}
+				if !r.rateLimiter.Allow(srcIP) {
+					continue // Rate-limited, skip response
+				}
+			}
 
 			// RFC 6762 §5.4: Check QU bit (bit 15 of QCLASS) to determine unicast vs multicast
 			// Task 4: QU bit handling
@@ -902,20 +923,23 @@ func parseMessage(packet []byte) (*message.DNSMessage, error) {
 	return message.ParseMessage(packet)
 }
 
-// buildResponsePacket serializes a DNSMessage to wire format.
+// buildResponsePacket serializes a DNSMessage to wire format using message.SerializeMessage.
 //
-// TODO: Implement proper serialization
-// For now, return minimal valid packet (stub)
+// RFC 1035 §4.1: Converts the complete DNSMessage struct (header, questions,
+// answers, authority, additional sections) into wire-format bytes.
 func buildResponsePacket(msg *message.DNSMessage) []byte {
-	// This is a stub - proper implementation needs message serialization
-	// which is not yet implemented in the codebase
-	// Return minimal valid DNS header (12 bytes) so responses are sent
-	return []byte{
-		0x00, 0x00, // ID
-		0x84, 0x00, // Flags (QR=1, AA=1)
-		0x00, 0x00, // QDCount
-		0x00, 0x00, // ANCount
-		0x00, 0x00, // NSCount
-		0x00, 0x00, // ARCount
+	data, err := message.SerializeMessage(msg)
+	if err != nil {
+		// Serialization failed - return minimal valid DNS response header
+		// so the responder doesn't crash on unexpected serialization errors
+		return []byte{
+			0x00, 0x00, // ID
+			0x84, 0x00, // Flags (QR=1, AA=1)
+			0x00, 0x00, // QDCount
+			0x00, 0x00, // ANCount
+			0x00, 0x00, // NSCount
+			0x00, 0x00, // ARCount
+		}
 	}
+	return data
 }

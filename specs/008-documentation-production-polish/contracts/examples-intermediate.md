@@ -244,6 +244,93 @@ func (b *Bridge) forwardQuery(query *Query, from, to string) error
 - **Subnet Filtering**: Prevent accidental bridging of Docker/VPN traffic
 - **No Internet Forwarding**: mDNS is link-local only (RFC 6762 §3)
 
+### Testing Procedure
+
+**Prerequisites**:
+- Multi-interface machine (WiFi + Ethernet) OR virtual machine with bridged + NAT network adapters
+- Verify interfaces exist: `ip addr` (Linux) or `ifconfig` (macOS) showing both interfaces
+- Two separate network subnets (e.g., WiFi on 192.168.1.0/24, Ethernet on 10.0.0.0/24)
+
+**Success Criteria**:
+
+1. **Query Forwarding Verification**:
+   - Start packet capture on wlan0: `sudo tcpdump -i wlan0 port 5353 -v`
+   - Send query on eth0 (from device on Ethernet subnet)
+   - Expected: Query appears in wlan0 packet capture showing forwarded mDNS query
+
+2. **Interface-Specific IP Addressing** (RFC 6762 §15):
+   - Check bridge console output for "Forwarding query [service] from eth0 → wlan0"
+   - Verify response includes **wlan0's IP address** (not eth0's IP, not 0.0.0.0)
+   - Use `dns-sd -L [service-name] [service-type]` from wlan0 subnet to see IP address in response
+
+3. **Service Filtering**:
+   - Query for allowed service (`_http._tcp`): Should see "Forwarding query" message
+   - Query for non-allowed service (`_ssh._tcp`): Should NOT see forwarding message
+   - Verify only allowlisted services cross interface boundary
+
+4. **Subnet Exclusion** (Docker/VPN):
+   - Start Docker container and check bridge ignores queries from `172.17.0.0/16`
+   - Expected console output: "Ignoring query from excluded subnet 172.17.x.x"
+
+**Testing Commands**:
+
+```bash
+# Terminal 1: Start bridge
+cd examples/intermediate/multi-interface-bridge
+make run
+
+# Terminal 2: Monitor wlan0 traffic
+sudo tcpdump -i wlan0 port 5353 -v
+
+# Terminal 3: Send test query from eth0 subnet
+# (Run on device connected to Ethernet network)
+dns-sd -B _http._tcp
+
+# Verify in Terminal 1 console: "Forwarding query _http._tcp from eth0 → wlan0"
+# Verify in Terminal 2: mDNS packet appears on wlan0
+```
+
+**Fallback Testing** (No Multi-Interface Machine):
+
+If you don't have a physical multi-interface machine, use Docker network simulation:
+
+```bash
+# Create two Docker networks
+docker network create --subnet=192.168.1.0/24 net-wifi
+docker network create --subnet=10.0.0.0/24 net-ethernet
+
+# Run bridge container attached to both networks
+docker run --network net-wifi --network net-ethernet beacon-bridge
+
+# Run test service on net-ethernet
+docker run --network net-ethernet beacon-test-service
+
+# Run test client on net-wifi
+docker run --network net-wifi beacon-test-client
+
+# Verify client discovers service across bridge
+```
+
+Alternatively, rely on unit tests for bridge logic validation:
+```bash
+cd examples/intermediate/multi-interface-bridge
+go test -v ./... -run TestBridge
+```
+
+**Expected Output**:
+
+```
+Bridge started: wlan0 ↔ eth0
+Allowed services: _http._tcp, _homekit._tcp
+Excluded subnets: 172.17.0.0/16, 10.8.0.0/24
+
+[Forwarding query _http._tcp.local from eth0 → wlan0]
+[Forwarding response from wlan0 → eth0 (IP: 192.168.1.100)]
+
+[Ignoring query _ssh._tcp.local (not in allowlist)]
+[Ignoring query from 172.17.0.5 (excluded subnet)]
+```
+
 ---
 
 ## Example 9: Custom Service Type

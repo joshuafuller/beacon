@@ -262,3 +262,74 @@ func TestQuerier_Close_PropagatesTransportErrors(t *testing.T) {
 		t.Logf("✓ FR-004 VALIDATED (end-to-end): Querier.Close() propagates transport error: %v", err)
 	}
 }
+
+// ==============================================================================
+// Godoc Examples (T041-T042) - Documentation & Production Polish
+// ==============================================================================
+// These examples appear on pkg.go.dev for public API documentation.
+
+// ExampleQuerier_Query demonstrates basic mDNS query for A records.
+//
+// This example shows how to query for IPv4 addresses of a local hostname
+// using mDNS (RFC 6762). The query is sent to the multicast group and
+// responses are collected within the timeout period.
+func ExampleQuerier_Query() {
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// Create querier
+	q, err := New()
+	if err != nil {
+		// In production code, handle error appropriately
+		return
+	}
+	defer q.Close()
+
+	// Query for A record (IPv4 address)
+	resp, err := q.Query(ctx, "mydevice.local", RecordTypeA)
+	if err != nil {
+		// Timeout or network errors are common in mDNS
+		return
+	}
+
+	// Process results
+	for _, record := range resp.Records {
+		if ip := record.AsA(); ip != nil {
+			// Found IPv4 address
+			_ = ip // Use the IP address
+		}
+	}
+}
+
+// ExampleQuerier_Query_services demonstrates service enumeration using PTR queries.
+//
+// This example shows how to discover all instances of a service type on the
+// local network. PTR queries return a list of service instance names.
+func ExampleQuerier_Query_services() {
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// Create querier
+	q, err := New()
+	if err != nil {
+		return
+	}
+	defer q.Close()
+
+	// Query for HTTP services (PTR records enumerate instances)
+	resp, err := q.Query(ctx, "_http._tcp.local", RecordTypePTR)
+	if err != nil {
+		return
+	}
+
+	// Process service instances
+	for _, record := range resp.Records {
+		instanceName := record.AsPTR()
+		if instanceName != "" {
+			// Found service instance
+			_ = instanceName // Use the instance name
+		}
+	}
+}

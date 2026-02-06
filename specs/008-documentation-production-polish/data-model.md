@@ -708,6 +708,242 @@ func ExampleResponder_Register() {
 
 ---
 
+## Video Tutorial Template
+
+### Video Specifications
+
+**Format**: MP4 (H.264 codec, AAC audio)
+**Resolution**: 1920x1080 (1080p)
+**Frame Rate**: 30fps
+**Audio**: Required (clear voiceover with noise cancellation)
+**Recommended Tools**:
+- **Screen Recording**: OBS Studio (free, cross-platform) or QuickTime (macOS)
+- **Audio**: USB microphone or quality built-in mic with noise cancellation enabled
+- **Editing**: DaVinci Resolve (free) or iMovie (macOS) for light editing
+
+**Length Guidelines**:
+- Target: 5 minutes
+- Acceptable range: 3-7 minutes
+- Avoid: Videos longer than 10 minutes (split into parts instead)
+
+**Editing Requirements**:
+- Light editing acceptable (intro/outro titles, jump cuts for long pauses)
+- Include intro card (3-5 seconds): Video title + "Beacon mDNS Library"
+- Include outro card (3-5 seconds): "Next Steps" + links
+- Remove dead air (pauses >3 seconds)
+- Speed up repetitive actions (typing, waiting for compilation)
+
+**Platform**:
+- Upload to YouTube channel: `joshuafuller/beacon-docs` (to be created)
+- Visibility: Public
+- Captions: Enable auto-generated captions (YouTube) OR provide manual SRT file
+- Embed in Hugo site: `docs/content/tutorials/videos.md`
+
+### Content Structure Template
+
+**1. Introduction (10-15 seconds)**:
+```text
+[On-screen title: "Video Title"]
+
+"Hi, I'm [name]. In this [X]-minute tutorial, you'll learn how to [specific outcome].
+
+By the end, you'll be able to [concrete result]."
+```
+
+**2. Prerequisites Check (15-30 seconds)**:
+```text
+"Before we start, make sure you have:
+- Go 1.21 or later installed
+- [Any other tools]
+- [Any prerequisite knowledge]
+
+Let's verify Go is installed..."
+[Show: go version]
+```
+
+**3. Demo/Walkthrough (3-5 minutes)**:
+```text
+[Screen recording with live narration]
+
+"First, let's [step 1]..."
+[Type/show command, explain what it does]
+
+"Notice that [key observation]..."
+[Highlight important output or behavior]
+
+"Next, we'll [step 2]..."
+[Continue with demonstration]
+```
+
+**4. Key Takeaways (30-45 seconds)**:
+```text
+"Let's recap what we covered:
+- [Key point 1]
+- [Key point 2]
+- [Key point 3]
+
+The most important thing to remember is [critical insight]."
+```
+
+**5. Conclusion (15-30 seconds)**:
+```text
+"Thanks for watching!
+
+Next, check out [related tutorial/example] to learn [next topic].
+
+All the code from this video is available at [GitHub link].
+
+If you have questions, open an issue on GitHub or join our discussions.
+
+See you in the next video!"
+
+[End screen: Links to related videos/docs]
+```
+
+### Video Script Template
+
+```markdown
+# Video Script: [Title]
+
+**Duration**: ~5 minutes
+**Target Audience**: [Beginner/Intermediate/Advanced]
+**Prerequisites**: [List]
+
+---
+
+## [0:00-0:15] Introduction
+
+**Visual**: Title card "Beacon mDNS - [Topic]"
+
+**Narration**:
+> Hi, I'm [name]. In this tutorial, you'll learn [specific goal].
+> By the end, you'll [concrete outcome].
+
+---
+
+## [0:15-0:45] Prerequisites
+
+**Visual**: Terminal showing `go version`, directory structure
+
+**Narration**:
+> Before we start, verify you have Go 1.21+ installed.
+> [Show version check]
+> We'll be working in [directory].
+
+---
+
+## [0:45-5:00] Main Content
+
+### Step 1: [Action] (0:45-1:30)
+
+**Visual**: [Describe what's on screen]
+
+**Narration**:
+> First, let's [action]. [Explain why this matters].
+
+**Commands**:
+```bash
+[Exact commands to type]
+```
+
+**Key Points**:
+- [Point 1]
+- [Point 2]
+
+### Step 2: [Action] (1:30-2:30)
+
+[Continue pattern...]
+
+---
+
+## [5:00-5:30] Recap & Next Steps
+
+**Visual**: Recap slide with bullet points
+
+**Narration**:
+> We covered [summary]. Next, check out [next topic].
+
+**End Screen**: Links to related content
+
+---
+
+## B-Roll Footage Needed
+- [ ] Terminal close-ups
+- [ ] Code editor views
+- [ ] Browser testing
+
+## Post-Production Checklist
+- [ ] Add intro card (0-5s)
+- [ ] Add outro card (last 5s)
+- [ ] Cut dead air (>3s pauses)
+- [ ] Speed up slow parts (2x)
+- [ ] Add captions (auto or manual)
+- [ ] Check audio levels (-3dB peak)
+- [ ] Export at 1080p 30fps H.264
+```
+
+### Recording Tips
+
+**Before Recording**:
+- [ ] Close unnecessary applications (notifications off, Discord/Slack quit)
+- [ ] Clean up desktop (hide personal files, use generic wallpaper)
+- [ ] Test microphone levels (speak at normal volume, check for clipping)
+- [ ] Prepare code snippets in text file (avoid typing errors)
+- [ ] Have terminal ready with correct directory
+- [ ] Increase terminal font size (18-20pt for 1080p readability)
+
+**During Recording**:
+- [ ] Speak clearly and at moderate pace (not too fast)
+- [ ] Pause 2-3 seconds between major steps (easy to cut later)
+- [ ] Announce what you're about to type before typing
+- [ ] If you make a mistake, pause, say "Let's try that again", continue
+- [ ] Use consistent phrasing ("Let's...", "Now we'll...", "Next...")
+
+**After Recording**:
+- [ ] Review full video at 1.5x speed for errors
+- [ ] Check audio sync (watch for lip sync issues if on camera)
+- [ ] Verify all commands succeeded (no errors shown)
+- [ ] Test captions for accuracy (fix auto-generated errors)
+
+### YouTube Upload Checklist
+
+**Metadata**:
+- **Title**: "[Beacon mDNS] [Topic] - [Specific Benefit]"
+  - Example: "[Beacon mDNS] Service Registration - Get Started in 5 Minutes"
+- **Description**:
+  ```
+  Learn how to [specific goal] with Beacon, a lightweight mDNS library for Go.
+
+  🔗 Links:
+  - GitHub: https://github.com/joshuafuller/beacon
+  - Documentation: https://joshuafuller.github.io/beacon
+  - Code from video: [link to example]
+
+  ⏱️ Chapters:
+  0:00 - Introduction
+  0:15 - Prerequisites
+  0:45 - [Step 1]
+  [etc.]
+
+  📚 Related Videos:
+  - [Link to previous]
+  - [Link to next]
+
+  #golang #mdns #networking #servicediscovery
+  ```
+- **Tags**: beacon, mdns, golang, go, networking, service-discovery, bonjour, zeroconf, dns-sd
+- **Thumbnail**: Custom thumbnail (1280x720) with title text overlaid on code screenshot
+
+**Settings**:
+- Category: Science & Technology
+- License: Standard YouTube License (code is MIT)
+- Allow embedding: Yes
+- Publish to subscriptions feed: Yes
+- Comments: Allowed
+- Age restriction: No
+
+---
+
 ## Template Usage Summary
 
 | Template | File | Purpose |
@@ -721,6 +957,7 @@ func ExampleResponder_Register() {
 | **docker-compose.yml** | examples/deployment/docker/ | Docker deployment |
 | **Dockerfile** | examples/deployment/docker/ | Container image |
 | **Godoc Example** | */test.go | API usage examples |
+| **Video Tutorial** | YouTube videos | Video tutorial production (format, script, recording, upload) |
 
 ---
 

@@ -8,6 +8,10 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/joshuafuller/beacon)](https://goreportcard.com/report/github.com/joshuafuller/beacon)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/joshuafuller/beacon)
+[![RFC 6762 P0](https://img.shields.io/badge/RFC%206762%20P0-100%25-brightgreen?style=flat-square&logo=checkmarx)](./archive/p0-documentation/RFC_COMPLIANCE_CERTIFICATE_v1.0.md)
+[![RFC 6762 Overall](https://img.shields.io/badge/RFC%206762-97.9%25-brightgreen?style=flat-square&logo=checkmarx)](./archive/p0-documentation/RFC_COMPLIANCE_CERTIFICATE_v1.0.md)
+[![RFC 6763 P0](https://img.shields.io/badge/RFC%206763%20P0-100%25-brightgreen?style=flat-square&logo=checkmarx)](./archive/p0-documentation/RFC6763_KEY_REQUIREMENTS.md)
+[![RFC 6763 Overall](https://img.shields.io/badge/RFC%206763-96.9%25-brightgreen?style=flat-square&logo=checkmarx)](./archive/p0-documentation/RFC6763_KEY_REQUIREMENTS.md)
 
 Beacon is a lightweight, high-performance mDNS (Multicast DNS) library for Go, implementing [RFC 6762](https://www.rfc-editor.org/rfc/rfc6762.html) for service discovery on local networks.
 
@@ -18,13 +22,15 @@ Beacon is a lightweight, high-performance mDNS (Multicast DNS) library for Go, i
 ## Features
 
 - **10,000x faster** - 4.8μs response latency vs ~50ms in alternatives
-- **72.2% RFC 6762 compliance** - Rigorous protocol implementation
+- **100% RFC compliance (MUST requirements)** - 97.9% RFC 6762, 96.9% RFC 6763 overall
 - **Zero external dependencies** - Standard library only
-- **Production-tested** - 81.3% test coverage, 109,471 fuzz executions, 0 data races
+- **Production-tested** - 68.6% test coverage, 109,471 fuzz executions, 0 data races
 - **Automatic conflict resolution** - RFC 6762 §8.2 compliant
 - **SO_REUSEPORT** - Coexists with Avahi/Bonjour system services
 
-[See detailed comparison with hashicorp/mdns →](docs/HASHICORP_COMPARISON.md)
+> **Note**: Beacon achieves **100% compliance with all mandatory (MUST) requirements** for both RFC 6762 (Multicast DNS) and RFC 6763 (DNS-Based Service Discovery). The overall percentages (97.9%/96.9%) include optional (SHOULD/MAY) features. See [RFC Compliance Certificate](./archive/p0-documentation/RFC_COMPLIANCE_CERTIFICATE_v1.0.md) for details.
+
+[See detailed comparison with hashicorp/mdns →](docs/internals/analysis/HASHICORP_COMPARISON.md)
 
 ---
 
@@ -108,7 +114,8 @@ Beacon is built on proven engineering principles:
 | Metric | hashicorp/mdns | Beacon | Improvement |
 |--------|----------------|--------|-------------|
 | Response Latency | ~50ms | 4.8μs | **10,000x faster** |
-| RFC Compliance | ~7% | 72.2% | **10x better** |
+| RFC Compliance (P0) | ~7% | 100% | **14x better** |
+| RFC Compliance (Overall) | ~7% | 97.9% | **14x better** |
 | Fuzz Testing | 0 tests | 109,471 execs | **∞ better** |
 | Test Coverage | ~10 tests | 247 tests | **25x better** |
 | Data Races | Known | 0 (verified) | **Production ready** |
@@ -137,7 +144,7 @@ Beacon is built on proven engineering principles:
 
 ### 🔬 For Researchers/Architects
 
-- **[RFC Compliance Matrix](docs/internals/rfc-compliance/RFC_COMPLIANCE_MATRIX.md)** - 72.2% compliant (91/126 requirements)
+- **[RFC Compliance Certificate](./archive/p0-documentation/RFC_COMPLIANCE_CERTIFICATE_v1.0.md)** - 100% P0, 97.9% overall RFC 6762
 - **[hashicorp/mdns Comparison](docs/internals/analysis/HASHICORP_COMPARISON.md)** - Detailed performance comparison
 - **[Performance Analysis](specs/006-mdns-responder/PERFORMANCE_ANALYSIS.md)** - Benchmarks (Grade A+)
 - **[Security Audit](specs/006-mdns-responder/SECURITY_AUDIT.md)** - Security posture (STRONG)
@@ -171,7 +178,7 @@ Beacon is built on proven engineering principles:
 **v0.3.0** - Unicast response support
 **v0.4.0** - Service browsing
 
-[See RFC Compliance Matrix for detailed status →](docs/RFC_COMPLIANCE_MATRIX.md)
+[See RFC Compliance Matrix for detailed status →](docs/internals/rfc-compliance/RFC_COMPLIANCE_MATRIX.md)
 
 ---
 

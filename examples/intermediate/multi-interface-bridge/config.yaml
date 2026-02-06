@@ -1,0 +1,20 @@
+# Multi-Interface Bridge Configuration
+
+# Network interfaces to bridge (adjust for your system)
+# Run "ip addr" or "ifconfig" to see available interfaces
+interfaces:
+  - wlan0  # WiFi
+  - eth0   # Ethernet
+
+# Service types allowed to be forwarded (security control)
+# Only these service types will be bridged between interfaces
+allowed_services:
+  - _http._tcp      # Web servers
+  - _homekit._tcp   # HomeKit devices
+  - _ipp._tcp       # Printers
+
+# Subnets to exclude from bridging (avoid loops and leaks)
+exclude_subnets:
+  - 172.17.0.0/16   # Docker default network
+  - 10.8.0.0/24     # OpenVPN default
+  - 169.254.0.0/16  # Link-local (already handled by mDNS)
