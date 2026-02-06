@@ -1,12 +1,14 @@
 module github.com/joshuafuller/beacon/examples/advanced/iot-device
 
-go 1.21
+go 1.24.0
+
+toolchain go1.24.13
 
 require github.com/joshuafuller/beacon v0.0.0
 
 require (
-	golang.org/x/net v0.33.0 // indirect
-	golang.org/x/sys v0.28.0 // indirect
+	golang.org/x/net v0.49.0 // indirect
+	golang.org/x/sys v0.40.0 // indirect
 )
 
 // Use local Beacon code instead of remote
