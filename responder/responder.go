@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sync"
 
 	"time"
 
@@ -41,6 +42,7 @@ type Responder struct {
 	transport        transport.Transport
 	registry         *responder.Registry
 	hostname         string
+	queryHandlerWg   sync.WaitGroup             // Synchronize query handler goroutine shutdown
 	injectConflict   bool                       // Test hook: inject conflict during probing
 	responseBuilder  *responder.ResponseBuilder // RFC 6762 §6 response construction
 	recordSet        *records.RecordSet         // Per-record rate limiting tracker
@@ -95,6 +97,7 @@ func New(ctx context.Context, opts ...Option) (*Responder, error) {
 	}
 
 	// Start query handler goroutine (T080)
+	r.queryHandlerWg.Add(1)
 	go r.runQueryHandler()
 
 	return r, nil
@@ -334,11 +337,19 @@ func (r *Responder) Close() error {
 		_ = r.Unregister(instanceName)
 	}
 
-	// Close transport
+	// Close transport - this also unblocks the query handler goroutine's
+	// Receive() call so it can observe the queryHandlerDone signal and exit.
+	var closeErr error
 	if r.transport != nil {
-		return r.transport.Close()
+		closeErr = r.transport.Close()
 	}
-	return nil
+
+	// Wait for query handler goroutine to finish after transport is closed.
+	// The goroutine will exit once Receive() returns an error from the closed
+	// transport and it checks queryHandlerDone.
+	r.queryHandlerWg.Wait()
+
+	return closeErr
 }
 
 // getLocalIPv4 gets the first non-loopback IPv4 address from any interface.
@@ -607,8 +618,47 @@ func (r *Responder) UpdateService(serviceID string, txtRecords map[string]string
 	// Update TXT records
 	internalSvc.TXT = txtRecords
 
-	// TODO US5-LATER: Send announcement with updated TXT record
-	// For now, just updating the registry is sufficient for tests
+	// Announce updated records per RFC 6762 §8.4
+	// Build updated record set
+	ipv4, err := getLocalIPv4()
+	if err != nil {
+		// Can't announce without IP, but registry is updated
+		return nil
+	}
+
+	serviceInfo := &records.ServiceInfo{
+		InstanceName: svc.InstanceName,
+		ServiceType:  svc.ServiceType,
+		Hostname:     r.hostname,
+		Port:         svc.Port,
+		IPv4Address:  ipv4,
+		TXTRecords:   txtRecords,
+	}
+	announcedRecords := records.BuildRecordSet(serviceInfo)
+
+	// Convert to message.ResourceRecord for BuildResponse
+	msgRecords := make([]*message.ResourceRecord, len(announcedRecords))
+	for i, rr := range announcedRecords {
+		msgRecords[i] = &message.ResourceRecord{
+			Name:       rr.Name,
+			Type:       rr.Type,
+			Class:      rr.Class,
+			TTL:        rr.TTL,
+			Data:       rr.Data,
+			CacheFlush: rr.CacheFlush,
+		}
+	}
+
+	responseBytes, err := message.BuildResponse(msgRecords)
+	if err != nil {
+		return nil // Registry updated, announcement failed - best effort
+	}
+
+	dest := &net.UDPAddr{
+		IP:   net.ParseIP("224.0.0.251"),
+		Port: 5353,
+	}
+	_ = r.transport.Send(r.ctx, responseBytes, dest) // nosemgrep: beacon-error-swallowing
 
 	return nil
 }
@@ -666,6 +716,7 @@ type ResourceRecord = records.ResourceRecord
 //
 // T080: Query handler goroutine
 func (r *Responder) runQueryHandler() {
+	defer r.queryHandlerWg.Done()
 	for {
 		select {
 		case <-r.ctx.Done():
@@ -811,108 +862,120 @@ func (r *Responder) handleQuery(packet []byte, srcAddr net.Addr, interfaceIndex 
 
 	// Process each question
 	for _, question := range msg.Questions {
-		// Only handle PTR queries for now (T076 implementation)
-		if question.QTYPE != uint16(protocol.RecordTypePTR) {
-			continue
-		}
-
-		// Check if we have a service matching this query
-		// Query is for "_http._tcp.local", we need to find services of that type
-		serviceType := question.QNAME
-
 		// Get all registered services
 		services := r.registry.List()
+
+		var matchedService *responder.Service
 		for _, instanceName := range services {
 			service, found := r.registry.Get(instanceName)
 			if !found {
 				continue
 			}
 
-			// Check if service type matches query
-			if service.ServiceType != serviceType {
-				continue
-			}
-
-			// We have a match! Build response with interface-specific addressing
-			//
-			// RFC 6762 §15 "Responding to Address Queries":
-			// "When a Multicast DNS responder sends a Multicast DNS response message
-			// containing its own address records in response to a query received on
-			// a particular interface, it MUST include only addresses that are valid
-			// on that interface, and MUST NOT include addresses configured on other
-			// interfaces."
-			//
-			// T036: Inline comment citing RFC 6762 §15
-			var ipv4 []byte
-			var err error
-
-			// T030: Graceful fallback when interface index unavailable (interfaceIndex=0)
-			// This happens when control messages aren't supported or platform doesn't provide IP_PKTINFO
-			if interfaceIndex == 0 {
-				// Degraded mode: Use default interface IP (legacy behavior)
-				// TODO T032: Add debug logging when F-6 (Logging & Observability) is implemented
-				ipv4, err = getLocalIPv4()
-			} else {
-				// RFC 6762 §15 compliance: Use ONLY the IP from the receiving interface
-				ipv4, err = getIPv4ForInterface(interfaceIndex)
-			}
-
-			if err != nil {
-				// T031: If interface-specific IP lookup fails, skip response for this query
-				// This is correct behavior per RFC 6762 §15: Better to not respond than
-				// to respond with an incorrect (wrong interface) IP address
-				// TODO T032: Add error logging when F-6 is implemented
-				// Common failure causes: interface went down, no IPv4 configured, invalid index
-				continue
-			}
-
-			serviceWithIP := &responder.ServiceWithIP{
-				InstanceName: service.InstanceName,
-				ServiceType:  service.ServiceType,
-				Domain:       "local",
-				Port:         service.Port,
-				IPv4Address:  ipv4,
-				TXTRecords:   service.TXT, // internal.Service uses TXT field
-				Hostname:     r.hostname,
-			}
-
-			// Build response (T076)
-			response, err := r.responseBuilder.BuildResponse(serviceWithIP, msg)
-			if err != nil {
-				continue
-			}
-
-			// Per-source-IP rate limiting (FR-026, RFC 6762 §6.2)
-			if r.rateLimiter != nil && srcAddr != nil {
-				srcIP := srcAddr.String()
-				if udpAddr, ok := srcAddr.(*net.UDPAddr); ok {
-					srcIP = udpAddr.IP.String()
+			switch question.QTYPE {
+			case uint16(protocol.RecordTypePTR):
+				// PTR: match by service type (e.g., "_http._tcp.local")
+				if service.ServiceType == question.QNAME {
+					matchedService = service
 				}
-				if !r.rateLimiter.Allow(srcIP) {
-					continue // Rate-limited, skip response
+			case uint16(protocol.RecordTypeSRV), uint16(protocol.RecordTypeTXT):
+				// SRV/TXT: match by full instance name (e.g., "My Printer._http._tcp.local")
+				fullName := service.InstanceName + "." + service.ServiceType
+				if fullName == question.QNAME {
+					matchedService = service
+				}
+			case uint16(protocol.RecordTypeA):
+				// A: match by hostname (e.g., "myhost.local")
+				if r.hostname == question.QNAME {
+					matchedService = service
 				}
 			}
 
-			// RFC 6762 §5.4: Check QU bit (bit 15 of QCLASS) to determine unicast vs multicast
-			// Task 4: QU bit handling
-			quBit := (question.QCLASS & 0x8000) != 0
-
-			var dest net.Addr
-			if quBit {
-				// RFC 6762 §5.4: QU bit set → send unicast response to querier
-				dest = srcAddr
-			} else {
-				// RFC 6762 §5.4: QU bit clear → send multicast response
-				dest = nil // nil = multicast to 224.0.0.251:5353
+			if matchedService != nil {
+				break
 			}
-
-			// Send response
-			responsePacket := buildResponsePacket(response)
-			_ = r.transport.Send(r.ctx, responsePacket, dest)
-
-			// Only respond once per query
-			break
 		}
+
+		if matchedService == nil {
+			continue
+		}
+
+		// We have a match! Build response with interface-specific addressing
+		//
+		// RFC 6762 §15 "Responding to Address Queries":
+		// "When a Multicast DNS responder sends a Multicast DNS response message
+		// containing its own address records in response to a query received on
+		// a particular interface, it MUST include only addresses that are valid
+		// on that interface, and MUST NOT include addresses configured on other
+		// interfaces."
+		//
+		// T036: Inline comment citing RFC 6762 §15
+		var ipv4 []byte
+		var ipErr error
+
+		// T030: Graceful fallback when interface index unavailable (interfaceIndex=0)
+		// This happens when control messages aren't supported or platform doesn't provide IP_PKTINFO
+		if interfaceIndex == 0 {
+			// Degraded mode: Use default interface IP (legacy behavior)
+			// TODO T032: Add debug logging when F-6 (Logging & Observability) is implemented
+			ipv4, ipErr = getLocalIPv4()
+		} else {
+			// RFC 6762 §15 compliance: Use ONLY the IP from the receiving interface
+			ipv4, ipErr = getIPv4ForInterface(interfaceIndex)
+		}
+
+		if ipErr != nil {
+			// T031: If interface-specific IP lookup fails, skip response for this query
+			// This is correct behavior per RFC 6762 §15: Better to not respond than
+			// to respond with an incorrect (wrong interface) IP address
+			// TODO T032: Add error logging when F-6 is implemented
+			// Common failure causes: interface went down, no IPv4 configured, invalid index
+			continue
+		}
+
+		serviceWithIP := &responder.ServiceWithIP{
+			InstanceName: matchedService.InstanceName,
+			ServiceType:  matchedService.ServiceType,
+			Domain:       "local",
+			Port:         matchedService.Port,
+			IPv4Address:  ipv4,
+			TXTRecords:   matchedService.TXT, // internal.Service uses TXT field
+			Hostname:     r.hostname,
+		}
+
+		// Build response (T076)
+		response, err := r.responseBuilder.BuildResponse(serviceWithIP, msg)
+		if err != nil {
+			continue
+		}
+
+		// Per-source-IP rate limiting (FR-026, RFC 6762 §6.2)
+		if r.rateLimiter != nil && srcAddr != nil {
+			srcIP := srcAddr.String()
+			if udpAddr, ok := srcAddr.(*net.UDPAddr); ok {
+				srcIP = udpAddr.IP.String()
+			}
+			if !r.rateLimiter.Allow(srcIP) {
+				continue // Rate-limited, skip response
+			}
+		}
+
+		// RFC 6762 §5.4: Check QU bit (bit 15 of QCLASS) to determine unicast vs multicast
+		// Task 4: QU bit handling
+		quBit := (question.QCLASS & 0x8000) != 0
+
+		var dest net.Addr
+		if quBit {
+			// RFC 6762 §5.4: QU bit set → send unicast response to querier
+			dest = srcAddr
+		} else {
+			// RFC 6762 §5.4: QU bit clear → send multicast response
+			dest = nil // nil = multicast to 224.0.0.251:5353
+		}
+
+		// Send response
+		responsePacket := buildResponsePacket(response)
+		_ = r.transport.Send(r.ctx, responsePacket, dest)
 	}
 
 	return nil

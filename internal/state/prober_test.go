@@ -2,6 +2,9 @@ package state
 
 import (
 	"context"
+	"encoding/binary"
+	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -418,5 +421,251 @@ func TestProber_TransportSend(t *testing.T) {
 		if len(call.Packet) != len(lastMsg) {
 			t.Errorf("Send() call %d: packet len = %d, want %d", i, len(call.Packet), len(lastMsg))
 		}
+	}
+}
+
+// TestProber_ProbeMessageContainsServiceName verifies the probe message QNAME
+// contains the actual service instance name, not the root domain.
+//
+// RFC 6762 §8.1: Probe queries MUST ask for the name being claimed.
+func TestProber_ProbeMessageContainsServiceName(t *testing.T) {
+	prober := NewProber()
+	ctx := context.Background()
+
+	result := prober.Probe(ctx, testServiceName)
+	if result.Error != nil {
+		t.Fatalf("Probe() error = %v", result.Error)
+	}
+
+	msg := prober.GetLastProbeMessage()
+	if len(msg) < 12 {
+		t.Fatalf("GetLastProbeMessage() too short: %d bytes", len(msg))
+	}
+
+	// Parse the message to extract the QNAME
+	parsed, err := message.ParseMessage(msg)
+	if err != nil {
+		t.Fatalf("ParseMessage() error = %v", err)
+	}
+
+	if len(parsed.Questions) != 1 {
+		t.Fatalf("Expected 1 question, got %d", len(parsed.Questions))
+	}
+
+	q := parsed.Questions[0]
+
+	// Verify QTYPE = ANY (255)
+	if q.QTYPE != uint16(protocol.RecordTypeANY) {
+		t.Errorf("QTYPE = %d, want %d (ANY)", q.QTYPE, protocol.RecordTypeANY)
+	}
+
+	// Verify QCLASS = IN (1)
+	if q.QCLASS != uint16(protocol.ClassIN) {
+		t.Errorf("QCLASS = %d, want %d (IN)", q.QCLASS, protocol.ClassIN)
+	}
+
+	// Verify QNAME contains the service name components, not root domain
+	// testServiceName = "My Printer._http._tcp.local"
+	// The parsed QNAME should contain the instance name and service type
+	qname := q.QNAME
+	if qname == "." || qname == "" {
+		t.Errorf("QNAME = %q, want service instance name containing %q", qname, testServiceName)
+	}
+
+	// Check that the QNAME contains key parts of the service name
+	if !strings.Contains(qname, "My Printer") {
+		t.Errorf("QNAME %q does not contain instance name %q", qname, "My Printer")
+	}
+	if !strings.Contains(qname, "_http") {
+		t.Errorf("QNAME %q does not contain service type %q", qname, "_http")
+	}
+	if !strings.Contains(qname, "_tcp") {
+		t.Errorf("QNAME %q does not contain protocol %q", qname, "_tcp")
+	}
+}
+
+// buildTestResponsePacket constructs a minimal DNS response packet with one A record answer.
+// This is used by tests to simulate mDNS responses received during probing.
+func buildTestResponsePacket(name string, ip net.IP) []byte {
+	// Encode the name for the answer section
+	var encodedName []byte
+	if idx := strings.Index(name, "._"); idx >= 0 {
+		instanceName := name[:idx]
+		serviceType := name[idx+1:]
+		var err error
+		encodedName, err = message.EncodeServiceInstanceName(instanceName, serviceType)
+		if err != nil {
+			// Fallback for simple names
+			encodedName, _ = message.EncodeName(name)
+		}
+	} else {
+		encodedName, _ = message.EncodeName(name)
+	}
+
+	// DNS Header (12 bytes): QR=1 (response), ANCOUNT=1
+	header := make([]byte, 12)
+	binary.BigEndian.PutUint16(header[2:4], 0x8400) // QR=1, AA=1
+	binary.BigEndian.PutUint16(header[6:8], 1)       // ANCOUNT = 1
+
+	// Answer section: NAME + TYPE(A=1) + CLASS(IN=1) + TTL + RDLENGTH + RDATA
+	answer := make([]byte, 0, len(encodedName)+10+4)
+	answer = append(answer, encodedName...)
+
+	typeBuf := make([]byte, 2)
+	binary.BigEndian.PutUint16(typeBuf, uint16(protocol.RecordTypeA))
+	answer = append(answer, typeBuf...)
+
+	classBuf := make([]byte, 2)
+	binary.BigEndian.PutUint16(classBuf, uint16(protocol.ClassIN))
+	answer = append(answer, classBuf...)
+
+	ttlBuf := make([]byte, 4)
+	binary.BigEndian.PutUint32(ttlBuf, 120)
+	answer = append(answer, ttlBuf...)
+
+	rdlenBuf := make([]byte, 2)
+	binary.BigEndian.PutUint16(rdlenBuf, 4) // A record = 4 bytes
+	answer = append(answer, rdlenBuf...)
+
+	answer = append(answer, ip.To4()...)
+
+	return append(header, answer...)
+}
+
+// TestProber_ListensForConflictDuringProbing verifies that the prober listens for
+// incoming mDNS responses during the 250ms probe interval and detects conflicts.
+//
+// RFC 6762 §8.1: "A host MUST listen for responses during probing"
+func TestProber_ListensForConflictDuringProbing(t *testing.T) {
+	mock := transport.NewMockTransport()
+	prober := NewProber()
+	prober.SetTransport(mock)
+	prober.EnableListenForResponses()
+
+	// Our record: A record for the service name with our IP
+	ourRecord := message.ResourceRecord{
+		Name:  "My Printer._http._tcp.local",
+		Type:  protocol.RecordTypeA,
+		Class: protocol.ClassIN,
+		TTL:   120,
+		Data:  []byte{192, 168, 1, 50}, // Our IP (lexicographically earlier - we lose)
+	}
+	prober.SetOurRecords([]message.ResourceRecord{ourRecord})
+
+	// Set up conflict detector that detects conflict when names match and their data wins
+	detector := &mockConflictDetector{
+		detectFunc: func(our, incoming message.ResourceRecord) (bool, error) {
+			// Conflict if same name and incoming data is lexicographically greater
+			if our.Name != incoming.Name {
+				return false, nil
+			}
+			for i := 0; i < len(our.Data) && i < len(incoming.Data); i++ {
+				if our.Data[i] < incoming.Data[i] {
+					return true, nil // We lose - conflict
+				} else if our.Data[i] > incoming.Data[i] {
+					return false, nil // We win
+				}
+			}
+			return false, nil
+		},
+	}
+	prober.SetConflictDetector(detector)
+
+	// Build a response packet claiming the same name with a different (winning) IP
+	responsePacket := buildTestResponsePacket(
+		"My Printer._http._tcp.local",
+		net.IPv4(192, 168, 1, 100), // Their IP - lexicographically greater, they win
+	)
+
+	// Queue the response so the prober receives it during the first probe interval.
+	// Use onSendQuery to queue the response after the first probe is sent.
+	firstSend := true
+	prober.SetOnSendQuery(func() {
+		if firstSend {
+			firstSend = false
+			// Queue a conflicting response for the prober to receive during the wait
+			mock.QueueReceive(responsePacket, &net.UDPAddr{
+				IP:   net.IPv4(192, 168, 1, 100),
+				Port: 5353,
+			}, 0)
+		}
+	})
+
+	ctx := context.Background()
+	result := prober.Probe(ctx, testServiceName)
+
+	if !result.Conflict {
+		t.Error("Probe() Conflict = false, want true (conflict response received during probing)")
+	}
+
+	if result.Error != nil {
+		t.Errorf("Probe() error = %v, want nil (conflict is not an error)", result.Error)
+	}
+}
+
+// TestProber_NoConflictWhenResponseDoesntMatch verifies that a response for a
+// different service name does not trigger a conflict.
+func TestProber_NoConflictWhenResponseDoesntMatch(t *testing.T) {
+	mock := transport.NewMockTransport()
+	prober := NewProber()
+	prober.SetTransport(mock)
+	prober.EnableListenForResponses()
+
+	// Our record
+	ourRecord := message.ResourceRecord{
+		Name:  "My Printer._http._tcp.local",
+		Type:  protocol.RecordTypeA,
+		Class: protocol.ClassIN,
+		TTL:   120,
+		Data:  []byte{192, 168, 1, 50},
+	}
+	prober.SetOurRecords([]message.ResourceRecord{ourRecord})
+
+	// Conflict detector only flags conflict if names match
+	detector := &mockConflictDetector{
+		detectFunc: func(our, incoming message.ResourceRecord) (bool, error) {
+			if our.Name != incoming.Name {
+				return false, nil // Different names - no conflict
+			}
+			// Same name - check data
+			for i := 0; i < len(our.Data) && i < len(incoming.Data); i++ {
+				if our.Data[i] < incoming.Data[i] {
+					return true, nil
+				} else if our.Data[i] > incoming.Data[i] {
+					return false, nil
+				}
+			}
+			return false, nil
+		},
+	}
+	prober.SetConflictDetector(detector)
+
+	// Build a response for a DIFFERENT service name
+	responsePacket := buildTestResponsePacket(
+		"Other Service._http._tcp.local",
+		net.IPv4(192, 168, 1, 100),
+	)
+
+	// Queue the non-matching response
+	firstSend := true
+	prober.SetOnSendQuery(func() {
+		if firstSend {
+			firstSend = false
+			mock.QueueReceive(responsePacket, &net.UDPAddr{
+				IP:   net.IPv4(192, 168, 1, 100),
+				Port: 5353,
+			}, 0)
+		}
+	})
+
+	ctx := context.Background()
+	result := prober.Probe(ctx, testServiceName)
+
+	if result.Conflict {
+		t.Error("Probe() Conflict = true, want false (response was for different service name)")
+	}
+
+	if result.Error != nil {
+		t.Errorf("Probe() error = %v, want nil", result.Error)
 	}
 }

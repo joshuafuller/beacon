@@ -2,7 +2,9 @@ package state
 
 import (
 	"context"
+	"encoding/binary"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/joshuafuller/beacon/internal/message"
@@ -28,6 +30,13 @@ type ProbeResult struct {
 type Prober struct {
 	// Transport for sending probe packets on the wire
 	transport transport.Transport
+
+	// listenForResponses enables the prober to call transport.Receive() during
+	// probe intervals. When false (default), the prober only sends probes and
+	// relies on an external receive loop (e.g., Responder's query handler) to
+	// feed conflict information. Enable this when the prober has a dedicated
+	// transport that is not shared with other goroutines.
+	listenForResponses bool
 
 	// Test hooks for injection
 	onSendQuery             func()
@@ -85,34 +94,36 @@ func (p *Prober) Probe(ctx context.Context, serviceName string) ProbeResult {
 		}
 
 		// Send probe query
-		// RFC 6762 §8.1: Probe queries use query type "ANY" (255)
-		// US2 GREEN: Build actual probe message for contract test validation
+		// RFC 6762 §8.1: Probe queries use query type "ANY" (255) for the claimed name.
 		//
-		// NOTE: BuildQuery() currently rejects spaces in DNS labels (per RFC 1035),
-		// but RFC 6763 DNS-SD allows spaces in service instance names.
-		// For now, create a minimal stub message for contract test validation.
-		// Full DNS-SD name encoding will be implemented in US4 (Service Publishing).
-		//
-		// Minimal DNS header (12 bytes) per RFC 1035 §4.1.1:
-		//   ID (2 bytes): 0x0000
-		//   Flags (2 bytes): QR=0, OPCODE=0, AA=0, TC=0, RD=0, RA=0, Z=0, RCODE=0 = 0x0000
-		//   QDCOUNT (2 bytes): 1 question
-		//   ANCOUNT (2 bytes): 0 answers
-		//   NSCOUNT (2 bytes): 0 authority
-		//   ARCOUNT (2 bytes): 0 additional
-		//   Question section (variable): QNAME + QTYPE + QCLASS
-		//
-		// For contract test validation, we just need header + minimal question
-		probeMsg := make([]byte, 28) // 12-byte header + 16-byte minimal question
-		// Header: all zeros already (QR=0, OPCODE=0 is correct)
-		probeMsg[4] = 0x00 // QDCOUNT high byte
-		probeMsg[5] = 0x01 // QDCOUNT low byte = 1 question
-		// Minimal question: <root> ANY IN
-		probeMsg[12] = 0x00 // Root label (length 0)
-		probeMsg[13] = 0x00 // QTYPE high byte
-		probeMsg[14] = 0xFF // QTYPE low byte = 255 (ANY)
-		probeMsg[15] = 0x00 // QCLASS high byte
-		probeMsg[16] = 0x01 // QCLASS low byte = 1 (IN)
+		// Build a proper probe message with the actual service instance name.
+		// serviceName format: "My Printer._http._tcp.local"
+		// Split at first "._" boundary: instance="My Printer", serviceType="_http._tcp.local"
+		var encodedName []byte
+		var encErr error
+		if idx := strings.Index(serviceName, "._"); idx >= 0 {
+			instanceName := serviceName[:idx]
+			serviceType := serviceName[idx+1:] // e.g., "_http._tcp.local"
+			encodedName, encErr = message.EncodeServiceInstanceName(instanceName, serviceType)
+		} else {
+			encodedName, encErr = message.EncodeName(serviceName)
+		}
+		if encErr != nil {
+			return ProbeResult{Error: encErr}
+		}
+
+		// Build DNS header (12 bytes) + question section (encodedName + 4 bytes QTYPE+QCLASS)
+		// Header: QR=0, OPCODE=0, QDCOUNT=1, all else zero
+		header := make([]byte, 12)
+		binary.BigEndian.PutUint16(header[4:6], 1) // QDCOUNT = 1
+
+		// Question section: QNAME + QTYPE(ANY=255) + QCLASS(IN=1)
+		question := make([]byte, len(encodedName)+4)
+		copy(question, encodedName)
+		binary.BigEndian.PutUint16(question[len(encodedName):], uint16(protocol.RecordTypeANY))
+		binary.BigEndian.PutUint16(question[len(encodedName)+2:], uint16(protocol.ClassIN))
+
+		probeMsg := append(header, question...)
 		p.lastProbeMessage = probeMsg
 
 		// Notify test hooks
@@ -127,23 +138,6 @@ func (p *Prober) Probe(ctx context.Context, serviceName string) ProbeResult {
 				Port: protocol.Port,
 			}
 			_ = p.transport.Send(ctx, probeMsg, dest) // nosemgrep: beacon-error-swallowing
-		}
-
-		// T059: Check for conflicts using ConflictDetector (if configured)
-		if p.conflictDetector != nil && len(p.incomingRecords) > 0 && len(p.ourRecords) > 0 {
-			// Check each incoming record against each of our records
-			for _, ourRecord := range p.ourRecords {
-				for _, incomingRecord := range p.incomingRecords {
-					conflict, err := p.conflictDetector.DetectConflict(ourRecord, incomingRecord)
-					if err != nil {
-						return ProbeResult{Error: err}
-					}
-					if conflict {
-						// Conflict detected via ConflictDetector
-						return ProbeResult{Conflict: true}
-					}
-				}
-			}
 		}
 
 		// Check for injected conflict (test hook - legacy)
@@ -163,8 +157,88 @@ func (p *Prober) Probe(ctx context.Context, serviceName string) ProbeResult {
 			// We win tie-break, continue probing
 		}
 
-		// Wait 250ms before next probe (except after last probe)
-		if i < probeCount-1 {
+		// Wait 250ms before next probe (except after last probe).
+		// RFC 6762 §8.1: During the wait, listen for responses that indicate conflicts.
+		if i < probeCount-1 && p.transport != nil && p.listenForResponses {
+			// Listen for responses during the 250ms probe interval
+			deadline := time.Now().Add(protocol.ProbeInterval)
+			for time.Now().Before(deadline) {
+				remaining := time.Until(deadline)
+				if remaining <= 0 {
+					break
+				}
+				receiveCtx, cancelReceive := context.WithTimeout(ctx, remaining)
+				packet, _, _, recvErr := p.transport.Receive(receiveCtx)
+				cancelReceive()
+				if recvErr != nil {
+					// Timeout or context cancelled - check if parent ctx is done
+					select {
+					case <-ctx.Done():
+						return ProbeResult{Error: ctx.Err()}
+					default:
+						break // Timeout expired - move on to next probe
+					}
+					break
+				}
+
+				// Skip nil/empty packets (e.g., mock transport returning immediately)
+				if len(packet) == 0 {
+					// Yield briefly to avoid busy-spinning on non-blocking mocks
+					time.Sleep(time.Millisecond)
+					continue
+				}
+
+				// Parse response and check for conflicts
+				respMsg, parseErr := message.ParseMessage(packet)
+				if parseErr != nil {
+					continue // Malformed packet - ignore
+				}
+
+				// Only process responses (QR=1)
+				if !respMsg.Header.IsResponse() {
+					continue
+				}
+
+				// Check answers for conflict with our service name
+				if p.conflictDetector != nil && len(p.ourRecords) > 0 {
+					for _, answer := range respMsg.Answers {
+						// Convert Answer to ResourceRecord for conflict detection
+						incoming := message.ResourceRecord{
+							Name:  answer.NAME,
+							Type:  protocol.RecordType(answer.TYPE),
+							Class: protocol.DNSClass(answer.CLASS & 0x7FFF), // strip cache-flush bit
+							TTL:   answer.TTL,
+							Data:  answer.RDATA,
+						}
+						for _, ourRecord := range p.ourRecords {
+							conflict, detectErr := p.conflictDetector.DetectConflict(ourRecord, incoming)
+							if detectErr != nil {
+								return ProbeResult{Error: detectErr}
+							}
+							if conflict {
+								return ProbeResult{Conflict: true}
+							}
+						}
+					}
+				}
+			}
+		} else if i < probeCount-1 {
+			// Not listening for responses (no transport, shared transport, or unit test mode).
+			// Check injected records then wait the probe interval.
+			// T059: Check for conflicts using ConflictDetector with injected records
+			if p.conflictDetector != nil && len(p.incomingRecords) > 0 && len(p.ourRecords) > 0 {
+				for _, ourRecord := range p.ourRecords {
+					for _, incomingRecord := range p.incomingRecords {
+						conflict, err := p.conflictDetector.DetectConflict(ourRecord, incomingRecord)
+						if err != nil {
+							return ProbeResult{Error: err}
+						}
+						if conflict {
+							return ProbeResult{Conflict: true}
+						}
+					}
+				}
+			}
 			timer := time.NewTimer(protocol.ProbeInterval)
 			select {
 			case <-ctx.Done():
@@ -240,6 +314,20 @@ func (p *Prober) SetLastProbeMessage(msg []byte) {
 // RFC 6762 §8.1: Probes are sent to the mDNS multicast group 224.0.0.251:5353.
 func (p *Prober) SetTransport(t transport.Transport) {
 	p.transport = t
+}
+
+// EnableListenForResponses enables the prober to actively listen for responses
+// by calling transport.Receive() during the 250ms probe intervals.
+//
+// This should only be enabled when the prober has a dedicated transport that is
+// not shared with other goroutines (e.g., in standalone mode or testing).
+// When a shared transport is in use (e.g., Responder's query handler), leave
+// this disabled and rely on the external receive loop to feed conflict info.
+//
+// RFC 6762 §8.1: Listening for responses during probing is required for
+// production conflict detection.
+func (p *Prober) EnableListenForResponses() {
+	p.listenForResponses = true
 }
 
 // SetOnSendQuery sets the callback to be called when a probe query is sent.

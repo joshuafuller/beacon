@@ -5,11 +5,15 @@ import (
 	"context"
 	goerrors "errors"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/joshuafuller/beacon/internal/errors"
+	"github.com/joshuafuller/beacon/internal/message"
+	"github.com/joshuafuller/beacon/internal/protocol"
 	internalresponder "github.com/joshuafuller/beacon/internal/responder"
+	"github.com/joshuafuller/beacon/internal/security"
 )
 
 // TestResponder_New_RED tests Responder initialization.
@@ -1022,4 +1026,355 @@ func TestHandleQuery_QUBitUnicastResponse(t *testing.T) {
 	// at responder/responder.go lines 875-886. The test requires a fully functional
 	// DNS message parser and response builder which are stubs. The implementation
 	// correctly checks the QU bit (0x8000) and sets dest to srcAddr for unicast.
+}
+
+// buildQueryPacket builds a DNS query packet for testing handleQuery.
+// It constructs a valid DNS query message with the given QNAME, QTYPE, and QCLASS.
+//
+// For names containing service instance portions (with spaces/UTF-8), it uses
+// EncodeServiceInstanceName. For plain DNS names, it uses EncodeName.
+func buildQueryPacket(t *testing.T, qname string, qtype uint16, qclass uint16) []byte {
+	t.Helper()
+
+	// Build header (12 bytes)
+	header := make([]byte, 12)
+	// ID = 0, Flags = 0 (query), QDCOUNT = 1, ANCOUNT = 0, NSCOUNT = 0, ARCOUNT = 0
+	header[4] = 0
+	header[5] = 1 // QDCOUNT = 1
+
+	// Encode the QNAME
+	// Detect if this is a service instance name (contains "._" and the part before it has spaces)
+	var encodedName []byte
+	var err error
+
+	// Check for service instance name pattern: "instance._service._proto.local"
+	if idx := findServiceTypeStart(qname); idx > 0 {
+		instanceName := qname[:idx]
+		serviceType := qname[idx+1:] // skip the leading dot
+		encodedName, err = message.EncodeServiceInstanceName(instanceName, serviceType)
+	} else {
+		encodedName, err = message.EncodeName(qname)
+	}
+	if err != nil {
+		t.Fatalf("buildQueryPacket: encode name %q error = %v", qname, err)
+	}
+
+	// Build question: encodedName + QTYPE (2 bytes) + QCLASS (2 bytes)
+	question := make([]byte, 0, len(encodedName)+4)
+	question = append(question, encodedName...)
+	question = append(question, byte(qtype>>8), byte(qtype&0xFF))
+	question = append(question, byte(qclass>>8), byte(qclass&0xFF))
+
+	packet := make([]byte, 0, len(header)+len(question))
+	packet = append(packet, header...)
+	packet = append(packet, question...)
+
+	return packet
+}
+
+// findServiceTypeStart finds the index of the dot before the first underscore-prefixed
+// service type label in a name. Returns -1 if not found.
+// E.g., "My Printer._http._tcp.local" returns 10 (index of "." before "_http").
+func findServiceTypeStart(name string) int {
+	for i := 0; i < len(name)-1; i++ {
+		if name[i] == '.' && name[i+1] == '_' {
+			return i
+		}
+	}
+	return -1
+}
+
+// TestHandleQuery_SRVQuery tests that handleQuery responds to SRV queries
+// matched by the full service instance name.
+//
+// RFC 6762 §6: A responder SHOULD respond to queries for services it has registered.
+// SRV queries use the full instance name (e.g., "My Printer._http._tcp.local").
+func TestHandleQuery_SRVQuery(t *testing.T) {
+	var mu sync.Mutex
+	var sentPackets [][]byte
+
+	mockTransport := &MockTransport{
+		sendFunc: func(ctx context.Context, packet []byte, dest net.Addr) error {
+			mu.Lock()
+			defer mu.Unlock()
+			sentPackets = append(sentPackets, packet)
+			return nil
+		},
+		receiveFunc: func(ctx context.Context) ([]byte, net.Addr, int, error) {
+			// Block until context cancelled
+			<-ctx.Done()
+			return nil, nil, 0, ctx.Err()
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	r := &Responder{
+		ctx:              ctx,
+		transport:        mockTransport,
+		registry:         internalresponder.NewRegistry(),
+		hostname:         "testhost.local",
+		responseBuilder:  internalresponder.NewResponseBuilder(),
+		rateLimiter:      security.NewRateLimiter(100, 60*time.Second, 10000),
+		queryHandlerDone: make(chan struct{}),
+	}
+
+	// Register a service directly in the registry (bypass state machine)
+	svc := &internalresponder.Service{
+		InstanceName: "My Printer",
+		ServiceType:  "_http._tcp.local",
+		Port:         8080,
+		TXT:          map[string]string{"version": "1.0"},
+	}
+	if err := r.registry.Register(svc); err != nil {
+		t.Fatalf("registry.Register() error = %v", err)
+	}
+
+	// Build a SRV query for the full instance name
+	queryPacket := buildQueryPacket(t,
+		"My Printer._http._tcp.local",
+		uint16(protocol.RecordTypeSRV),
+		uint16(protocol.ClassIN),
+	)
+
+	srcAddr := &net.UDPAddr{IP: net.ParseIP("192.168.1.100"), Port: 5353}
+
+	// Call handleQuery directly
+	err := r.handleQuery(queryPacket, srcAddr, 0)
+	if err != nil {
+		t.Fatalf("handleQuery() error = %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(sentPackets) == 0 {
+		t.Fatal("handleQuery() did not send any response for SRV query")
+	}
+
+	t.Logf("SRV query for %q sent %d response packet(s)", "My Printer._http._tcp.local", len(sentPackets))
+}
+
+// TestHandleQuery_TXTQuery tests that handleQuery responds to TXT queries
+// matched by the full service instance name.
+//
+// RFC 6762 §6: Responders SHOULD respond to TXT queries for registered services.
+func TestHandleQuery_TXTQuery(t *testing.T) {
+	var mu sync.Mutex
+	var sentPackets [][]byte
+
+	mockTransport := &MockTransport{
+		sendFunc: func(ctx context.Context, packet []byte, dest net.Addr) error {
+			mu.Lock()
+			defer mu.Unlock()
+			sentPackets = append(sentPackets, packet)
+			return nil
+		},
+		receiveFunc: func(ctx context.Context) ([]byte, net.Addr, int, error) {
+			<-ctx.Done()
+			return nil, nil, 0, ctx.Err()
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	r := &Responder{
+		ctx:              ctx,
+		transport:        mockTransport,
+		registry:         internalresponder.NewRegistry(),
+		hostname:         "testhost.local",
+		responseBuilder:  internalresponder.NewResponseBuilder(),
+		rateLimiter:      security.NewRateLimiter(100, 60*time.Second, 10000),
+		queryHandlerDone: make(chan struct{}),
+	}
+
+	// Register a service directly in the registry
+	svc := &internalresponder.Service{
+		InstanceName: "My Printer",
+		ServiceType:  "_http._tcp.local",
+		Port:         8080,
+		TXT:          map[string]string{"version": "2.0"},
+	}
+	if err := r.registry.Register(svc); err != nil {
+		t.Fatalf("registry.Register() error = %v", err)
+	}
+
+	// Build a TXT query for the full instance name
+	queryPacket := buildQueryPacket(t,
+		"My Printer._http._tcp.local",
+		uint16(protocol.RecordTypeTXT),
+		uint16(protocol.ClassIN),
+	)
+
+	srcAddr := &net.UDPAddr{IP: net.ParseIP("192.168.1.100"), Port: 5353}
+
+	err := r.handleQuery(queryPacket, srcAddr, 0)
+	if err != nil {
+		t.Fatalf("handleQuery() error = %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(sentPackets) == 0 {
+		t.Fatal("handleQuery() did not send any response for TXT query")
+	}
+
+	t.Logf("TXT query for %q sent %d response packet(s)", "My Printer._http._tcp.local", len(sentPackets))
+}
+
+// TestHandleQuery_AQuery tests that handleQuery responds to A queries
+// matched by hostname.
+//
+// RFC 6762 §6: Responders SHOULD respond to A queries for their hostname.
+func TestHandleQuery_AQuery(t *testing.T) {
+	var mu sync.Mutex
+	var sentPackets [][]byte
+
+	mockTransport := &MockTransport{
+		sendFunc: func(ctx context.Context, packet []byte, dest net.Addr) error {
+			mu.Lock()
+			defer mu.Unlock()
+			sentPackets = append(sentPackets, packet)
+			return nil
+		},
+		receiveFunc: func(ctx context.Context) ([]byte, net.Addr, int, error) {
+			<-ctx.Done()
+			return nil, nil, 0, ctx.Err()
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	r := &Responder{
+		ctx:              ctx,
+		transport:        mockTransport,
+		registry:         internalresponder.NewRegistry(),
+		hostname:         "testhost.local",
+		responseBuilder:  internalresponder.NewResponseBuilder(),
+		rateLimiter:      security.NewRateLimiter(100, 60*time.Second, 10000),
+		queryHandlerDone: make(chan struct{}),
+	}
+
+	// Register a service directly in the registry (needed so there's a service to match)
+	svc := &internalresponder.Service{
+		InstanceName: "My Printer",
+		ServiceType:  "_http._tcp.local",
+		Port:         8080,
+		TXT:          map[string]string{},
+	}
+	if err := r.registry.Register(svc); err != nil {
+		t.Fatalf("registry.Register() error = %v", err)
+	}
+
+	// Build an A query for the hostname
+	queryPacket := buildQueryPacket(t,
+		"testhost.local",
+		uint16(protocol.RecordTypeA),
+		uint16(protocol.ClassIN),
+	)
+
+	srcAddr := &net.UDPAddr{IP: net.ParseIP("192.168.1.100"), Port: 5353}
+
+	err := r.handleQuery(queryPacket, srcAddr, 0)
+	if err != nil {
+		t.Fatalf("handleQuery() error = %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(sentPackets) == 0 {
+		t.Fatal("handleQuery() did not send any response for A query")
+	}
+
+	t.Logf("A query for %q sent %d response packet(s)", "testhost.local", len(sentPackets))
+}
+
+// TestUpdateService_SendsAnnouncement tests that UpdateService sends a multicast
+// announcement after updating TXT records per RFC 6762 §8.4.
+func TestUpdateService_SendsAnnouncement(t *testing.T) {
+	var mu sync.Mutex
+	var sentPackets [][]byte
+
+	mockTransport := &MockTransport{
+		sendFunc: func(ctx context.Context, packet []byte, dest net.Addr) error {
+			mu.Lock()
+			defer mu.Unlock()
+			sentPackets = append(sentPackets, packet)
+			return nil
+		},
+		receiveFunc: func(ctx context.Context) ([]byte, net.Addr, int, error) {
+			<-ctx.Done()
+			return nil, nil, 0, ctx.Err()
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	r := &Responder{
+		ctx:              ctx,
+		transport:        mockTransport,
+		registry:         internalresponder.NewRegistry(),
+		hostname:         "testhost.local",
+		responseBuilder:  internalresponder.NewResponseBuilder(),
+		rateLimiter:      security.NewRateLimiter(100, 60*time.Second, 10000),
+		queryHandlerDone: make(chan struct{}),
+	}
+
+	// Register a service directly in the registry
+	svc := &internalresponder.Service{
+		InstanceName: "My Printer",
+		ServiceType:  "_http._tcp.local",
+		Port:         8080,
+		TXT:          map[string]string{"version": "1.0"},
+	}
+	if err := r.registry.Register(svc); err != nil {
+		t.Fatalf("registry.Register() error = %v", err)
+	}
+
+	// Update TXT records
+	newTXT := map[string]string{"version": "2.0", "status": "online"}
+	err := r.UpdateService("My Printer", newTXT)
+	if err != nil {
+		t.Fatalf("UpdateService() error = %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Verify announcement was sent
+	if len(sentPackets) == 0 {
+		t.Fatal("UpdateService() did not send announcement packet")
+	}
+
+	// Verify the packet is a valid DNS response (QR=1)
+	sentPkt := sentPackets[0]
+	if len(sentPkt) < 12 {
+		t.Fatalf("sent packet too short: %d bytes, want at least 12", len(sentPkt))
+	}
+
+	// Check QR bit (bit 15 of flags at offset 2-3)
+	flags := uint16(sentPkt[2])<<8 | uint16(sentPkt[3])
+	if (flags & 0x8000) == 0 {
+		t.Error("announcement packet QR bit = 0, want 1 (response)")
+	}
+
+	// Verify TXT records were updated in registry
+	updatedSvc, found := r.registry.Get("My Printer")
+	if !found {
+		t.Fatal("service not found in registry after UpdateService()")
+	}
+	if updatedSvc.TXT["version"] != "2.0" {
+		t.Errorf("registry TXT[version] = %q, want %q", updatedSvc.TXT["version"], "2.0")
+	}
+	if updatedSvc.TXT["status"] != "online" {
+		t.Errorf("registry TXT[status] = %q, want %q", updatedSvc.TXT["status"], "online")
+	}
+
+	t.Logf("UpdateService sent %d announcement packet(s), registry updated correctly", len(sentPackets))
 }
