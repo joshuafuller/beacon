@@ -664,6 +664,33 @@ func (r *Responder) UpdateService(serviceID string, txtRecords map[string]string
 	return nil
 }
 
+// RegisterServiceWithoutProbing is a test hook that registers a service directly
+// in the registry without performing probing or announcing.
+//
+// This is intended ONLY for contract tests that need to test query handling
+// without the ~1.75s overhead of the full Register() flow.
+//
+// Parameters:
+//   - service: The service to register
+//
+// Returns:
+//   - error: validation or registry error
+func (r *Responder) RegisterServiceWithoutProbing(service *Service) error {
+	if service == nil {
+		return fmt.Errorf("service cannot be nil")
+	}
+	if err := service.Validate(); err != nil {
+		return err
+	}
+	internalService := &responder.Service{
+		InstanceName: service.InstanceName,
+		ServiceType:  service.ServiceType,
+		Port:         service.Port,
+		TXT:          service.TXTRecords,
+	}
+	return r.registry.Register(internalService)
+}
+
 // InjectConflictDuringProbing is a test hook to inject conflicts during probing.
 //
 // When enabled, the state machine will always report StateConflictDetected,
@@ -861,8 +888,59 @@ func (r *Responder) handleQuery(packet []byte, srcAddr net.Addr, interfaceIndex 
 		return nil
 	}
 
+	// DNS-SD meta-query name per RFC 6763 §9
+	const serviceEnumerationName = "_services._dns-sd._udp.local"
+
 	// Process each question
 	for _, question := range msg.Questions {
+		// RFC 6763 §9: Service Type Enumeration
+		// A PTR query for "_services._dns-sd._udp.local" returns all unique service types.
+		if question.QTYPE == uint16(protocol.RecordTypePTR) && question.QNAME == serviceEnumerationName {
+			serviceTypes := r.registry.ListServiceTypes()
+			if len(serviceTypes) == 0 {
+				continue // No services registered, no response needed
+			}
+
+			// Build PTR records: one for each unique service type
+			ptrRecords := make([]*message.ResourceRecord, 0, len(serviceTypes))
+			for _, svcType := range serviceTypes {
+				// RDATA for PTR record is the encoded service type name
+				encodedTarget, encErr := message.EncodeName(svcType)
+				if encErr != nil {
+					continue // Skip types that cannot be encoded
+				}
+				ptrRecords = append(ptrRecords, &message.ResourceRecord{
+					Name:       serviceEnumerationName,
+					Type:       protocol.RecordTypePTR,
+					Class:      protocol.ClassIN,
+					TTL:        protocol.TTLHostname, // 4500s per RFC 6762 §10
+					Data:       encodedTarget,
+					CacheFlush: false, // PTR is a shared record
+				})
+			}
+
+			if len(ptrRecords) == 0 {
+				continue
+			}
+
+			// Build DNS response message
+			responseMsg, buildErr := message.BuildResponse(ptrRecords)
+			if buildErr != nil {
+				continue
+			}
+
+			// Determine destination (unicast vs multicast based on QU bit)
+			quBit := (question.QCLASS & 0x8000) != 0
+			var dest net.Addr
+			if quBit {
+				dest = srcAddr
+			}
+			// nil dest = multicast to 224.0.0.251:5353
+
+			_ = r.transport.Send(r.ctx, responseMsg, dest)
+			continue
+		}
+
 		// Get all registered services
 		services := r.registry.List()
 

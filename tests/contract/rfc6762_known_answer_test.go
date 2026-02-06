@@ -97,7 +97,7 @@ func TestRFC6762_KnownAnswerSuppression_TTLThreshold(t *testing.T) {
 				tt.shouldSuppress)
 
 			// Skip for now - will implement once query handling supports known-answers
-			t.Skip("Deferred until query handling with known-answer support implemented")
+			t.Skip("Deferred: known-answer suppression logic exists (internal/responder/known_answer.go) but is not yet wired into the query handler")
 		})
 	}
 }
@@ -176,7 +176,7 @@ func TestRFC6762_KnownAnswerSuppression_NetworkBandwidth(t *testing.T) {
 	// - reduction = (1 - suppressed/initial) * 100
 	// - assert reduction ≥ 30% (SC-009)
 
-	t.Skip("Deferred until query handling with known-answer support implemented")
+	t.Skip("Deferred: known-answer suppression logic exists (internal/responder/known_answer.go) but is not yet wired into the query handler")
 }
 
 // TestRFC6762_KnownAnswerSuppression_OneFourthTTL_RED tests the interaction

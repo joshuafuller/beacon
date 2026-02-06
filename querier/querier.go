@@ -502,12 +502,9 @@ func (q *Querier) receiveLoop() {
 				if ip4 != nil {
 					// Check if it's a public/routed IP (not private, not link-local)
 					isLinkLocal := ip4[0] == 169 && ip4[1] == 254
-					isPrivate := ip4[0] == 10 ||
-						(ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31) ||
-						(ip4[0] == 192 && ip4[1] == 168)
 
 					// Reject public/routed IPs (definitely not link-local scope)
-					if !isLinkLocal && !isPrivate {
+					if !isLinkLocal && !security.IsPrivate(srcIP) {
 						// Public IP - drop packet (violates RFC 6762 §2 link-local scope)
 						// TODO T076: Add debug logging (source IP + reason)
 						continue

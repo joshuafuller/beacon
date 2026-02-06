@@ -80,9 +80,9 @@ func (sf *SourceFilter) IsValid(srcIP net.IP) bool {
 	return false
 }
 
-// isPrivate returns true if the IP is in a private address range
+// IsPrivate returns true if the IP is in a private address range
 // (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16).
-func isPrivate(ip net.IP) bool {
+func IsPrivate(ip net.IP) bool {
 	ip4 := ip.To4()
 	if ip4 == nil {
 		return false // Not IPv4

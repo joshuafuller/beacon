@@ -267,9 +267,9 @@ func TestIsPrivate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ip := net.ParseIP(tt.ip)
-			got := isPrivate(ip)
+			got := IsPrivate(ip)
 			if got != tt.want {
-				t.Errorf("isPrivate(%s) = %v, want %v", tt.ip, got, tt.want)
+				t.Errorf("IsPrivate(%s) = %v, want %v", tt.ip, got, tt.want)
 			}
 		})
 	}
