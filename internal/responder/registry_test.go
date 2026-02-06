@@ -147,7 +147,7 @@ func TestRegistry_ConcurrentAccess(t *testing.T) {
 			service := &Service{
 				InstanceName: formatInstanceName("Service", id),
 				ServiceType:  "_http._tcp.local",
-				Port:         8080 + id,
+				Port:         uint16(8080 + id),
 			}
 
 			err := registry.Register(service)
@@ -191,7 +191,7 @@ func TestRegistry_ConcurrentReadWrite(_ *testing.T) {
 		service := &Service{
 			InstanceName: formatInstanceName("Service", i),
 			ServiceType:  "_http._tcp.local",
-			Port:         8080 + i,
+			Port:         uint16(8080 + i),
 		}
 		_ = registry.Register(service)
 	}
@@ -218,7 +218,7 @@ func TestRegistry_ConcurrentReadWrite(_ *testing.T) {
 			service := &Service{
 				InstanceName: formatInstanceName("Service", id),
 				ServiceType:  "_http._tcp.local",
-				Port:         8080 + id,
+				Port:         uint16(8080 + id),
 			}
 			_ = registry.Register(service)
 		}(i)

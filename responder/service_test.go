@@ -169,7 +169,7 @@ func TestService_Validate_InstanceName(t *testing.T) {
 func TestService_Validate_Port(t *testing.T) {
 	tests := []struct {
 		name        string
-		port        int
+		port        uint16
 		wantErr     bool
 		errContains string
 	}{

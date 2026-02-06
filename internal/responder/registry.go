@@ -164,6 +164,6 @@ func (r *Registry) ListServiceTypes() []string {
 type Service struct {
 	InstanceName string
 	ServiceType  string
-	Port         int
+	Port         uint16
 	TXT          map[string]string
 }

@@ -5,6 +5,7 @@ import (
 	goerrors "errors"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -244,6 +245,120 @@ func (q *Querier) Query(ctx context.Context, name string, recordType RecordType)
 
 	// FR-008: Aggregate responses received within timeout window
 	return q.collectResponses(ctx, name, recordType)
+}
+
+// DiscoverServices performs a full DNS-SD discovery for the given service type.
+//
+// This is a convenience method that chains multiple queries to return fully
+// resolved service instances:
+//  1. PTR query to find service instances (browse phase)
+//  2. SRV query per instance for hostname and port
+//  3. TXT query per instance for metadata
+//  4. A query per hostname for IPv4 address
+//
+// The context deadline is split across all phases. For best results, use a
+// timeout of at least 2-3 seconds to allow time for both browsing and resolution.
+//
+// For fine-grained control over individual queries, use [Querier.Query] directly.
+//
+// Example:
+//
+//	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+//	defer cancel()
+//
+//	services, err := q.DiscoverServices(ctx, "_http._tcp.local")
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//
+//	for _, svc := range services {
+//	    fmt.Printf("%s at %s:%d (%s)\n",
+//	        svc.InstanceName, svc.AddrIPv4, svc.Port, svc.TXT["path"])
+//	}
+func (q *Querier) DiscoverServices(ctx context.Context, serviceType string) ([]ServiceInstance, error) {
+	// Phase 1: Browse for instances via PTR query.
+	// Allocate ~40% of the remaining time for browsing, rest for resolving details.
+	browseTimeout := 1 * time.Second // default if no deadline
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		browseTimeout = remaining * 2 / 5
+		if browseTimeout < 200*time.Millisecond {
+			browseTimeout = 200 * time.Millisecond
+		}
+	}
+
+	browseCtx, browseCancel := context.WithTimeout(ctx, browseTimeout)
+	ptrResp, err := q.Query(browseCtx, serviceType, RecordTypePTR)
+	browseCancel()
+	if err != nil {
+		return nil, fmt.Errorf("browse %s: %w", serviceType, err)
+	}
+
+	// Phase 2: Resolve each discovered instance.
+	var services []ServiceInstance
+	resolveTimeout := 500 * time.Millisecond
+
+	for _, record := range ptrResp.Records {
+		target := record.AsPTR()
+		if target == "" {
+			continue
+		}
+
+		svc := ServiceInstance{ServiceType: serviceType}
+
+		// Extract instance name: "My Printer._http._tcp.local" → "My Printer"
+		if strings.HasSuffix(target, "."+serviceType) {
+			svc.InstanceName = strings.TrimSuffix(target, "."+serviceType)
+		} else {
+			svc.InstanceName = target
+		}
+
+		// SRV query for hostname + port
+		srvCtx, srvCancel := context.WithTimeout(ctx, resolveTimeout)
+		srvResp, srvErr := q.Query(srvCtx, target, RecordTypeSRV)
+		srvCancel()
+		if srvErr == nil {
+			for _, r := range srvResp.Records {
+				if srv := r.AsSRV(); srv != nil {
+					svc.Hostname = srv.Target
+					svc.Port = srv.Port
+					break
+				}
+			}
+		}
+
+		// TXT query for metadata
+		txtCtx, txtCancel := context.WithTimeout(ctx, resolveTimeout)
+		txtResp, txtErr := q.Query(txtCtx, target, RecordTypeTXT)
+		txtCancel()
+		if txtErr == nil {
+			for _, r := range txtResp.Records {
+				if txt := r.AsTXT(); txt != nil {
+					svc.TXT = ParseTXT(txt)
+					break
+				}
+			}
+		}
+
+		// A query for IPv4 address
+		if svc.Hostname != "" {
+			aCtx, aCancel := context.WithTimeout(ctx, resolveTimeout)
+			aResp, aErr := q.Query(aCtx, svc.Hostname, RecordTypeA)
+			aCancel()
+			if aErr == nil {
+				for _, r := range aResp.Records {
+					if ip := r.AsA(); ip != nil {
+						svc.AddrIPv4 = ip
+						break
+					}
+				}
+			}
+		}
+
+		services = append(services, svc)
+	}
+
+	return services, nil
 }
 
 // collectResponses aggregates mDNS responses within the timeout window.

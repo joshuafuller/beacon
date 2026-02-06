@@ -113,21 +113,22 @@ const maxRenameAttempts = 10
 
 // Register registers a service with probing and announcing per RFC 6762 §8.
 //
+// IMPORTANT: Register blocks for approximately 1.75 seconds while performing
+// the required probing (3 probes × 250ms) and announcing (2 announcements × 1s)
+// phases per RFC 6762 §8. Use a goroutine if non-blocking behavior is needed.
+//
 // Process:
 //  1. Validate service parameters
-//  2. Attempt to register (with rename loop on conflict)
-//  3. Build record set (PTR, SRV, TXT, A)
-//  4. Run state machine (Probing → Announcing → Established)
-//  5. Add to registry on success
+//  2. Probe for name conflicts (RFC 6762 §8.1, ~750ms)
+//  3. Announce the service (RFC 6762 §8.3, ~1s)
+//  4. Add to registry on success
 //
-// RFC 6762 §8: Total time ~1.5s (500ms probing + 1s announcing)
-// RFC 6762 §9: If conflict detected, rename and retry (max 10 attempts)
+// If a naming conflict is detected during probing, the service is automatically
+// renamed per RFC 6762 §9 (e.g., "My Service" → "My Service-2") and probing
+// restarts, up to 10 attempts.
 //
 // Returns:
 //   - error: validation error, conflict error, max attempts error, or context error
-//
-// T041: Full Register() implementation
-// T062: Add max rename attempts limit (GREEN phase)
 func (r *Responder) Register(service *Service) error {
 	if service == nil {
 		return fmt.Errorf("service cannot be nil")

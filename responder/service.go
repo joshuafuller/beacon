@@ -1,4 +1,3 @@
-// Package responder implements mDNS service registration and response per RFC 6762.
 package responder
 
 import (
@@ -27,7 +26,8 @@ type Service struct {
 	ServiceType string
 
 	// Port is the service port number (1-65535).
-	Port int
+	// Uses uint16 to match DNS wire format (RFC 2782 SRV RDATA).
+	Port uint16
 
 	// TXTRecords contains optional service metadata as key-value pairs.
 	// RFC 6763 §6.2: Total size SHOULD NOT exceed 1300 bytes.
@@ -66,9 +66,9 @@ func (s *Service) Validate() error {
 		return err
 	}
 
-	// Validate Port
-	if s.Port < 1 || s.Port > 65535 {
-		return fmt.Errorf("port must be in range 1-65535 (got %d)", s.Port)
+	// Validate Port (uint16 guarantees 0-65535 range, only check for zero)
+	if s.Port == 0 {
+		return fmt.Errorf("port must be in range 1-65535 (got 0)")
 	}
 
 	// Validate TXT records size

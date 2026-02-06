@@ -189,6 +189,62 @@ func TestResourceRecordAccessors(t *testing.T) {
 	t.Log("✓ Type-safe accessors return nil/empty for wrong record types")
 }
 
+// TestParseTXT validates TXT record key=value parsing per RFC 6763 §6.
+func TestParseTXT(t *testing.T) {
+	tests := []struct {
+		name string
+		txt  []string
+		want map[string]string
+	}{
+		{
+			name: "key=value pairs",
+			txt:  []string{"version=1.0", "path=/api"},
+			want: map[string]string{"version": "1.0", "path": "/api"},
+		},
+		{
+			name: "boolean flag (no value)",
+			txt:  []string{"debug"},
+			want: map[string]string{"debug": ""},
+		},
+		{
+			name: "empty value",
+			txt:  []string{"key="},
+			want: map[string]string{"key": ""},
+		},
+		{
+			name: "value with equals sign",
+			txt:  []string{"formula=a=b+c"},
+			want: map[string]string{"formula": "a=b+c"},
+		},
+		{
+			name: "empty input",
+			txt:  []string{},
+			want: map[string]string{},
+		},
+		{
+			name: "skip empty strings",
+			txt:  []string{"a=1", "", "b=2"},
+			want: map[string]string{"a": "1", "b": "2"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ParseTXT(tt.txt)
+			if len(got) != len(tt.want) {
+				t.Errorf("ParseTXT() returned %d entries, want %d", len(got), len(tt.want))
+			}
+			for k, wantV := range tt.want {
+				if gotV, ok := got[k]; !ok {
+					t.Errorf("ParseTXT() missing key %q", k)
+				} else if gotV != wantV {
+					t.Errorf("ParseTXT()[%q] = %q, want %q", k, gotV, wantV)
+				}
+			}
+		})
+	}
+}
+
 // ==============================================================================
 // M1-Refactoring Integration Tests (TDD - RED Phase)
 // ==============================================================================

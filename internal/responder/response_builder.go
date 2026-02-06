@@ -35,7 +35,7 @@ type ServiceWithIP struct {
 	InstanceName string
 	ServiceType  string
 	Domain       string
-	Port         int
+	Port         uint16
 	IPv4Address  []byte
 	TXTRecords   map[string]string
 	Hostname     string

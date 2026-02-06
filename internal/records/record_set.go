@@ -20,7 +20,7 @@ type ServiceInfo struct {
 	InstanceName string            // "My Printer"
 	ServiceType  string            // "_http._tcp.local"
 	Hostname     string            // "myhost.local"
-	Port         int               // 8080
+	Port         uint16            // 8080
 	IPv4Address  []byte            // [192, 168, 1, 100]
 	TXTRecords   map[string]string // {"version": "1.0"}
 }
@@ -121,12 +121,7 @@ func buildSRVRecord(service *ServiceInfo) *message.ResourceRecord {
 	data := make([]byte, 6)                  // Priority + Weight + Port
 	binary.BigEndian.PutUint16(data[0:2], 0) // Priority = 0
 	binary.BigEndian.PutUint16(data[2:4], 0) // Weight = 0
-	// G115: bounds checked - service.Port is int representing a valid port number (0-65535)
-	port := service.Port
-	if port < 0 || port > 65535 { //nolint:gosec // G115: bounds checked
-		port = 0 // Fallback to 0 if invalid
-	}
-	binary.BigEndian.PutUint16(data[4:6], uint16(port)) // Port
+	binary.BigEndian.PutUint16(data[4:6], service.Port) // Port
 
 	// Append encoded hostname
 	// Error impossible: ServiceInfo.Hostname pre-validated by caller

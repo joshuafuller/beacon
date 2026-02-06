@@ -3,6 +3,7 @@ package querier
 
 import (
 	"net"
+	"strings"
 
 	"github.com/joshuafuller/beacon/internal/protocol"
 )
@@ -198,4 +199,54 @@ func (r *ResourceRecord) AsTXT() []string {
 	}
 
 	return txt
+}
+
+// ParseTXT parses TXT record strings into key-value pairs per RFC 6763 §6.
+//
+// TXT records contain "key=value" pairs. Keys without "=" are treated as
+// boolean flags with empty string values. Empty strings are skipped.
+//
+// Example:
+//
+//	txt := record.AsTXT() // ["version=1.0", "path=/api", "debug"]
+//	kv := querier.ParseTXT(txt)
+//	// kv = {"version": "1.0", "path": "/api", "debug": ""}
+func ParseTXT(txt []string) map[string]string {
+	result := make(map[string]string, len(txt))
+	for _, entry := range txt {
+		if entry == "" {
+			continue
+		}
+		if idx := strings.IndexByte(entry, '='); idx >= 0 {
+			result[entry[:idx]] = entry[idx+1:]
+		} else {
+			// Boolean flag (key with no value) per RFC 6763 §6.4
+			result[entry] = ""
+		}
+	}
+	return result
+}
+
+// ServiceInstance represents a fully resolved mDNS service discovered via DNS-SD.
+//
+// This is returned by [Querier.DiscoverServices] after performing the full
+// PTR → SRV → TXT → A query sequence.
+type ServiceInstance struct {
+	// InstanceName is the human-readable service name (e.g., "My Printer").
+	InstanceName string
+
+	// ServiceType is the DNS-SD service type (e.g., "_http._tcp.local").
+	ServiceType string
+
+	// Hostname is the target host from the SRV record (e.g., "printer.local").
+	Hostname string
+
+	// Port is the service port from the SRV record.
+	Port uint16
+
+	// AddrIPv4 is the IPv4 address from the A record, or nil if unresolved.
+	AddrIPv4 net.IP
+
+	// TXT contains parsed key-value metadata from the TXT record.
+	TXT map[string]string
 }
