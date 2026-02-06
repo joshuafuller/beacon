@@ -598,3 +598,68 @@ func BenchmarkConflictDetector_LexicographicCompare_RFCExample(b *testing.B) {
 		_, _ = detector.DetectConflict(ourRecord, incomingRecord)
 	}
 }
+
+// ==============================================================================
+// Godoc Example (T043) - Documentation & Production Polish
+// ==============================================================================
+
+// ExampleConflictDetector demonstrates RFC 6762 §8.2 tie-breaking logic.
+//
+// This example shows how the ConflictDetector determines whether an incoming
+// mDNS probe conflicts with our own probe by performing lexicographic comparison
+// of resource records.
+//
+// RFC 6762 §8.2: "When a host that is probing for a record sees another host
+// issue a query for the same record... The two records are compared and the
+// lexicographically later data wins."
+func ExampleConflictDetector() {
+	detector := &ConflictDetector{}
+
+	// Our record - probing for myservice.local with IP 192.168.1.50
+	ourRecord := message.ResourceRecord{
+		Name:  "myservice.local",
+		Type:  protocol.RecordTypeA,
+		Class: protocol.ClassIN,
+		TTL:   120,
+		Data:  []byte{192, 168, 1, 50}, // 192.168.1.50
+	}
+
+	// Scenario 1: No conflict - different name
+	differentName := message.ResourceRecord{
+		Name:  "otherservice.local", // Different name
+		Type:  protocol.RecordTypeA,
+		Class: protocol.ClassIN,
+		TTL:   120,
+		Data:  []byte{192, 168, 1, 100},
+	}
+
+	conflict, _ := detector.DetectConflict(ourRecord, differentName)
+	// conflict = false (different names don't conflict)
+	_ = conflict
+
+	// Scenario 2: Conflict detected - same name, we lose tie-break
+	welose := message.ResourceRecord{
+		Name:  "myservice.local", // Same name
+		Type:  protocol.RecordTypeA,
+		Class: protocol.ClassIN,
+		TTL:   120,
+		Data:  []byte{192, 168, 1, 100}, // 192.168.1.100 > 192.168.1.50 (they win)
+	}
+
+	conflict, _ = detector.DetectConflict(ourRecord, welose)
+	// conflict = true (we must defer and retry with new name)
+	_ = conflict
+
+	// Scenario 3: No conflict - same name, we win tie-break
+	weWin := message.ResourceRecord{
+		Name:  "myservice.local", // Same name
+		Type:  protocol.RecordTypeA,
+		Class: protocol.ClassIN,
+		TTL:   120,
+		Data:  []byte{192, 168, 1, 25}, // 192.168.1.25 < 192.168.1.50 (we win)
+	}
+
+	conflict, _ = detector.DetectConflict(ourRecord, weWin)
+	// conflict = false (they defer to us)
+	_ = conflict
+}

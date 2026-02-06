@@ -2,8 +2,11 @@ package state
 
 import (
 	"context"
+	"encoding/binary"
 	"testing"
 	"time"
+
+	"github.com/joshuafuller/beacon/internal/transport"
 )
 
 // TestAnnouncer_Announce_RED tests announcing per RFC 6762 §8.3.
@@ -162,5 +165,51 @@ func TestAnnouncer_Announce_MulticastAddress(t *testing.T) {
 	wantAddr := "224.0.0.251:5353"
 	if destAddr != wantAddr {
 		t.Errorf("Announce() sent to %q, want %q", destAddr, wantAddr)
+	}
+}
+
+// TestAnnouncer_TransportSend verifies that Announcer sends packets via transport.
+//
+// RFC 6762 §8.3: Announcements are DNS responses (QR=1, AA=1) sent to
+// 224.0.0.251:5353. This test verifies Send() is called 2 times with valid
+// DNS response packets and the correct multicast destination.
+func TestAnnouncer_TransportSend(t *testing.T) {
+	mock := transport.NewMockTransport()
+	announcer := NewAnnouncer()
+	announcer.SetTransport(mock)
+
+	ctx := context.Background()
+	err := announcer.Announce(ctx, testServiceName, []byte{})
+	if err != nil {
+		t.Fatalf("Announce() error = %v", err)
+	}
+
+	calls := mock.SendCalls()
+	if len(calls) != 2 {
+		t.Fatalf("Send() called %d times, want 2", len(calls))
+	}
+
+	for i, call := range calls {
+		// Verify destination
+		if call.Dest == nil {
+			t.Errorf("Send() call %d: dest = nil, want 224.0.0.251:5353", i)
+			continue
+		}
+		if call.Dest.String() != "224.0.0.251:5353" {
+			t.Errorf("Send() call %d: dest = %q, want %q", i, call.Dest.String(), "224.0.0.251:5353")
+		}
+
+		// Verify packet is a valid DNS response (QR=1, AA=1)
+		if len(call.Packet) < 12 {
+			t.Errorf("Send() call %d: packet too short (%d bytes), want >= 12", i, len(call.Packet))
+			continue
+		}
+		flags := binary.BigEndian.Uint16(call.Packet[2:4])
+		if flags&0x8000 == 0 {
+			t.Errorf("Send() call %d: QR bit not set (flags=0x%04x)", i, flags)
+		}
+		if flags&0x0400 == 0 {
+			t.Errorf("Send() call %d: AA bit not set (flags=0x%04x)", i, flags)
+		}
 	}
 }

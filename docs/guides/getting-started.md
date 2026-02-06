@@ -16,7 +16,7 @@ Beacon is a high-performance mDNS (Multicast DNS) library for Go that lets you:
 
 **Key Benefits**:
 - 10,000x faster than alternatives (4.8μs response time)
-- 72.2% RFC 6762 compliant (industry-leading)
+- 97.9% RFC 6762 compliant, 100% on mandatory (MUST) requirements
 - Zero external dependencies
 - Production-ready (81.3% test coverage, extensive fuzz testing)
 

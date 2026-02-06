@@ -187,6 +187,34 @@ mem.prof
 !.specify/templates/*.md
 
 #############
+# Compiled Example Binaries
+#############
+
+# Example binaries (compiled from Go source)
+examples/*/main
+examples/*/*/main
+examples/*/test-*
+examples/*/*/test-*
+
+# Compiled Go binaries (root level)
+/main
+
+#############
+# Agent Debris
+#############
+
+# P0/P1 status and audit files
+P[0-9]_*.md
+
+# Ralph loop files
+RALPH_*.md
+
+# Verification and build scripts
+verify_*.sh
+check_ralph.sh
+build_*.py
+
+#############
 # Ralph Wiggum Loop Control
 #############
 
