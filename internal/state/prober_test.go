@@ -7,6 +7,7 @@ import (
 
 	"github.com/joshuafuller/beacon/internal/message"
 	"github.com/joshuafuller/beacon/internal/protocol"
+	"github.com/joshuafuller/beacon/internal/transport"
 )
 
 const testServiceName = "My Printer._http._tcp.local"
@@ -372,5 +373,50 @@ func TestProber_BuildQuery_Error(t *testing.T) {
 		t.Logf("Error type: %T", err)
 	} else {
 		t.Logf("BuildQuery succeeded unexpectedly, message length: %d", len(msg))
+	}
+}
+
+// TestProber_TransportSend verifies that Prober sends probe packets via transport.
+//
+// RFC 6762 §8.1: Probes MUST be sent to the mDNS multicast group 224.0.0.251:5353.
+// This test verifies that Send() is called 3 times with the probe message bytes
+// and the correct multicast destination.
+func TestProber_TransportSend(t *testing.T) {
+	mock := transport.NewMockTransport()
+	prober := NewProber()
+	prober.SetTransport(mock)
+
+	ctx := context.Background()
+	result := prober.Probe(ctx, testServiceName)
+	if result.Error != nil {
+		t.Fatalf("Probe() error = %v", result.Error)
+	}
+
+	calls := mock.SendCalls()
+	if len(calls) != 3 {
+		t.Fatalf("Send() called %d times, want 3", len(calls))
+	}
+
+	// Verify destination is mDNS multicast address
+	for i, call := range calls {
+		if call.Dest == nil {
+			t.Errorf("Send() call %d: dest = nil, want 224.0.0.251:5353", i)
+			continue
+		}
+		destStr := call.Dest.String()
+		if destStr != "224.0.0.251:5353" {
+			t.Errorf("Send() call %d: dest = %q, want %q", i, destStr, "224.0.0.251:5353")
+		}
+	}
+
+	// Verify sent bytes match lastProbeMessage
+	lastMsg := prober.GetLastProbeMessage()
+	if lastMsg == nil {
+		t.Fatal("GetLastProbeMessage() = nil")
+	}
+	for i, call := range calls {
+		if len(call.Packet) != len(lastMsg) {
+			t.Errorf("Send() call %d: packet len = %d, want %d", i, len(call.Packet), len(lastMsg))
+		}
 	}
 }

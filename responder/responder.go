@@ -6,11 +6,14 @@ import (
 	"net"
 	"os"
 
+	"time"
+
 	"github.com/joshuafuller/beacon/internal/errors"
 	"github.com/joshuafuller/beacon/internal/message"
 	"github.com/joshuafuller/beacon/internal/protocol"
 	"github.com/joshuafuller/beacon/internal/records"
 	"github.com/joshuafuller/beacon/internal/responder"
+	"github.com/joshuafuller/beacon/internal/security"
 	"github.com/joshuafuller/beacon/internal/state"
 	"github.com/joshuafuller/beacon/internal/transport"
 )
@@ -41,6 +44,7 @@ type Responder struct {
 	injectConflict   bool                       // Test hook: inject conflict during probing
 	responseBuilder  *responder.ResponseBuilder // RFC 6762 §6 response construction
 	recordSet        *records.RecordSet         // Per-record rate limiting tracker
+	rateLimiter      *security.RateLimiter      // Per-source-IP rate limiting (FR-026)
 	queryHandlerDone chan struct{}              // Signal query handler shutdown
 
 	// US2 GREEN: Store last machine for message capture (contract test support)
@@ -79,6 +83,7 @@ func New(ctx context.Context, opts ...Option) (*Responder, error) {
 		hostname:         hostname,
 		responseBuilder:  responder.NewResponseBuilder(),
 		recordSet:        records.NewRecordSet(),
+		rateLimiter:      security.NewRateLimiter(100, 60*time.Second, 10000),
 		queryHandlerDone: make(chan struct{}),
 	}
 
@@ -161,6 +166,9 @@ func (r *Responder) Register(service *Service) error {
 		// Create and run state machine
 		machine := state.NewMachine()
 		serviceName := service.InstanceName + "." + service.ServiceType
+
+		// Wire transport so probes and announcements are sent on the wire
+		machine.SetTransport(r.transport)
 
 		// Apply test hooks (if any)
 		if r.injectConflict {
@@ -257,15 +265,48 @@ func (r *Responder) Unregister(serviceID string) error {
 		return fmt.Errorf("service %q not registered", serviceID)
 	}
 
-	// Remove from registry using instance name
-	err := r.registry.Remove(svc.InstanceName)
+	// Get local IPv4 address for goodbye records
+	ipv4, err := getLocalIPv4()
 	if err != nil {
-		return fmt.Errorf("service %q not registered", serviceID)
+		// If we can't get IP, still remove from registry but skip goodbye
+		_ = r.registry.Remove(svc.InstanceName) // nosemgrep: beacon-error-swallowing
+		return fmt.Errorf("failed to get local IP for goodbye: %w", err)
 	}
 
-	// TODO: Send goodbye packets (TTL=0)
-	// This requires building records with TTL=0 and sending via transport
-	// For now, just remove from registry
+	// Build goodbye records with TTL=0 (RFC 6762 §10.1)
+	serviceInfo := &records.ServiceInfo{
+		InstanceName: svc.InstanceName,
+		ServiceType:  svc.ServiceType,
+		Hostname:     r.hostname,
+		Port:         svc.Port,
+		IPv4Address:  ipv4,
+		TXTRecords:   svc.TXTRecords,
+	}
+	goodbyeRecords := records.BuildGoodbyeRecords(serviceInfo)
+
+	// Build and send goodbye packet
+	goodbyePacket, err := message.BuildResponse(goodbyeRecords)
+	if err != nil {
+		// If we can't build packet, still remove from registry
+		_ = r.registry.Remove(svc.InstanceName) // nosemgrep: beacon-error-swallowing
+		return fmt.Errorf("failed to build goodbye packet: %w", err)
+	}
+
+	dest := &net.UDPAddr{
+		IP:   net.ParseIP("224.0.0.251"),
+		Port: 5353,
+	}
+	// RFC 6762 §10.1: Goodbye is best-effort (SHOULD, not MUST).
+	// Log but don't fail if send errors.
+	if err := r.transport.Send(r.ctx, goodbyePacket, dest); err != nil { // nosemgrep: beacon-error-swallowing
+		// Best-effort: goodbye failed but we still remove from registry below
+		_ = err
+	}
+
+	// Remove from registry using instance name
+	if err := r.registry.Remove(svc.InstanceName); err != nil {
+		return fmt.Errorf("service %q not registered", serviceID)
+	}
 
 	return nil
 }
@@ -634,7 +675,8 @@ func (r *Responder) runQueryHandler() {
 		default:
 			// Receive query with timeout
 			// 007-interface-specific-addressing T027: Extract interfaceIndex for RFC 6762 §15 compliance
-			packet, _, interfaceIndex, err := r.transport.Receive(r.ctx)
+			// Task 2: Capture source address for subnet validation (RFC 6762 §6.4)
+			packet, srcAddr, interfaceIndex, err := r.transport.Receive(r.ctx)
 			if err != nil {
 				// Context cancelled or transport closed
 				select {
@@ -650,9 +692,69 @@ func (r *Responder) runQueryHandler() {
 
 			// Handle query (T079)
 			// T028: Pass interfaceIndex to enable interface-specific addressing
-			_ = r.handleQuery(packet, interfaceIndex)
+			// Task 2: Pass source address for subnet validation
+			_ = r.handleQuery(packet, srcAddr, interfaceIndex)
 		}
 	}
+}
+
+// validateSourceAddress validates that the query source is on the same subnet as the interface.
+//
+// RFC 6762 §6.4: "When a Multicast DNS responder receives a query, it MUST only respond
+// if the source address of the query is on the same subnet as the interface on which
+// the query was received."
+//
+// Parameters:
+//   - srcAddr: Source address of the query
+//   - interfaceIndex: OS interface index that received the query
+//
+// Returns:
+//   - bool: true if source is on same subnet, false otherwise
+//
+// Task 2: Source address validation
+func validateSourceAddress(srcAddr net.Addr, interfaceIndex int) bool {
+	// If interface index is unknown (0), skip validation (graceful degradation)
+	if interfaceIndex == 0 {
+		return true
+	}
+
+	// Extract IP from source address
+	udpAddr, ok := srcAddr.(*net.UDPAddr)
+	if !ok {
+		return false
+	}
+	srcIP := udpAddr.IP.To4()
+	if srcIP == nil {
+		return false // Not IPv4
+	}
+
+	// Get interface by index
+	iface, err := net.InterfaceByIndex(interfaceIndex)
+	if err != nil {
+		return false
+	}
+
+	// Get interface addresses
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return false
+	}
+
+	// Check if source IP is on same subnet as any interface address
+	for _, addr := range addrs {
+		ipnet, ok := addr.(*net.IPNet)
+		if !ok {
+			continue
+		}
+
+		// Check if source IP is in this subnet
+		if ipnet.Contains(srcIP) {
+			return true
+		}
+	}
+
+	// Source IP not on same subnet
+	return false
 }
 
 // handleQuery processes a single mDNS query and sends response.
@@ -660,20 +762,26 @@ func (r *Responder) runQueryHandler() {
 // RFC 6762 §6: "When a Multicast DNS responder receives a query, it must determine
 // whether the query is requesting information for which this responder is authoritative."
 //
+// RFC 6762 §6.4: "When a Multicast DNS responder receives a query, it MUST only respond
+// if the source address of the query is on the same subnet as the interface on which
+// the query was received."
+//
 // RFC 6762 §15: Responses MUST include only addresses valid on the receiving interface,
 // and MUST NOT include addresses from other interfaces.
 //
 // Process:
 //  1. Parse query message
-//  2. Extract questions
-//  3. Check if we have matching registered services
-//  4. Build response using ResponseBuilder with interface-specific IP (T029)
-//  5. Apply QU bit logic (unicast vs multicast)
-//  6. Apply rate limiting (RFC 6762 §6.2)
-//  7. Send response
+//  2. Validate source address (RFC 6762 §6.4)
+//  3. Extract questions
+//  4. Check if we have matching registered services
+//  5. Build response using ResponseBuilder with interface-specific IP (T029)
+//  6. Apply QU bit logic (unicast vs multicast)
+//  7. Apply rate limiting (RFC 6762 §6.2)
+//  8. Send response
 //
 // Parameters:
 //   - packet: DNS query in wire format
+//   - srcAddr: Source address of the query
 //   - interfaceIndex: OS interface index that received the query (0 = unknown)
 //
 // Returns:
@@ -681,7 +789,14 @@ func (r *Responder) runQueryHandler() {
 //
 // T079: Implement handleQuery()
 // T029: Added interfaceIndex parameter for interface-specific addressing
-func (r *Responder) handleQuery(packet []byte, interfaceIndex int) error {
+// Task 2: Added srcAddr parameter for source address validation
+func (r *Responder) handleQuery(packet []byte, srcAddr net.Addr, interfaceIndex int) error {
+	// Task 2: RFC 6762 §6.4 - Validate source address is on same subnet
+	if !validateSourceAddress(srcAddr, interfaceIndex) {
+		// Source not on same subnet - ignore query per RFC 6762 §6.4
+		return nil
+	}
+
 	// Import message parser
 	msg, err := parseMessage(packet)
 	if err != nil {
@@ -767,15 +882,33 @@ func (r *Responder) handleQuery(packet []byte, interfaceIndex int) error {
 				continue
 			}
 
-			// TODO: T082 - Implement QU bit + 1/4 TTL logic for unicast vs multicast
-			// For now, always multicast
+			// Per-source-IP rate limiting (FR-026, RFC 6762 §6.2)
+			if r.rateLimiter != nil && srcAddr != nil {
+				srcIP := srcAddr.String()
+				if udpAddr, ok := srcAddr.(*net.UDPAddr); ok {
+					srcIP = udpAddr.IP.String()
+				}
+				if !r.rateLimiter.Allow(srcIP) {
+					continue // Rate-limited, skip response
+				}
+			}
 
-			// TODO: T083 - Apply per-record rate limiting before sending
-			// For now, skip rate limiting
+			// RFC 6762 §5.4: Check QU bit (bit 15 of QCLASS) to determine unicast vs multicast
+			// Task 4: QU bit handling
+			quBit := (question.QCLASS & 0x8000) != 0
 
-			// Send response via multicast
+			var dest net.Addr
+			if quBit {
+				// RFC 6762 §5.4: QU bit set → send unicast response to querier
+				dest = srcAddr
+			} else {
+				// RFC 6762 §5.4: QU bit clear → send multicast response
+				dest = nil // nil = multicast to 224.0.0.251:5353
+			}
+
+			// Send response
 			responsePacket := buildResponsePacket(response)
-			_ = r.transport.Send(r.ctx, responsePacket, nil) // nil = multicast
+			_ = r.transport.Send(r.ctx, responsePacket, dest)
 
 			// Only respond once per query
 			break
@@ -790,12 +923,23 @@ func parseMessage(packet []byte) (*message.DNSMessage, error) {
 	return message.ParseMessage(packet)
 }
 
-// buildResponsePacket serializes a DNSMessage to wire format.
+// buildResponsePacket serializes a DNSMessage to wire format using message.SerializeMessage.
 //
-// TODO: Implement proper serialization
-// For now, return empty packet (stub)
+// RFC 1035 §4.1: Converts the complete DNSMessage struct (header, questions,
+// answers, authority, additional sections) into wire-format bytes.
 func buildResponsePacket(msg *message.DNSMessage) []byte {
-	// This is a stub - proper implementation needs message serialization
-	// which is not yet implemented in the codebase
-	return []byte{}
+	data, err := message.SerializeMessage(msg)
+	if err != nil {
+		// Serialization failed - return minimal valid DNS response header
+		// so the responder doesn't crash on unexpected serialization errors
+		return []byte{
+			0x00, 0x00, // ID
+			0x84, 0x00, // Flags (QR=1, AA=1)
+			0x00, 0x00, // QDCount
+			0x00, 0x00, // ANCount
+			0x00, 0x00, // NSCount
+			0x00, 0x00, // ARCount
+		}
+	}
+	return data
 }

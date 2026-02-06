@@ -30,13 +30,18 @@ help:
 	@echo "  make test-benchmark        - Run benchmark tests (F-8 Testing Strategy)"
 	@echo ""
 	@echo "Code Quality (Constitution Principle VII: Excellence):"
-	@echo "  make lint              - Run golangci-lint"
-	@echo "  make semgrep           - Run Semgrep (informational only)"
-	@echo "  make semgrep-check     - Run Semgrep and fail on findings (for CI)"
-	@echo "  make fmt               - Format code with gofmt"
-	@echo "  make fmt-check         - Check if code is formatted (no changes)"
-	@echo "  make vet               - Run go vet"
-	@echo "  make vet-staticcheck   - Run go vet + staticcheck"
+	@echo "  make lint                      - Run golangci-lint"
+	@echo "  make semgrep                   - Run Semgrep (informational only)"
+	@echo "  make semgrep-check             - Run Semgrep and fail on findings (for CI)"
+	@echo "  make fmt                       - Format code with gofmt"
+	@echo "  make fmt-check                 - Check if code is formatted (no changes)"
+	@echo "  make vet                       - Run go vet"
+	@echo "  make vet-staticcheck           - Run go vet + staticcheck"
+	@echo ""
+	@echo "RFC Compliance (Constitution Principle I: Protocol Compliance First):"
+	@echo "  make check-rfc-compliance        - RFC 6762/6763 compliance summary"
+	@echo "  make check-rfc-compliance-full   - Full compliance report with gaps"
+	@echo "  make check-rfc-compliance-strict - Strict check (fails on P0 gaps)"
 	@echo ""
 	@echo "Build:"
 	@echo "  make build             - Build all packages"
@@ -175,6 +180,21 @@ semgrep-check:
 	@echo "   Enforcing Constitution principles and F-Spec requirements..."
 	@semgrep --config=.semgrep.yml --error . --exclude .semgrep-tests
 	@echo "✅ Semgrep: No issues found"
+
+## check-rfc-compliance: Verify RFC 6762/6763 compliance (summary)
+check-rfc-compliance:
+	@echo "Checking RFC 6762/6763 compliance..."
+	@./scripts/check-rfc-compliance.sh --summary
+
+## check-rfc-compliance-full: Full RFC compliance report with gap analysis
+check-rfc-compliance-full:
+	@echo "Running full RFC compliance analysis..."
+	@./scripts/check-rfc-compliance.sh
+
+## check-rfc-compliance-strict: RFC compliance check with P0 enforcement (fails if MUST requirements missing)
+check-rfc-compliance-strict:
+	@echo "Running strict RFC compliance check (P0 enforcement)..."
+	@./scripts/check-rfc-compliance.sh --strict
 
 ## fmt: Format code with gofmt
 fmt:

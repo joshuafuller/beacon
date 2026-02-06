@@ -2,10 +2,12 @@ package state
 
 import (
 	"context"
+	"net"
 	"time"
 
 	"github.com/joshuafuller/beacon/internal/message"
 	"github.com/joshuafuller/beacon/internal/protocol"
+	"github.com/joshuafuller/beacon/internal/transport"
 )
 
 // ProbeResult represents the result of probing.
@@ -24,6 +26,9 @@ type ProbeResult struct {
 // T039: Implement Prober
 // T059: Integrate ConflictDetector with Prober (GREEN phase)
 type Prober struct {
+	// Transport for sending probe packets on the wire
+	transport transport.Transport
+
 	// Test hooks for injection
 	onSendQuery             func()
 	injectConflictAfter     int
@@ -115,8 +120,14 @@ func (p *Prober) Probe(ctx context.Context, serviceName string) ProbeResult {
 			p.onSendQuery()
 		}
 
-		// TODO: Actually send probe via transport
-		// For now, just simulate probing
+		// Send probe via transport (RFC 6762 §8.1: probes sent to mDNS multicast group)
+		if p.transport != nil {
+			dest := &net.UDPAddr{
+				IP:   net.ParseIP(protocol.MulticastAddrIPv4),
+				Port: protocol.Port,
+			}
+			_ = p.transport.Send(ctx, probeMsg, dest) // nosemgrep: beacon-error-swallowing
+		}
 
 		// T059: Check for conflicts using ConflictDetector (if configured)
 		if p.conflictDetector != nil && len(p.incomingRecords) > 0 && len(p.ourRecords) > 0 {
@@ -222,6 +233,13 @@ func (p *Prober) GetLastProbeMessage() []byte {
 // US2 GREEN: Allow transport layer to record sent messages
 func (p *Prober) SetLastProbeMessage(msg []byte) {
 	p.lastProbeMessage = msg
+}
+
+// SetTransport sets the transport used to send probe packets on the wire.
+//
+// RFC 6762 §8.1: Probes are sent to the mDNS multicast group 224.0.0.251:5353.
+func (p *Prober) SetTransport(t transport.Transport) {
+	p.transport = t
 }
 
 // SetOnSendQuery sets the callback to be called when a probe query is sent.

@@ -3,6 +3,7 @@ package responder
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/joshuafuller/beacon/internal/message"
 	"github.com/joshuafuller/beacon/internal/protocol"
@@ -162,8 +163,15 @@ func (rb *ResponseBuilder) BuildResponse(service *ServiceWithIP, query *message.
 	estimatedSize := rb.EstimatePacketSize(response)
 	if estimatedSize > rb.maxPacketSize {
 		// R005: Gracefully truncate additional records
+		originalAdditionalCount := len(response.Additionals)
 		response.Additionals = rb.truncateAdditionals(response, estimatedSize)
 		response.Header.ARCount = uint16(len(response.Additionals))
+
+		// RFC 6762 §6.5: Set TC bit when truncated
+		// Bit 9 (TC=1): 0x0200
+		if len(response.Additionals) < originalAdditionalCount {
+			response.Header.Flags |= 0x0200 // Set TC bit
+		}
 	}
 
 	return response, nil
@@ -323,10 +331,9 @@ func (rb *ResponseBuilder) ApplyKnownAnswerSuppression(ourRecord *message.Resour
 //
 // T092: Helper for known-answer matching
 func recordsMatch(a, b *message.ResourceRecord) bool {
-	// Name comparison (case-insensitive per DNS spec)
-	// TODO: Implement proper DNS name comparison (case-insensitive)
-	// For now, use simple string comparison
-	if a.Name != b.Name {
+	// Name comparison (case-insensitive per RFC 1035 §2.3.3)
+	// DNS names are case-insensitive: "example.local" == "EXAMPLE.LOCAL"
+	if !strings.EqualFold(a.Name, b.Name) {
 		return false
 	}
 
