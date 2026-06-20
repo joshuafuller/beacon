@@ -318,35 +318,61 @@ func (q *Querier) DiscoverServices(ctx context.Context, serviceType string) ([]S
 			svc.InstanceName = target
 		}
 
-		// SRV query for hostname + port
-		srvCtx, srvCancel := context.WithTimeout(ctx, resolveTimeout)
-		srvResp, srvErr := q.Query(srvCtx, target, RecordTypeSRV)
-		srvCancel()
-		if srvErr == nil {
-			for _, r := range srvResp.Records {
-				if srv := r.AsSRV(); srv != nil {
-					svc.Hostname = srv.Target
-					svc.Port = srv.Port
-					break
-				}
+		// RFC 6763 §12: prefer SRV/TXT/A bundled in the browse response's
+		// additional section; fall back to explicit queries only for what is
+		// missing (issue #4 — saves up to 3 round-trips per instance).
+		if rr := findInAdditionals(ptrResp.Additionals, target, RecordTypeSRV); rr != nil {
+			if srv := rr.AsSRV(); srv != nil {
+				svc.Hostname = srv.Target
+				svc.Port = srv.Port
 			}
 		}
-
-		// TXT query for metadata
-		txtCtx, txtCancel := context.WithTimeout(ctx, resolveTimeout)
-		txtResp, txtErr := q.Query(txtCtx, target, RecordTypeTXT)
-		txtCancel()
-		if txtErr == nil {
-			for _, r := range txtResp.Records {
-				if txt := r.AsTXT(); txt != nil {
-					svc.TXT = ParseTXT(txt)
-					break
-				}
+		if rr := findInAdditionals(ptrResp.Additionals, target, RecordTypeTXT); rr != nil {
+			if txt := rr.AsTXT(); txt != nil {
+				svc.TXT = ParseTXT(txt)
 			}
 		}
-
-		// A query for IPv4 address
 		if svc.Hostname != "" {
+			if rr := findInAdditionals(ptrResp.Additionals, svc.Hostname, RecordTypeA); rr != nil {
+				if ip := rr.AsA(); ip != nil {
+					svc.AddrIPv4 = ip
+				}
+			}
+		}
+
+		// Fallback: SRV query for hostname + port if not bundled as an additional.
+		if svc.Hostname == "" {
+			srvCtx, srvCancel := context.WithTimeout(ctx, resolveTimeout)
+			srvResp, srvErr := q.Query(srvCtx, target, RecordTypeSRV)
+			srvCancel()
+			if srvErr == nil {
+				for _, r := range srvResp.Records {
+					if srv := r.AsSRV(); srv != nil {
+						svc.Hostname = srv.Target
+						svc.Port = srv.Port
+						break
+					}
+				}
+			}
+		}
+
+		// Fallback: TXT query for metadata if not bundled as an additional.
+		if svc.TXT == nil {
+			txtCtx, txtCancel := context.WithTimeout(ctx, resolveTimeout)
+			txtResp, txtErr := q.Query(txtCtx, target, RecordTypeTXT)
+			txtCancel()
+			if txtErr == nil {
+				for _, r := range txtResp.Records {
+					if txt := r.AsTXT(); txt != nil {
+						svc.TXT = ParseTXT(txt)
+						break
+					}
+				}
+			}
+		}
+
+		// Fallback: A query for IPv4 if we have a hostname but no address yet.
+		if svc.Hostname != "" && svc.AddrIPv4 == nil {
 			aCtx, aCancel := context.WithTimeout(ctx, resolveTimeout)
 			aResp, aErr := q.Query(aCtx, svc.Hostname, RecordTypeA)
 			aCancel()
@@ -364,6 +390,35 @@ func (q *Querier) DiscoverServices(ctx context.Context, serviceType string) ([]S
 	}
 
 	return services, nil
+}
+
+// toRecordData normalizes parsed RDATA into the querier's public types.
+// message.ParseRDATA returns the internal message.SRVData for SRV records;
+// convert it to the public SRVData so ResourceRecord.AsSRV() works (the named
+// types are distinct, so without this the type assertion in AsSRV always fails
+// and SRV resolution silently yields nil). A/PTR/TXT already use shared types.
+func toRecordData(data interface{}) interface{} {
+	if srv, ok := data.(message.SRVData); ok {
+		return SRVData{
+			Priority: srv.Priority,
+			Weight:   srv.Weight,
+			Port:     srv.Port,
+			Target:   srv.Target,
+		}
+	}
+	return data
+}
+
+// findInAdditionals returns the first additional-section record matching the
+// given name and type, or nil. Used to resolve a service instance from records
+// bundled in a browse response (RFC 6763 §12) before falling back to queries.
+func findInAdditionals(additionals []ResourceRecord, name string, t RecordType) *ResourceRecord {
+	for i := range additionals {
+		if additionals[i].Type == t && additionals[i].Name == name {
+			return &additionals[i]
+		}
+	}
+	return nil
 }
 
 // collectResponses aggregates mDNS responses within the timeout window.
@@ -435,10 +490,42 @@ func (q *Querier) collectResponses(ctx context.Context, _ string, queryType Reco
 					Type:  RecordType(answer.TYPE),
 					Class: answer.CLASS,
 					TTL:   answer.TTL,
-					Data:  data,
+					Data:  toRecordData(data),
 				}
 
 				response.Records = append(response.Records, record)
+			}
+
+			// Retain Additional-section records (RFC 6763 §12). DNS-SD responders
+			// bundle SRV/TXT/A here so one PTR query resolves a whole instance;
+			// DiscoverServices consumes them to skip follow-up queries (issue #4).
+			//
+			// CAVEAT: ParseRDATA parses each RDATA slice in isolation, so names
+			// inside RDATA (SRV/PTR targets) that use DNS compression pointers
+			// (0xC0 back-references into the full message — common in Avahi/Bonjour
+			// responses) cannot be resolved and the record is skipped here; the
+			// query falls back to explicit lookups. Beacon's own responder does
+			// not compress, so beacon<->beacon discovery gets the single-round-trip
+			// path. Fixing cross-responder bundling needs ParseRDATA to take the
+			// full message + offset (tracked as a follow-up).
+			for _, add := range parsedMsg.Additionals {
+				data, err := message.ParseRDATA(add.TYPE, add.RDATA)
+				if err != nil {
+					continue
+				}
+				dedupeKey := fmt.Sprintf("add|%s|%d|%v", add.NAME, add.TYPE, data)
+				if seen[dedupeKey] {
+					continue
+				}
+				seen[dedupeKey] = true
+
+				response.Additionals = append(response.Additionals, ResourceRecord{
+					Name:  add.NAME,
+					Type:  RecordType(add.TYPE),
+					Class: add.CLASS,
+					TTL:   add.TTL,
+					Data:  toRecordData(data),
+				})
 			}
 		}
 	}

@@ -300,12 +300,12 @@ func buildValidResponsePacket(name string, rtype protocol.RecordType, rdata []by
 	packet := make([]byte, 0, 512)
 
 	// Header: 12 bytes
-	packet = append(packet, 0x00, 0x00)       // ID
-	packet = append(packet, 0x80, 0x00)       // Flags: QR=1 (response), RCODE=0
-	packet = append(packet, 0x00, 0x00)       // QDCOUNT=0
-	packet = append(packet, 0x00, 0x01)       // ANCOUNT=1
-	packet = append(packet, 0x00, 0x00)       // NSCOUNT=0
-	packet = append(packet, 0x00, 0x00)       // ARCOUNT=0
+	packet = append(packet, 0x00, 0x00) // ID
+	packet = append(packet, 0x80, 0x00) // Flags: QR=1 (response), RCODE=0
+	packet = append(packet, 0x00, 0x00) // QDCOUNT=0
+	packet = append(packet, 0x00, 0x01) // ANCOUNT=1
+	packet = append(packet, 0x00, 0x00) // NSCOUNT=0
+	packet = append(packet, 0x00, 0x00) // ARCOUNT=0
 
 	// Answer section:
 	// NAME (encoded as DNS labels)
@@ -341,12 +341,12 @@ func buildQueryPacket(name string, rtype protocol.RecordType) []byte {
 	packet := make([]byte, 0, 512)
 
 	// Header: QR=0 (query)
-	packet = append(packet, 0x00, 0x00)       // ID
-	packet = append(packet, 0x00, 0x00)       // Flags: QR=0 (query)
-	packet = append(packet, 0x00, 0x01)       // QDCOUNT=1
-	packet = append(packet, 0x00, 0x00)       // ANCOUNT=0
-	packet = append(packet, 0x00, 0x00)       // NSCOUNT=0
-	packet = append(packet, 0x00, 0x00)       // ARCOUNT=0
+	packet = append(packet, 0x00, 0x00) // ID
+	packet = append(packet, 0x00, 0x00) // Flags: QR=0 (query)
+	packet = append(packet, 0x00, 0x01) // QDCOUNT=1
+	packet = append(packet, 0x00, 0x00) // ANCOUNT=0
+	packet = append(packet, 0x00, 0x00) // NSCOUNT=0
+	packet = append(packet, 0x00, 0x00) // ARCOUNT=0
 
 	// Question section
 	nameEncoded, _ := message.EncodeName(name)
@@ -359,4 +359,125 @@ func buildQueryPacket(name string, rtype protocol.RecordType) []byte {
 	packet = append(packet, 0x00, 0x01) // CLASS=IN
 
 	return packet
+}
+
+// buildBundledPTRResponse builds a DNS-SD style response: a PTR answer for
+// serviceType plus SRV/TXT/A records in the ADDITIONAL section (the round-trip
+// optimization per RFC 6763 §12).
+func buildBundledPTRResponse(serviceType, instance, host string, port uint16, ip [4]byte, txt string) []byte {
+	ptrTarget, _ := message.EncodeName(instance)
+
+	srv := make([]byte, 6)
+	binary.BigEndian.PutUint16(srv[0:2], 0) // priority
+	binary.BigEndian.PutUint16(srv[2:4], 0) // weight
+	binary.BigEndian.PutUint16(srv[4:6], port)
+	hostEnc, _ := message.EncodeName(host)
+	srv = append(srv, hostEnc...)
+
+	txtRDATA := append([]byte{byte(len(txt))}, []byte(txt)...)
+
+	msg := &message.DNSMessage{
+		Header: message.DNSHeader{Flags: 0x8400}, // QR=1, AA=1
+		Answers: []message.Answer{
+			{NAME: serviceType, TYPE: uint16(protocol.RecordTypePTR), CLASS: 1, TTL: 120, RDATA: ptrTarget},
+		},
+		Additionals: []message.Answer{
+			{NAME: instance, TYPE: uint16(protocol.RecordTypeSRV), CLASS: 1, TTL: 120, RDATA: srv},
+			{NAME: instance, TYPE: uint16(protocol.RecordTypeTXT), CLASS: 1, TTL: 120, RDATA: txtRDATA},
+			{NAME: host, TYPE: uint16(protocol.RecordTypeA), CLASS: 1, TTL: 120, RDATA: ip[:]},
+		},
+	}
+	packet, _ := message.SerializeMessage(msg)
+	return packet
+}
+
+// TestCollectResponses_RetainsAdditionals verifies the Additional section is
+// retained in Response.Additionals (issue #4). Previously collectResponses
+// processed only the Answer section, discarding the SRV/TXT/A additionals that
+// let one PTR query resolve a whole instance.
+func TestCollectResponses_RetainsAdditionals(t *testing.T) {
+	q, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer q.Close()
+
+	packet := buildBundledPTRResponse("_http._tcp.local", "Inst._http._tcp.local",
+		"host.local", 8080, [4]byte{192, 168, 1, 5}, "path=/api")
+	q.responseChan <- packet
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	resp, err := q.collectResponses(ctx, "_http._tcp.local", RecordTypePTR)
+	if err != nil {
+		t.Fatalf("collectResponses error: %v", err)
+	}
+
+	// Answer section: the PTR (queried type) is in Records as before.
+	if len(resp.Records) != 1 || resp.Records[0].Type != RecordTypePTR {
+		t.Fatalf("Records = %+v; want exactly one PTR record", resp.Records)
+	}
+
+	// Additional section: SRV/TXT/A must be retained (issue #4).
+	if len(resp.Additionals) != 3 {
+		t.Fatalf("Additionals has %d records, want 3 (SRV, TXT, A); additionals are being discarded", len(resp.Additionals))
+	}
+	var sawSRV, sawTXT, sawA bool
+	for _, r := range resp.Additionals {
+		switch r.Type {
+		case RecordTypeSRV:
+			sawSRV = true
+		case RecordTypeTXT:
+			sawTXT = true
+		case RecordTypeA:
+			sawA = true
+		}
+	}
+	if !sawSRV || !sawTXT || !sawA {
+		t.Fatalf("Additionals missing types: SRV=%v TXT=%v A=%v", sawSRV, sawTXT, sawA)
+	}
+}
+
+// TestDiscoverServices_UsesAdditionals_SingleRoundTrip verifies that when the
+// browse (PTR) response bundles SRV/TXT/A in its Additional section,
+// DiscoverServices resolves the instance from that single response WITHOUT
+// follow-up queries (issue #4). Only the bundled PTR packet is queued; if the
+// additionals were not consumed, the fallback SRV/TXT/A queries would find
+// nothing and the instance would be unresolved.
+func TestDiscoverServices_UsesAdditionals_SingleRoundTrip(t *testing.T) {
+	q, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer q.Close()
+
+	packet := buildBundledPTRResponse("_http._tcp.local", "Inst._http._tcp.local",
+		"host.local", 8080, [4]byte{192, 168, 1, 5}, "path=/api")
+	q.responseChan <- packet
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	services, err := q.DiscoverServices(ctx, "_http._tcp.local")
+	if err != nil {
+		t.Fatalf("DiscoverServices error: %v", err)
+	}
+	if len(services) != 1 {
+		t.Fatalf("got %d services, want 1", len(services))
+	}
+	s := services[0]
+	if s.InstanceName != "Inst" {
+		t.Errorf("InstanceName = %q, want %q", s.InstanceName, "Inst")
+	}
+	if s.Hostname != "host.local" {
+		t.Errorf("Hostname = %q, want %q (must come from bundled SRV additional)", s.Hostname, "host.local")
+	}
+	if s.Port != 8080 {
+		t.Errorf("Port = %d, want 8080 (from bundled SRV additional)", s.Port)
+	}
+	if s.TXT["path"] != "/api" {
+		t.Errorf("TXT[path] = %q, want %q (from bundled TXT additional)", s.TXT["path"], "/api")
+	}
+	if s.AddrIPv4 == nil || s.AddrIPv4.String() != "192.168.1.5" {
+		t.Errorf("AddrIPv4 = %v, want 192.168.1.5 (from bundled A additional)", s.AddrIPv4)
+	}
 }
