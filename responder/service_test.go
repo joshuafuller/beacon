@@ -37,13 +37,13 @@ func TestService_Validate_ServiceType(t *testing.T) {
 			name:        "invalid - missing leading underscore",
 			serviceType: "http._tcp.local",
 			wantErr:     true,
-			errContains: "invalid service type format",
+			errContains: "begin with an underscore",
 		},
 		{
 			name:        "invalid - missing protocol underscore",
 			serviceType: "_http.tcp.local",
 			wantErr:     true,
-			errContains: "invalid service type format",
+			errContains: "protocol label",
 		},
 		{
 			name:        "invalid - empty string",
@@ -55,13 +55,38 @@ func TestService_Validate_ServiceType(t *testing.T) {
 			name:        "invalid - invalid protocol (must be _tcp or _udp)",
 			serviceType: "_http._sctp.local",
 			wantErr:     true,
-			errContains: "invalid service type format",
+			errContains: "protocol label",
 		},
 		{
 			name:        "invalid - missing domain",
 			serviceType: "_http._tcp",
 			wantErr:     true,
-			errContains: "invalid service type format",
+			errContains: ".local",
+		},
+		// Issue #31: clearer diagnostics for invalid characters in the service
+		// name. RFC 6763 §7 permits only letters, digits, and hyphens.
+		{
+			name:        "invalid - embedded underscore names offending char + RFC",
+			serviceType: "_my_service._tcp.local",
+			wantErr:     true,
+			errContains: "RFC 6763 §7",
+		},
+		{
+			name:        "invalid - embedded underscore reports the underscore char",
+			serviceType: "_my_service._tcp.local",
+			wantErr:     true,
+			errContains: `character "_"`,
+		},
+		{
+			name:        "invalid - uppercase letter is rejected with RFC cite",
+			serviceType: "_HTTP._tcp.local",
+			wantErr:     true,
+			errContains: "RFC 6763 §7",
+		},
+		{
+			name:        "valid - hyphen in service name still accepted",
+			serviceType: "_my-service._tcp.local",
+			wantErr:     false,
 		},
 	}
 
