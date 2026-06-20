@@ -143,13 +143,22 @@ func TestRateLimiter_Cooldown(t *testing.T) {
 // TestRateLimiter_BoundedMap verifies LRU eviction at 10,000 entries.
 // Per F-11 REQ-F11-4: Prevent memory exhaustion.
 func TestRateLimiter_BoundedMap(t *testing.T) {
-	// Create RateLimiter with maxEntries=100 (small for testing)
+	// Create RateLimiter with maxEntries=100 (small for testing).
 	rl := NewRateLimiter(100, 60*time.Second, 100)
 
-	// Send queries from 150 unique source IPs
+	// Use a deterministic clock that advances per query so each source has a
+	// strictly increasing lastSeen. Without this the test is flaky on platforms
+	// with coarse timer resolution (e.g. Windows ~15ms): all entries get the
+	// same time.Now() value, making LRU eviction order arbitrary so the "newest"
+	// entry can be evicted.
+	clk := newManualClock()
+	rl.now = clk.Now
+
+	// Send queries from 150 unique source IPs.
 	for i := 0; i < 150; i++ {
 		sourceIP := fmt.Sprintf("192.168.1.%d", i)
 		rl.Allow(sourceIP)
+		clk.advance(time.Millisecond)
 	}
 
 	// Verify map size never exceeds 100
@@ -167,7 +176,9 @@ func TestRateLimiter_BoundedMap(t *testing.T) {
 		t.Error("Expected evictionCount > 0 after exceeding maxEntries, but got 0")
 	}
 
-	// Test LRU behavior: Add a new source, verify it's in the map
+	// Test LRU behavior: Add a new source (newest lastSeen), verify it survives
+	// eviction — the eviction it triggers must remove the OLDEST entries, not it.
+	clk.advance(time.Millisecond)
 	newestIP := "10.0.0.1"
 	rl.Allow(newestIP)
 

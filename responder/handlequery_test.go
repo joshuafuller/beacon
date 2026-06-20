@@ -304,7 +304,8 @@ func buildDNSQuery(qname string, qtype uint16) []byte {
 // Format: Each label is prefixed by a length byte, terminated by 0x00.
 //
 // Example: "_http._tcp.local" →
-//   []byte{5, '_', 'h', 't', 't', 'p', 4, '_', 't', 'c', 'p', 5, 'l', 'o', 'c', 'a', 'l', 0}
+//
+//	[]byte{5, '_', 'h', 't', 't', 'p', 4, '_', 't', 'c', 'p', 5, 'l', 'o', 'c', 'a', 'l', 0}
 func encodeDomainName(name string) []byte {
 	if name == "" || name == "." {
 		return []byte{0}

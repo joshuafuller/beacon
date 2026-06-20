@@ -17,7 +17,7 @@ type MockTransport struct {
 	sendCalls       []SendCall
 	closed          bool
 	receiveQueue    []mockReceiveResponse // Queued responses for Receive()
-	receiveNotifyCh chan struct{}          // Signals when a new response is queued
+	receiveNotifyCh chan struct{}         // Signals when a new response is queued
 	blockOnReceive  bool                  // When true, Receive blocks until data or ctx cancel
 }
 
