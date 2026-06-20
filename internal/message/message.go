@@ -225,6 +225,12 @@ type Answer struct {
 	//
 	// FR-012: System MUST decompress DNS names in RDATA (PTR, SRV target)
 	RDATA []byte
+
+	// RDATAOffset is the byte offset of RDATA within the full message it was
+	// parsed from. It lets ParseRDATAInMessage resolve DNS name-compression
+	// pointers in PTR/SRV targets against the whole message (FR-012); it is 0
+	// for Answers not produced by ParseMessage.
+	RDATAOffset int
 }
 
 // DNSMessage represents a complete DNS message per RFC 1035 §4.1.
