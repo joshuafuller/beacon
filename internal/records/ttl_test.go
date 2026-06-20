@@ -7,6 +7,30 @@ import (
 	"github.com/joshuafuller/beacon/internal/protocol"
 )
 
+// TestTTL_IsExpired_Boundary pins the expiry edge in IsExpired
+// (ttl.go: `elapsed >= time.Duration(r.TTL)*time.Second`). At exactly TTL
+// seconds the record IS expired; one nanosecond before, it is NOT. A deterministic
+// clock lands on the edge precisely, killing the boundary mutant that wall-clock
+// tests cannot. (GetRemainingTTL's own `>=` is an equivalent mutant — it returns
+// 0 either way at the edge — so only IsExpired is pinned here.)
+func TestTTL_IsExpired_Boundary(t *testing.T) {
+	const ttl = 100
+	rt := NewRecordTTL(protocol.RecordTypeA, ttl)
+	base := rt.CreatedAt
+
+	// Exactly TTL seconds elapsed -> expired.
+	rt.now = func() time.Time { return base.Add(ttl * time.Second) }
+	if !rt.IsExpired() {
+		t.Fatalf("IsExpired = false at exactly TTL (%ds) elapsed; boundary is >=, must be expired", ttl)
+	}
+
+	// One nanosecond before TTL -> not expired.
+	rt.now = func() time.Time { return base.Add(ttl*time.Second - time.Nanosecond) }
+	if rt.IsExpired() {
+		t.Fatalf("IsExpired = true at TTL-1ns elapsed; must NOT be expired yet")
+	}
+}
+
 // TestTTL_GetRemainingTTL_RED tests remaining TTL calculation.
 //
 // TDD Phase: RED - These tests will FAIL until we implement TTL management
