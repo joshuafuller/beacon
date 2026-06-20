@@ -262,6 +262,19 @@ func TestIsPrivate(t *testing.T) {
 		{"192.168 private", "192.168.1.1", true},
 		{"Public IP", "8.8.8.8", false},
 		{"Link-local", "169.254.1.1", false}, // Link-local is NOT private range
+
+		// 172.16.0.0/12 range boundaries (pins ip4[1] >= 16 && ip4[1] <= 31).
+		// Without these, mutation testing showed the `<= 31` / `>= 16` edges survive.
+		{"172.15 just below range", "172.15.255.255", false}, // 15 < 16 → not private
+		{"172.16 lower edge", "172.16.0.0", true},            // exactly 16 → private
+		{"172.31 upper edge", "172.31.255.255", true},        // exactly 31 → private
+		{"172.32 just above range", "172.32.0.0", false},     // 32 > 31 → not private
+		// 192.168.0.0/16 neighbours (pins ip4[1] == 168).
+		{"192.167 not private", "192.167.1.1", false},
+		{"192.169 not private", "192.169.1.1", false},
+		// 10/8 boundary neighbours (pins ip4[0] == 10).
+		{"9.x not private", "9.255.255.255", false},
+		{"11.x not private", "11.0.0.0", false},
 	}
 
 	for _, tt := range tests {
@@ -273,6 +286,46 @@ func TestIsPrivate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestNewSourceFilter_CachesInterfaceAddrs exercises the real NewSourceFilter
+// constructor (the other SourceFilter tests build the struct literally and so
+// never run it). On an interface whose Addrs() succeeds, the constructor MUST
+// cache the interface's *net.IPNet addresses — not take the empty error-path
+// fallback. Mutation testing flagged the `if err != nil` branch as uncovered;
+// this asserts the success path populates ifaceAddrs.
+func TestNewSourceFilter_CachesInterfaceAddrs(t *testing.T) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		t.Skipf("cannot list interfaces in this environment: %v", err)
+	}
+
+	for _, iface := range ifaces {
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		wantIPNets := 0
+		for _, a := range addrs {
+			if _, ok := a.(*net.IPNet); ok {
+				wantIPNets++
+			}
+		}
+		if wantIPNets == 0 {
+			continue // need an interface with at least one IPNet to be decisive
+		}
+
+		sf, err := NewSourceFilter(iface)
+		if err != nil {
+			t.Fatalf("NewSourceFilter(%s) returned error: %v", iface.Name, err)
+		}
+		if len(sf.ifaceAddrs) != wantIPNets {
+			t.Fatalf("NewSourceFilter(%s) cached %d addrs, want %d (success path must cache, not take the empty fallback)",
+				iface.Name, len(sf.ifaceAddrs), wantIPNets)
+		}
+		return // one decisive interface is enough
+	}
+	t.Skip("no interface with an IPNet address available to exercise the constructor")
 }
 
 // ===== USER STORY 4: SOURCE FILTER TESTS (T067-T070) =====
