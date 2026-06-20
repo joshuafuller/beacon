@@ -69,7 +69,7 @@ func FuzzNameRoundTrip(f *testing.F) {
 // Run with: go test -fuzz=FuzzParseNameRaw -fuzztime=20s ./tests/fuzz/
 func FuzzParseNameRaw(f *testing.F) {
 	f.Add([]byte{0x04, 't', 'e', 's', 't', 0x00}, 0)
-	f.Add([]byte{0xc0, 0x00}, 0)             // compression pointer to self
+	f.Add([]byte{0xc0, 0x00}, 0)               // compression pointer to self
 	f.Add([]byte{0x05, 'l', 'o', 'c', 'a'}, 0) // length exceeds remaining bytes
 
 	f.Fuzz(func(t *testing.T, buf []byte, offset int) {
