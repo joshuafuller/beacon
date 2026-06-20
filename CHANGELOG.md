@@ -5,6 +5,17 @@ All notable changes to the Beacon mDNS library will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-06-20
+
+### Fixed
+- **Compressed PTR/SRV target names are now resolved (FR-012).** DNS responders
+  such as Avahi and Bonjour compress the target names inside SRV/PTR RDATA with
+  back-pointers into the message. The parser previously parsed each RDATA slice
+  in isolation and could not follow those pointers, so cross-responder SRV/PTR
+  resolution (e.g. `DiscoverServices` host/port against Avahi/Bonjour) silently
+  failed. RDATA is now parsed against the full message. Beacon-to-beacon
+  discovery was unaffected and remains so. No public API breakage.
+
 ## [1.3.0] - 2026-06-20
 
 First release in which the responder actually answers queries on the wire. v1.2.2
