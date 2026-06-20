@@ -16,6 +16,19 @@ type RecordTTL struct {
 	RecordType protocol.RecordType
 	TTL        uint32    // Initial TTL in seconds
 	CreatedAt  time.Time // Creation timestamp for TTL calculation
+
+	// now returns the current time; defaults to time.Now. Exists only so tests
+	// can supply a deterministic clock and exercise the expiry boundary exactly.
+	now func() time.Time
+}
+
+// clockNow returns the current time, tolerating a zero-value/literal RecordTTL
+// by falling back to time.Now.
+func (r *RecordTTL) clockNow() time.Time {
+	if r.now != nil {
+		return r.now()
+	}
+	return time.Now()
 }
 
 // NewRecordTTL creates a new record with TTL tracking.
@@ -33,6 +46,7 @@ func NewRecordTTL(rt protocol.RecordType, ttl uint32) *RecordTTL {
 		RecordType: rt,
 		TTL:        ttl,
 		CreatedAt:  time.Now(),
+		now:        time.Now,
 	}
 }
 
@@ -45,7 +59,7 @@ func NewRecordTTL(rt protocol.RecordType, ttl uint32) *RecordTTL {
 //
 // T017: Implement TTL calculation
 func (r *RecordTTL) GetRemainingTTL() uint32 {
-	elapsed := uint32(time.Since(r.CreatedAt).Seconds())
+	elapsed := uint32(r.clockNow().Sub(r.CreatedAt).Seconds())
 
 	// If elapsed time >= TTL, record has expired
 	if elapsed >= r.TTL {
@@ -62,7 +76,7 @@ func (r *RecordTTL) GetRemainingTTL() uint32 {
 //
 // T017: Implement expiration check
 func (r *RecordTTL) IsExpired() bool {
-	elapsed := time.Since(r.CreatedAt)
+	elapsed := r.clockNow().Sub(r.CreatedAt)
 	return elapsed >= time.Duration(r.TTL)*time.Second
 }
 

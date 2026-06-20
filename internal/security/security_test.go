@@ -143,13 +143,22 @@ func TestRateLimiter_Cooldown(t *testing.T) {
 // TestRateLimiter_BoundedMap verifies LRU eviction at 10,000 entries.
 // Per F-11 REQ-F11-4: Prevent memory exhaustion.
 func TestRateLimiter_BoundedMap(t *testing.T) {
-	// Create RateLimiter with maxEntries=100 (small for testing)
+	// Create RateLimiter with maxEntries=100 (small for testing).
 	rl := NewRateLimiter(100, 60*time.Second, 100)
 
-	// Send queries from 150 unique source IPs
+	// Use a deterministic clock that advances per query so each source has a
+	// strictly increasing lastSeen. Without this the test is flaky on platforms
+	// with coarse timer resolution (e.g. Windows ~15ms): all entries get the
+	// same time.Now() value, making LRU eviction order arbitrary so the "newest"
+	// entry can be evicted.
+	clk := newManualClock()
+	rl.now = clk.Now
+
+	// Send queries from 150 unique source IPs.
 	for i := 0; i < 150; i++ {
 		sourceIP := fmt.Sprintf("192.168.1.%d", i)
 		rl.Allow(sourceIP)
+		clk.advance(time.Millisecond)
 	}
 
 	// Verify map size never exceeds 100
@@ -167,7 +176,9 @@ func TestRateLimiter_BoundedMap(t *testing.T) {
 		t.Error("Expected evictionCount > 0 after exceeding maxEntries, but got 0")
 	}
 
-	// Test LRU behavior: Add a new source, verify it's in the map
+	// Test LRU behavior: Add a new source (newest lastSeen), verify it survives
+	// eviction — the eviction it triggers must remove the OLDEST entries, not it.
+	clk.advance(time.Millisecond)
 	newestIP := "10.0.0.1"
 	rl.Allow(newestIP)
 
@@ -262,6 +273,19 @@ func TestIsPrivate(t *testing.T) {
 		{"192.168 private", "192.168.1.1", true},
 		{"Public IP", "8.8.8.8", false},
 		{"Link-local", "169.254.1.1", false}, // Link-local is NOT private range
+
+		// 172.16.0.0/12 range boundaries (pins ip4[1] >= 16 && ip4[1] <= 31).
+		// Without these, mutation testing showed the `<= 31` / `>= 16` edges survive.
+		{"172.15 just below range", "172.15.255.255", false}, // 15 < 16 → not private
+		{"172.16 lower edge", "172.16.0.0", true},            // exactly 16 → private
+		{"172.31 upper edge", "172.31.255.255", true},        // exactly 31 → private
+		{"172.32 just above range", "172.32.0.0", false},     // 32 > 31 → not private
+		// 192.168.0.0/16 neighbours (pins ip4[1] == 168).
+		{"192.167 not private", "192.167.1.1", false},
+		{"192.169 not private", "192.169.1.1", false},
+		// 10/8 boundary neighbours (pins ip4[0] == 10).
+		{"9.x not private", "9.255.255.255", false},
+		{"11.x not private", "11.0.0.0", false},
 	}
 
 	for _, tt := range tests {
@@ -273,6 +297,46 @@ func TestIsPrivate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestNewSourceFilter_CachesInterfaceAddrs exercises the real NewSourceFilter
+// constructor (the other SourceFilter tests build the struct literally and so
+// never run it). On an interface whose Addrs() succeeds, the constructor MUST
+// cache the interface's *net.IPNet addresses — not take the empty error-path
+// fallback. Mutation testing flagged the `if err != nil` branch as uncovered;
+// this asserts the success path populates ifaceAddrs.
+func TestNewSourceFilter_CachesInterfaceAddrs(t *testing.T) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		t.Skipf("cannot list interfaces in this environment: %v", err)
+	}
+
+	for _, iface := range ifaces {
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		wantIPNets := 0
+		for _, a := range addrs {
+			if _, ok := a.(*net.IPNet); ok {
+				wantIPNets++
+			}
+		}
+		if wantIPNets == 0 {
+			continue // need an interface with at least one IPNet to be decisive
+		}
+
+		sf, err := NewSourceFilter(iface)
+		if err != nil {
+			t.Fatalf("NewSourceFilter(%s) returned error: %v", iface.Name, err)
+		}
+		if len(sf.ifaceAddrs) != wantIPNets {
+			t.Fatalf("NewSourceFilter(%s) cached %d addrs, want %d (success path must cache, not take the empty fallback)",
+				iface.Name, len(sf.ifaceAddrs), wantIPNets)
+		}
+		return // one decisive interface is enough
+	}
+	t.Skip("no interface with an IPNet address available to exercise the constructor")
 }
 
 // ===== USER STORY 4: SOURCE FILTER TESTS (T067-T070) =====
@@ -465,5 +529,195 @@ func TestSourceFilter_IsValid_RejectsDifferentSubnet_Agent4(t *testing.T) {
 	ip := net.ParseIP(sameSubnetIP)
 	if !sf.IsValid(ip) {
 		t.Errorf("IsValid(%s) = false, want true (IP is in same subnet 10.0.1.0/24)", sameSubnetIP)
+	}
+}
+
+// manualClock is a deterministic clock for exercising the rate limiter's
+// time-based boundaries (window expiry, LRU ordering, cleanup) exactly — wall
+// clock cannot hit an edge like "elapsed == 1s" reliably.
+type manualClock struct{ t time.Time }
+
+func (c *manualClock) Now() time.Time          { return c.t }
+func (c *manualClock) advance(d time.Duration) { c.t = c.t.Add(d) }
+
+func newManualClock() *manualClock {
+	return &manualClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+}
+
+// queryCountOf returns the current sliding-window count for a source (test-only
+// white-box inspection).
+func queryCountOf(rl *RateLimiter, ip string) (int, bool) {
+	rl.mu.RLock() // nosemgrep: beacon-mutex-defer-unlock
+	defer rl.mu.RUnlock()
+	e, ok := rl.sources[ip]
+	if !ok {
+		return 0, false
+	}
+	return e.queryCount, true
+}
+
+func hasSource(rl *RateLimiter, ip string) bool {
+	rl.mu.RLock() // nosemgrep: beacon-mutex-defer-unlock
+	defer rl.mu.RUnlock()
+	_, ok := rl.sources[ip]
+	return ok
+}
+
+// TestRateLimiter_WindowExpiry_Boundary pins the sliding-window reset edge
+// (rate_limiter.go: `now.Sub(entry.windowStart) > 1*time.Second`). At exactly
+// 1 second the window must NOT reset; strictly past 1 second it must. A fake
+// clock lets us land on the edge precisely, killing the boundary mutant that
+// wall-clock tests cannot.
+func TestRateLimiter_WindowExpiry_Boundary(t *testing.T) {
+	clk := newManualClock()
+	rl := NewRateLimiter(100, time.Hour, 10000) // high threshold so we never cool down
+	rl.now = clk.Now
+	const src = "203.0.113.7"
+
+	rl.Allow(src)            // create: count=1, windowStart=T0
+	clk.advance(time.Second) // now == windowStart + exactly 1s
+	rl.Allow(src)            // 1s is NOT > 1s → must increment, not reset
+	if c, _ := queryCountOf(rl, src); c != 2 {
+		t.Fatalf("queryCount = %d at exactly windowStart+1s; window must NOT reset (expected 2)", c)
+	}
+
+	clk.advance(time.Nanosecond) // now strictly past 1s relative to windowStart
+	rl.Allow(src)                // now > 1s → must reset window to count=1
+	if c, _ := queryCountOf(rl, src); c != 1 {
+		t.Fatalf("queryCount = %d strictly past windowStart+1s; window must reset (expected 1)", c)
+	}
+}
+
+// TestRateLimiter_Cleanup_Boundary pins the staleness edge in Cleanup()
+// (`now.Sub(entry.lastSeen) > 1*time.Minute`). At exactly one minute the entry
+// must be kept; strictly past one minute it must be removed.
+func TestRateLimiter_Cleanup_Boundary(t *testing.T) {
+	clk := newManualClock()
+	rl := NewRateLimiter(100, time.Hour, 10000)
+	rl.now = clk.Now
+	const src = "203.0.113.8"
+
+	rl.Allow(src) // lastSeen = T0
+	clk.advance(time.Minute)
+	rl.Cleanup()
+	if !hasSource(rl, src) {
+		t.Fatalf("entry removed at exactly lastSeen+1m; it must be kept (boundary is strictly > 1m)")
+	}
+
+	clk.advance(time.Nanosecond)
+	rl.Cleanup()
+	if hasSource(rl, src) {
+		t.Fatalf("entry kept strictly past lastSeen+1m; it must be removed")
+	}
+}
+
+// TestRateLimiter_Evict_RemovesOldest pins the LRU selection in evict(): it must
+// remove the entries with the OLDEST lastSeen, not the newest. A distinct,
+// monotonically advancing timestamp per source makes the ordering unambiguous,
+// killing the `lastSeen.Before(...)` comparison mutant and the partial-sort /
+// delete-loop boundary mutants.
+func TestRateLimiter_Evict_RemovesOldest(t *testing.T) {
+	clk := newManualClock()
+	const maxEntries = 20 // evictCount = maxEntries/10 = 2
+	rl := NewRateLimiter(1000, time.Hour, maxEntries)
+	rl.now = clk.Now
+
+	// Fill exactly maxEntries sources, each 1s newer than the last.
+	for i := 0; i < maxEntries; i++ {
+		rl.Allow(fmt.Sprintf("198.51.100.%d", i))
+		clk.advance(time.Second)
+	}
+	// One more source trips eviction of the 2 oldest (ip 0 and ip 1).
+	rl.Allow("198.51.100.200")
+
+	if rl.evictionCount != 2 {
+		t.Fatalf("evictionCount = %d; expected 2 (maxEntries/10)", rl.evictionCount)
+	}
+	if hasSource(rl, "198.51.100.0") {
+		t.Errorf("oldest source .0 survived eviction; evict() must remove oldest-by-lastSeen")
+	}
+	if hasSource(rl, "198.51.100.1") {
+		t.Errorf("second-oldest source .1 survived eviction; evict() must remove oldest-by-lastSeen")
+	}
+	if !hasSource(rl, "198.51.100.2") {
+		t.Errorf("source .2 was evicted; only the 2 OLDEST should be removed")
+	}
+	if !hasSource(rl, "198.51.100.200") {
+		t.Errorf("newest source was evicted; evict() must remove oldest, not newest")
+	}
+}
+
+// TestRateLimiter_Allow_ThresholdBoundary pins the EXACT threshold edge in
+// Allow() (rate_limiter.go:110, `entry.queryCount > rl.threshold`).
+//
+// Mutation testing showed the existing exceeds-threshold test asserts only
+// "allowedCount <= 100", which lets a `>`→`>=` (or `>`→`>=` boundary) mutant
+// survive. Here threshold=5 and the queries are issued in a tight loop (well
+// within the 1s window, so the window never resets): exactly the first
+// `threshold` queries must be allowed and the very next one denied.
+func TestRateLimiter_Allow_ThresholdBoundary(t *testing.T) {
+	const threshold = 5
+	rl := NewRateLimiter(threshold, 60*time.Second, 10000)
+	const src = "192.168.1.200"
+
+	for i := 1; i <= threshold; i++ {
+		if !rl.Allow(src) {
+			t.Fatalf("query %d/%d denied; the first %d queries must be allowed (queryCount %d is not > threshold %d)", i, threshold, threshold, i, threshold)
+		}
+	}
+	// The (threshold+1)th query is the first to exceed the limit.
+	if rl.Allow(src) {
+		t.Fatalf("query %d was allowed; it exceeds threshold %d (queryCount %d > %d) and must be denied", threshold+1, threshold, threshold+1, threshold)
+	}
+}
+
+// TestRateLimiter_Eviction_Boundary pins the maxEntries eviction edge
+// (rate_limiter.go:67, `len(rl.sources) > rl.maxEntries`) and the eviction
+// arithmetic (`evictCount := rl.maxEntries / 10`, rate_limiter.go:124).
+//
+// Filling exactly maxEntries distinct sources must NOT evict; one more must
+// evict exactly maxEntries/10 entries. The exact post-eviction size kills both
+// the boundary mutant (>= would evict early) and the arithmetic mutants
+// (*,+,- all yield a different evict count and thus a different final size).
+func TestRateLimiter_Eviction_Boundary(t *testing.T) {
+	const maxEntries = 100
+	rl := NewRateLimiter(1000, 60*time.Second, maxEntries) // high threshold: never rate-limit
+
+	for i := 0; i < maxEntries; i++ {
+		rl.Allow(fmt.Sprintf("10.0.%d.%d", i/256, i%256))
+	}
+	if got := rl.evictionCount; got != 0 {
+		t.Fatalf("evictionCount = %d after exactly maxEntries=%d sources; expected 0 (len == maxEntries is not > maxEntries)", got, maxEntries)
+	}
+	if got := len(rl.sources); got != maxEntries {
+		t.Fatalf("sources size = %d after filling to maxEntries; expected %d", got, maxEntries)
+	}
+
+	// One more distinct source pushes len to maxEntries+1 (> maxEntries) -> evict 10%.
+	rl.Allow("10.99.99.99")
+	const wantEvicted = maxEntries / 10 // 10
+	if got := rl.evictionCount; got != wantEvicted {
+		t.Fatalf("evictionCount = %d after exceeding maxEntries; expected exactly maxEntries/10 = %d", got, wantEvicted)
+	}
+	if got, want := len(rl.sources), maxEntries+1-wantEvicted; got != want {
+		t.Fatalf("sources size = %d after eviction; expected %d (%d added - %d evicted)", got, want, maxEntries+1, wantEvicted)
+	}
+}
+
+// TestRateLimiter_Eviction_MinimumOne pins the "evict at least one" guard
+// (rate_limiter.go:125, `if evictCount == 0 { evictCount = 1 }`) for small
+// maxEntries where maxEntries/10 == 0.
+func TestRateLimiter_Eviction_MinimumOne(t *testing.T) {
+	const maxEntries = 5 // maxEntries/10 == 0 -> must clamp to 1
+	rl := NewRateLimiter(1000, 60*time.Second, maxEntries)
+
+	for i := 0; i <= maxEntries; i++ { // maxEntries+1 distinct sources
+		rl.Allow(fmt.Sprintf("172.16.0.%d", i))
+	}
+	if got := rl.evictionCount; got != 1 {
+		t.Fatalf("evictionCount = %d for maxEntries=%d; expected exactly 1 (maxEntries/10 rounds to 0, clamped to 1)", got, maxEntries)
+	}
+	if got := len(rl.sources); got != maxEntries {
+		t.Fatalf("sources size = %d after eviction; expected %d", got, maxEntries)
 	}
 }

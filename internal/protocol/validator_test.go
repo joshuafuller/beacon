@@ -191,6 +191,53 @@ func TestValidateName_RFC1035_MaxNameLength(t *testing.T) {
 	}
 }
 
+// TestIsValidDNSChar_Boundaries exhaustively pins the character-class boundaries
+// of isValidDNSChar per RFC 1035 §3.1 plus the mDNS underscore extension
+// (RFC 6763): valid set is [a-zA-Z0-9-_].
+//
+// This test exists to lock the EXACT edges of each range. Mutation testing
+// (gremlins) showed that without it, CONDITIONALS_BOUNDARY and
+// CONDITIONALS_NEGATION mutants on the 'a'/'z', 'A'/'Z', '0'/'9' comparisons
+// survive — i.e. the suite could not tell `>=` from `>`. Each "just outside"
+// case below is the neighbour byte immediately adjacent to a range edge, so it
+// fails the moment any boundary or negation is perturbed.
+func TestIsValidDNSChar_Boundaries(t *testing.T) {
+	valid := []rune{
+		'a', 'z', // lower bounds of [a-z]
+		'A', 'Z', // bounds of [A-Z]
+		'0', '9', // bounds of [0-9]
+		'-', '_', // explicit allowed punctuation
+		'm', 'M', '5', // interior sanity
+	}
+	for _, ch := range valid {
+		if !isValidDNSChar(ch) {
+			t.Errorf("isValidDNSChar(%q / 0x%02x) = false, want true (valid per RFC 1035 §3.1 + mDNS)", ch, ch)
+		}
+	}
+
+	// Each rune below is the byte immediately adjacent to a range edge, so it
+	// must be rejected; if a boundary slips by one, one of these flips.
+	invalid := []rune{
+		'`',  // 0x60, immediately before 'a' (0x61)
+		'{',  // 0x7b, immediately after 'z' (0x7a)
+		'@',  // 0x40, immediately before 'A' (0x41)
+		'[',  // 0x5b, immediately after 'Z' (0x5a)
+		'/',  // 0x2f, immediately before '0' (0x30)
+		':',  // 0x3a, immediately after '9' (0x39)
+		',',  // 0x2c, immediately before '-' (0x2d)
+		'.',  // 0x2e, immediately after '-' (label separator, never a char)
+		'^',  // 0x5e, immediately before '_' (0x5f)
+		' ',  // space — common in instance names, never valid in a label
+		'\n', // newline — injection probe
+		'!', '~', 0x00,
+	}
+	for _, ch := range invalid {
+		if isValidDNSChar(ch) {
+			t.Errorf("isValidDNSChar(%q / 0x%02x) = true, want false (outside [a-zA-Z0-9-_])", ch, ch)
+		}
+	}
+}
+
 // TestValidateRecordType_FR002_SupportedTypes validates that ValidateRecordType
 // accepts only A, PTR, SRV, and TXT record types per FR-002.
 //

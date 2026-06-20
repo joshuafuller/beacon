@@ -18,14 +18,14 @@ func main() {
 	// Configure structured logging
 	logLevel := getLogLevel(os.Getenv("LOG_LEVEL"))
 	logFormat := os.Getenv("LOG_FORMAT")
-	
+
 	var handler slog.Handler
 	if logFormat == "json" {
 		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel})
 	} else {
 		handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel})
 	}
-	
+
 	logger := slog.New(handler)
 	slog.SetDefault(logger)
 
@@ -52,32 +52,32 @@ func main() {
 	}
 
 	logger.Debug("Registering service", "instance", svc.InstanceName, "type", svc.ServiceType, "port", svc.Port)
-	
+
 	if err := resp.Register(svc); err != nil {
 		logger.Error("Service registration failed", "error", err, "service", svc.InstanceName)
 		log.Fatal(err)
 	}
 
-	logger.Info("Service registered successfully", 
-		"service", svc.InstanceName, 
+	logger.Info("Service registered successfully",
+		"service", svc.InstanceName,
 		"type", svc.ServiceType,
 		"port", svc.Port,
 		"txt_records", svc.TXTRecords)
 
 	fmt.Println("Press Ctrl+C to stop")
-	
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	<-sigChan
 
 	logger.Info("Shutdown signal received")
-	
+
 	// Simulate graceful shutdown logging
 	shutdownStart := time.Now()
 	logger.Debug("Beginning graceful shutdown")
-	
+
 	time.Sleep(100 * time.Millisecond) // Simulate cleanup
-	
+
 	logger.Info("Shutdown complete", "duration_ms", time.Since(shutdownStart).Milliseconds())
 }
 

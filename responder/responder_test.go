@@ -139,7 +139,7 @@ func TestResponder_Register_Validation(t *testing.T) {
 				Port:         8080,
 			},
 			wantErr:     true,
-			errContains: "invalid service type format",
+			errContains: "begin with an underscore",
 		},
 		{
 			name: "invalid - port 0",

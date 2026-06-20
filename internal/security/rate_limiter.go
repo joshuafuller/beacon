@@ -27,6 +27,11 @@ type RateLimiter struct {
 	sources       map[string]*RateLimitEntry // Source IP → RateLimitEntry
 	mu            sync.RWMutex               // Protects sources map
 	evictionCount uint64                     // Number of LRU evictions (for metrics)
+
+	// now returns the current time. It defaults to time.Now and exists only so
+	// that tests can supply a deterministic clock to exercise the time-based
+	// boundaries (window expiry, cooldown, LRU ordering, cleanup) exactly.
+	now func() time.Time
 }
 
 // NewRateLimiter creates a new rate limiter with the given configuration.
@@ -37,6 +42,7 @@ func NewRateLimiter(threshold int, cooldown time.Duration, maxEntries int) *Rate
 		cooldown:   cooldown,
 		maxEntries: maxEntries,
 		sources:    make(map[string]*RateLimitEntry),
+		now:        time.Now,
 	}
 }
 
@@ -57,11 +63,12 @@ func (rl *RateLimiter) Allow(sourceIP string) bool {
 		// Check again after acquiring write lock (double-check pattern)
 		entry, exists = rl.sources[sourceIP]
 		if !exists {
+			tNow := rl.now()
 			rl.sources[sourceIP] = &RateLimitEntry{
 				sourceIP:    sourceIP,
 				queryCount:  1,
-				windowStart: time.Now(),
-				lastSeen:    time.Now(),
+				windowStart: tNow,
+				lastSeen:    tNow,
 			}
 			// Check if map exceeded maxEntries
 			if len(rl.sources) > rl.maxEntries {
@@ -76,7 +83,7 @@ func (rl *RateLimiter) Allow(sourceIP string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	now := time.Now()
+	now := rl.now()
 
 	// Check cooldown (after acquiring lock)
 	if !entry.cooldownExpiry.IsZero() && now.Before(entry.cooldownExpiry) {
@@ -158,10 +165,9 @@ func (rl *RateLimiter) evict() {
 		evicted++
 	}
 
-	// G115: bounds checked - evicted is always non-negative and less than evictCount (which is at most maxEntries/10)
-	if evicted >= 0 { //nolint:gosec // G115: bounds checked
-		rl.evictionCount += uint64(evicted)
-	}
+	// evicted is always >= 0 (it only increments from 0), so no guard is needed.
+	// G115: conversion is safe — evicted is non-negative and at most maxEntries/10.
+	rl.evictionCount += uint64(evicted) //nolint:gosec // G115: bounds checked
 }
 
 // Cleanup removes stale entries from the rate limiter map.
@@ -171,7 +177,7 @@ func (rl *RateLimiter) Cleanup() {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	now := time.Now()
+	now := rl.now()
 	toDelete := make([]string, 0)
 
 	// Find stale entries (not seen recently)

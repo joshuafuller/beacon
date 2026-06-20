@@ -5,6 +5,44 @@ All notable changes to the Beacon mDNS library will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-06-20
+
+First release in which the responder actually answers queries on the wire. v1.2.2
+shipped a stubbed responder (`buildResponsePacket` returned an empty packet) and
+never transmitted announcements, so a node was briefly announced but never
+answered queries. **No breaking changes to the public API.**
+
+### Fixed
+- **Responder answers queries on the wire.** Responses are fully serialized
+  (PTR/SRV/TXT/A) and announcements are sent via the transport. (Fixes the
+  v1.2.2 stub that made nodes undiscoverable via active queries.)
+- **Querier `WithTimeout` is now honored for deadline-less contexts.** Previously
+  `Query(context.Background(), …)` could block forever because the configured
+  default timeout was never applied.
+- **`DiscoverServices` now resolves SRV hostname/port.** A type mismatch made
+  `ResourceRecord.AsSRV()` always return `nil`, so instance host/port were never
+  populated for any responder.
+
+### Added
+- **Single-round-trip discovery.** `Response.Additionals` exposes the Additional
+  section and `DiscoverServices` consumes bundled SRV/TXT/A records to skip
+  follow-up queries (RFC 6763 §12). Falls back to explicit queries when a
+  responder omits them.
+- **Actionable service-type validation errors** that name the offending character
+  and cite RFC 6763 §7 (e.g. embedded underscores).
+
+### Changed
+- Internal architecture: the `responder` package is split into cohesive files;
+  the rate limiter and record TTL/multicast trackers use an injectable clock for
+  deterministic tests; extensive fuzz and mutation-test hardening was added. No
+  public API impact.
+
+### Known limitations
+- SRV/PTR targets that use DNS name compression (common in Avahi/Bonjour
+  responses) are not yet resolved from RDATA, so cross-responder SRV resolution
+  is limited. Beacon-to-beacon discovery is unaffected (Beacon does not compress).
+  Tracked as a follow-up (`ParseRDATA` needs full-message context).
+
 ## [Unreleased]
 
 ### M1-Refactoring (2025-11-01) - Internal Architecture Overhaul

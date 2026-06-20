@@ -118,9 +118,9 @@ func buildSRVRecord(service *ServiceInfo) *message.ResourceRecord {
 	//   Weight (2 bytes, big-endian) = 0
 	//   Port (2 bytes, big-endian)
 	//   Target (hostname as DNS name)
-	data := make([]byte, 6)                  // Priority + Weight + Port
-	binary.BigEndian.PutUint16(data[0:2], 0) // Priority = 0
-	binary.BigEndian.PutUint16(data[2:4], 0) // Weight = 0
+	data := make([]byte, 6)                             // Priority + Weight + Port
+	binary.BigEndian.PutUint16(data[0:2], 0)            // Priority = 0
+	binary.BigEndian.PutUint16(data[2:4], 0)            // Weight = 0
 	binary.BigEndian.PutUint16(data[4:6], service.Port) // Port
 
 	// Append encoded hostname
@@ -251,6 +251,11 @@ type RecordSet struct {
 	// Key: buildRecordKey(rr) + ":" + interfaceID
 	// Value: timestamp of last multicast (Unix nanoseconds for 250ms probe defense precision)
 	lastMulticast map[string]int64
+
+	// now returns the current time; defaults to time.Now. Exists only so tests
+	// can supply a deterministic clock and exercise the RFC 6762 §6.2 rate-limit
+	// boundaries (1s / 250ms) exactly.
+	now func() time.Time
 }
 
 // NewRecordSet creates a new RecordSet for rate limiting tracking.
@@ -259,7 +264,17 @@ type RecordSet struct {
 func NewRecordSet() *RecordSet {
 	return &RecordSet{
 		lastMulticast: make(map[string]int64),
+		now:           time.Now,
 	}
+}
+
+// clockNow returns the current time, tolerating a zero-value RecordSet (e.g. a
+// struct literal) by falling back to time.Now.
+func (rs *RecordSet) clockNow() time.Time {
+	if rs.now != nil {
+		return rs.now()
+	}
+	return time.Now()
 }
 
 // CanMulticast checks if a record can be multicast on the given interface per RFC 6762 §6.2.
@@ -282,7 +297,7 @@ func (rs *RecordSet) CanMulticast(rr *ResourceRecord, interfaceID string) bool {
 	}
 
 	// RFC 6762 §6.2: Minimum 1 second (1e9 nanoseconds) between multicasts
-	elapsedNano := time.Now().UnixNano() - lastTimeNano
+	elapsedNano := rs.clockNow().UnixNano() - lastTimeNano
 	return elapsedNano >= 1e9 // 1 second = 1,000,000,000 nanoseconds
 }
 
@@ -308,7 +323,7 @@ func (rs *RecordSet) CanMulticastProbeDefense(rr *ResourceRecord, interfaceID st
 	}
 
 	// RFC 6762 §6.2: Probe defense minimum 250ms = 250,000,000 nanoseconds
-	elapsedNano := time.Now().UnixNano() - lastTimeNano
+	elapsedNano := rs.clockNow().UnixNano() - lastTimeNano
 	return elapsedNano >= 250e6 // 250ms in nanoseconds
 }
 
@@ -319,7 +334,7 @@ func (rs *RecordSet) CanMulticastProbeDefense(rr *ResourceRecord, interfaceID st
 // T074: Implement RecordMulticast()
 func (rs *RecordSet) RecordMulticast(rr *ResourceRecord, interfaceID string) {
 	key := rs.buildRecordKey(rr) + ":" + interfaceID
-	rs.lastMulticast[key] = time.Now().UnixNano()
+	rs.lastMulticast[key] = rs.clockNow().UnixNano()
 }
 
 // GetLastMulticast returns the last multicast time for a record on an interface.

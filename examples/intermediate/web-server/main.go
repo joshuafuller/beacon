@@ -89,10 +89,10 @@ func main() {
 // handleRequest serves HTTP requests with a simple message.
 func handleRequest(w http.ResponseWriter, r *http.Request) {
 	log.Printf("HTTP %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
-	
+
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	
+
 	fmt.Fprintln(w, "Hello from mDNS-discoverable server!")
 	fmt.Fprintf(w, "Discovered via: %s.%s\n", "Web Demo", "_http._tcp.local")
 	fmt.Fprintf(w, "Time: %s\n", time.Now().Format(time.RFC3339))

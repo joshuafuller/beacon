@@ -2,9 +2,84 @@ package records
 
 import (
 	"testing"
+	"time"
 
 	"github.com/joshuafuller/beacon/internal/protocol"
 )
+
+// recordsClock is a deterministic clock for exercising the RFC 6762 §6.2
+// rate-limit boundaries (1s multicast, 250ms probe defense) and TTL expiry
+// exactly — wall clock cannot reliably land on an edge like "elapsed == 1s".
+type recordsClock struct{ t time.Time }
+
+func (c *recordsClock) Now() time.Time          { return c.t }
+func (c *recordsClock) advance(d time.Duration) { c.t = c.t.Add(d) }
+
+func newRecordsClock() *recordsClock {
+	return &recordsClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+}
+
+func multicastTestRecord() *ResourceRecord {
+	return &ResourceRecord{
+		Name:  "myservice._http._tcp.local",
+		Type:  protocol.RecordTypePTR,
+		Class: protocol.ClassIN,
+		TTL:   4500,
+		Data:  []byte{0x08, 'M', 'y', 'P', 'r', 'i', 'n', 't', 'e', 'r'},
+	}
+}
+
+// TestResourceRecord_CanMulticast_Boundary pins the 1-second edge in
+// CanMulticast (record_set.go: `elapsedNano >= 1e9`). At exactly one second the
+// record may be multicast again; one nanosecond before, it may not. The fake
+// clock lands on the edge precisely, killing the boundary mutant.
+func TestResourceRecord_CanMulticast_Boundary(t *testing.T) {
+	const iface = "eth0"
+
+	// Exactly 1s elapsed -> allowed.
+	clk := newRecordsClock()
+	rs := NewRecordSet()
+	rs.now = clk.Now
+	rs.RecordMulticast(multicastTestRecord(), iface)
+	clk.advance(time.Second)
+	if !rs.CanMulticast(multicastTestRecord(), iface) {
+		t.Fatalf("CanMulticast = false at exactly 1s elapsed; RFC 6762 §6.2 boundary is >= 1s, must be allowed")
+	}
+
+	// One nanosecond before 1s -> denied.
+	clk2 := newRecordsClock()
+	rs2 := NewRecordSet()
+	rs2.now = clk2.Now
+	rs2.RecordMulticast(multicastTestRecord(), iface)
+	clk2.advance(time.Second - time.Nanosecond)
+	if rs2.CanMulticast(multicastTestRecord(), iface) {
+		t.Fatalf("CanMulticast = true at 1s-1ns elapsed; must be denied (< 1s)")
+	}
+}
+
+// TestResourceRecord_CanMulticastProbeDefense_Boundary pins the 250ms edge in
+// CanMulticastProbeDefense (record_set.go: `elapsedNano >= 250e6`).
+func TestResourceRecord_CanMulticastProbeDefense_Boundary(t *testing.T) {
+	const iface = "eth0"
+
+	clk := newRecordsClock()
+	rs := NewRecordSet()
+	rs.now = clk.Now
+	rs.RecordMulticast(multicastTestRecord(), iface)
+	clk.advance(250 * time.Millisecond)
+	if !rs.CanMulticastProbeDefense(multicastTestRecord(), iface) {
+		t.Fatalf("CanMulticastProbeDefense = false at exactly 250ms; RFC 6762 §6.2 boundary is >= 250ms, must be allowed")
+	}
+
+	clk2 := newRecordsClock()
+	rs2 := NewRecordSet()
+	rs2.now = clk2.Now
+	rs2.RecordMulticast(multicastTestRecord(), iface)
+	clk2.advance(250*time.Millisecond - time.Nanosecond)
+	if rs2.CanMulticastProbeDefense(multicastTestRecord(), iface) {
+		t.Fatalf("CanMulticastProbeDefense = true at 250ms-1ns; must be denied (< 250ms)")
+	}
+}
 
 // TestBuildTXTRecord_EmptyMandatory_RED tests RFC 6763 §6 mandatory TXT record.
 //

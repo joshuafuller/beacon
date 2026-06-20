@@ -78,7 +78,7 @@ func TestRFC6763_ServiceEnumeration_MetaQuery(t *testing.T) {
 		t.Fatalf("responder.New() error = %v, want nil", err)
 	}
 	defer func() {
-		cancel()              // Cancel context first to unblock Receive()
+		cancel() // Cancel context first to unblock Receive()
 		_ = r.Close()
 	}()
 

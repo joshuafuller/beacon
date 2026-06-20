@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 // Service represents an mDNS service to be registered per RFC 6763.
@@ -191,12 +192,54 @@ func validateServiceType(serviceType string) error {
 		return fmt.Errorf("service type cannot be empty")
 	}
 
-	// Use regex for robust validation
+	// serviceTypeRegex is the single source of truth for accept/reject. When it
+	// rejects, describeInvalidServiceType produces a specific, RFC-cited reason
+	// (see issue #31) — but it never changes WHAT is accepted or rejected.
 	if !serviceTypeRegex.MatchString(serviceType) {
-		return fmt.Errorf("invalid service type format (must be _service._proto.local, e.g., \"_http._tcp.local\")")
+		return describeInvalidServiceType(serviceType)
 	}
 
 	return nil
+}
+
+// describeInvalidServiceType returns a specific error explaining why
+// serviceType failed serviceTypeRegex (`^_[a-z0-9-]+\._(tcp|udp)\.local$`).
+//
+// It is only called after the regex has already rejected the input, so it never
+// returns nil. The goal (issue #31) is to name the precise problem — especially
+// a disallowed character such as an embedded underscore — and cite RFC 6763 §7,
+// which permits only letters, digits, and hyphens in a Service Name.
+func describeInvalidServiceType(serviceType string) error {
+	const example = `_http._tcp.local`
+
+	labels := strings.Split(serviceType, ".")
+	if len(labels) != 3 || labels[2] != "local" {
+		return fmt.Errorf("invalid service type %q: must have the form _service._proto.local and end in \".local\" (e.g. %q)", serviceType, example)
+	}
+
+	name, proto := labels[0], labels[1]
+
+	// Service-name label: leading underscore + one-or-more [a-z0-9-] per RFC 6763 §7.
+	if name == "" || name[0] != '_' {
+		return fmt.Errorf("invalid service type %q: the service name must begin with an underscore (e.g. %q)", serviceType, example)
+	}
+	if len(name) == 1 {
+		return fmt.Errorf("invalid service type %q: the service name after the underscore is empty (e.g. %q)", serviceType, example)
+	}
+	for i := 1; i < len(name); i++ {
+		c := name[i]
+		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') {
+			return fmt.Errorf("invalid service type %q: character %q at position %d is not allowed; RFC 6763 §7 permits only lowercase letters, digits, and hyphens in service names (use \"-\" instead of \"_\")", serviceType, string(c), i)
+		}
+	}
+
+	// Service name is well-formed, so the protocol label must be at fault.
+	if proto != "_tcp" && proto != "_udp" {
+		return fmt.Errorf("invalid service type %q: protocol label %q must be \"_tcp\" or \"_udp\" (e.g. %q)", serviceType, proto, example)
+	}
+
+	// Fallback: regex rejected for a reason not isolated above.
+	return fmt.Errorf("invalid service type %q: must have the form _service._proto.local (e.g. %q)", serviceType, example)
 }
 
 // validateTXTRecordsSize validates that TXT records don't exceed RFC limits.

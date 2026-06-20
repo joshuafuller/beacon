@@ -505,7 +505,7 @@ func buildTestResponsePacket(name string, ip net.IP) []byte {
 	// DNS Header (12 bytes): QR=1 (response), ANCOUNT=1
 	header := make([]byte, 12)
 	binary.BigEndian.PutUint16(header[2:4], 0x8400) // QR=1, AA=1
-	binary.BigEndian.PutUint16(header[6:8], 1)       // ANCOUNT = 1
+	binary.BigEndian.PutUint16(header[6:8], 1)      // ANCOUNT = 1
 
 	// Answer section: NAME + TYPE(A=1) + CLASS(IN=1) + TTL + RDLENGTH + RDATA
 	answer := make([]byte, 0, len(encodedName)+10+4)

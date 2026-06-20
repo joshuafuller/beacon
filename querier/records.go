@@ -60,6 +60,15 @@ type Response struct {
 	//
 	// Per FR-010, Authority records are ignored in M1.
 	Records []ResourceRecord
+
+	// Additionals contains records from the response's Additional section.
+	//
+	// DNS-SD responders bundle SRV/TXT/A records alongside a PTR answer to let a
+	// single query resolve a service instance without follow-up round-trips
+	// (RFC 6763 §12). These are kept separate from Records (which holds only
+	// answer-section records of the queried type) so existing callers are
+	// unaffected; DiscoverServices consumes them to avoid extra queries.
+	Additionals []ResourceRecord
 }
 
 // ResourceRecord represents a single DNS resource record from an mDNS response.

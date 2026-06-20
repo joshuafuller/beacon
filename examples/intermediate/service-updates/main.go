@@ -17,11 +17,11 @@ import (
 )
 
 const (
-	serviceName   = "Load Monitor"
-	serviceType   = "_http._tcp.local"
-	port          = 8080
+	serviceName    = "Load Monitor"
+	serviceType    = "_http._tcp.local"
+	port           = 8080
 	updateInterval = 5 * time.Second
-	maxUpdates    = 6 // Run for 30 seconds total
+	maxUpdates     = 6 // Run for 30 seconds total
 )
 
 func main() {
