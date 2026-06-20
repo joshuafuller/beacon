@@ -389,3 +389,37 @@ func ExampleQuerier_Query_services() {
 		}
 	}
 }
+
+// TestQuery_HonorsDefaultTimeout_DeadlinelessContext verifies that WithTimeout
+// actually bounds a query when the caller's context carries no deadline.
+//
+// Regression test for issue #5: defaultTimeout was set by WithTimeout but never
+// read by the query path, so Query(context.Background(), ...) blocked forever in
+// collectResponses (which only returns on ctx.Done()). The previous TestWithTimeout
+// only asserted the option SET the field, never that it was honored — which is
+// why this gap survived. A watchdog guards the test so a regression fails fast
+// instead of hanging the suite.
+func TestQuery_HonorsDefaultTimeout_DeadlinelessContext(t *testing.T) {
+	q, err := New(WithTimeout(150 * time.Millisecond))
+	if err != nil {
+		t.Fatalf("New(WithTimeout) failed: %v", err)
+	}
+	defer q.Close()
+
+	done := make(chan struct{})
+	start := time.Now()
+	go func() {
+		// context.Background() has NO deadline. WithTimeout must bound this.
+		_, _ = q.Query(context.Background(), "nonexistent-service.local", RecordTypeA)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		if elapsed := time.Since(start); elapsed > 1*time.Second {
+			t.Fatalf("Query took %v; WithTimeout(150ms) must bound a deadline-less context (issue #5)", elapsed)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Query did not return within 3s; WithTimeout is not honored for a deadline-less context (issue #5)")
+	}
+}

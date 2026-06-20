@@ -214,6 +214,16 @@ func (q *Querier) Query(ctx context.Context, name string, recordType RecordType)
 	default:
 	}
 
+	// Honor the configured default timeout when the caller's context carries no
+	// deadline, so queries are always bounded. Without this, Query on a
+	// deadline-less context (e.g. context.Background()) blocks forever in
+	// collectResponses, and WithTimeout silently does nothing (issue #5).
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline && q.defaultTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, q.defaultTimeout)
+		defer cancel()
+	}
+
 	// FR-003: Validate name
 	err := protocol.ValidateName(name)
 	if err != nil {
@@ -232,13 +242,8 @@ func (q *Querier) Query(ctx context.Context, name string, recordType RecordType)
 		return nil, err
 	}
 
-	// FR-005: Send query to multicast group
-	// T033: Migrated from network.SendQuery to transport.Send()
-	mdnsAddr := &net.UDPAddr{
-		IP:   net.IPv4(224, 0, 0, 251),
-		Port: 5353,
-	}
-	err = q.transport.Send(ctx, queryMsg, mdnsAddr)
+	// FR-005: Send query to the mDNS multicast group (224.0.0.251:5353).
+	err = q.transport.Send(ctx, queryMsg, protocol.MulticastGroupIPv4())
 	if err != nil {
 		return nil, err // Already wrapped as NetworkError
 	}
