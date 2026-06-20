@@ -578,3 +578,75 @@ func TestParseMessage_WithCompression(t *testing.T) {
 		t.Errorf("Answer NAME = %q, want %q (decompressed per RFC 1035 §4.1.4)", parsed.Answers[0].NAME, testLocalName)
 	}
 }
+
+// TestParseRDATAInMessage_CompressedSRVTarget proves the compression fix
+// (FR-012): an SRV target encoded with a DNS compression pointer (as Avahi and
+// Bonjour do) resolves correctly when parsed against the full message, whereas
+// the context-free ParseRDATA cannot follow the pointer out of the isolated
+// RDATA slice.
+func TestParseRDATAInMessage_CompressedSRVTarget(t *testing.T) {
+	// Build a synthetic message:
+	//   [0..11]  12-byte header (zeros)
+	//   [12..18] label sequence "local" + root: 05 'l' 'o' 'c' 'a' 'l' 00
+	//   [19..]   SRV RDATA: prio(0) weight(0) port(8080) "host" <ptr->12>
+	msg := make([]byte, 12)                                // header
+	msg = append(msg, 0x05, 'l', 'o', 'c', 'a', 'l', 0x00) // "local." at offset 12
+
+	rdataStart := len(msg) // 19
+	srv := []byte{
+		0x00, 0x00, // priority
+		0x00, 0x00, // weight
+		0x1f, 0x90, // port 8080
+		0x04, 'h', 'o', 's', 't', // "host"
+		0xC0, 0x0C, // compression pointer -> offset 12 ("local")
+	}
+	msg = append(msg, srv...)
+	rdlength := len(srv)
+
+	// New path: resolves the compressed target against the full message.
+	data, err := ParseRDATAInMessage(33, msg, rdataStart, rdlength)
+	if err != nil {
+		t.Fatalf("ParseRDATAInMessage(SRV) returned error: %v", err)
+	}
+	srvData, ok := data.(SRVData)
+	if !ok {
+		t.Fatalf("expected SRVData, got %T", data)
+	}
+	if srvData.Target != "host.local" {
+		t.Errorf("Target = %q, want %q (compression pointer must resolve)", srvData.Target, "host.local")
+	}
+	if srvData.Port != 8080 {
+		t.Errorf("Port = %d, want 8080", srvData.Port)
+	}
+
+	// Old path: parsing the isolated RDATA slice cannot follow the pointer
+	// (it references message bytes outside the slice) — documents the bug the
+	// new function fixes.
+	if _, err := ParseRDATA(33, srv); err == nil {
+		t.Errorf("ParseRDATA(SRV) on isolated compressed RDATA unexpectedly succeeded; expected failure (cannot resolve pointer)")
+	}
+}
+
+// TestParseRDATAInMessage_CompressedPTRTarget proves the same for PTR targets.
+func TestParseRDATAInMessage_CompressedPTRTarget(t *testing.T) {
+	msg := make([]byte, 12)                                                    // header
+	msg = append(msg, 0x05, '_', 'h', 't', 't', 'p', 0x04, '_', 't', 'c', 'p', // "_http._tcp"
+		0x05, 'l', 'o', 'c', 'a', 'l', 0x00) // "...local." starting at offset 12
+
+	rdataStart := len(msg)
+	// PTR target "Inst" + pointer to "_http._tcp.local" at offset 12.
+	ptr := []byte{0x04, 'I', 'n', 's', 't', 0xC0, 0x0C}
+	msg = append(msg, ptr...)
+
+	data, err := ParseRDATAInMessage(12, msg, rdataStart, len(ptr))
+	if err != nil {
+		t.Fatalf("ParseRDATAInMessage(PTR) returned error: %v", err)
+	}
+	name, ok := data.(string)
+	if !ok {
+		t.Fatalf("expected string, got %T", data)
+	}
+	if name != "Inst._http._tcp.local" {
+		t.Errorf("PTR target = %q, want %q (compression pointer must resolve)", name, "Inst._http._tcp.local")
+	}
+}

@@ -254,12 +254,13 @@ func ParseAnswer(msg []byte, offset int) (Answer, int, error) {
 	copy(rdata, msg[newOffset:newOffset+int(rdlength)])
 
 	answer := Answer{
-		NAME:     name,
-		TYPE:     rtype,
-		CLASS:    class,
-		TTL:      ttl,
-		RDLENGTH: rdlength,
-		RDATA:    rdata,
+		NAME:        name,
+		TYPE:        rtype,
+		CLASS:       class,
+		TTL:         ttl,
+		RDLENGTH:    rdlength,
+		RDATA:       rdata,
+		RDATAOffset: newOffset, // RDATA begins here within msg (after the 10 fixed bytes)
 	}
 
 	return answer, newOffset + int(rdlength), nil
@@ -284,19 +285,49 @@ func ParseAnswer(msg []byte, offset int) (Answer, int, error) {
 //   - parsed: Type-specific parsed data (net.IP, string, []string, or SRVData)
 //   - error: WireFormatError if RDATA is malformed
 func ParseRDATA(recordType uint16, rdata []byte) (interface{}, error) {
+	// No surrounding-message context: treat rdata as a self-contained buffer.
+	// DNS name-compression pointers inside PTR/SRV targets reference earlier
+	// bytes of the full message and therefore CANNOT be resolved here — callers
+	// that have the full message should use ParseRDATAInMessage so that
+	// responders which compress (e.g. Avahi/Bonjour) interoperate (FR-012).
+	return ParseRDATAInMessage(recordType, rdata, 0, len(rdata))
+}
+
+// ParseRDATAInMessage parses the type-specific RDATA located at rdataStart (of
+// length rdlength) within the full message msg. Unlike ParseRDATA, it resolves
+// DNS name-compression pointers in PTR and SRV targets against msg, which is
+// required to interoperate with responders that compress those names (FR-012).
+//
+// For A and TXT records (no embedded names) it is equivalent to ParseRDATA.
+//
+// Parameters:
+//   - recordType: The DNS record type (A, PTR, SRV, TXT)
+//   - msg: The complete DNS message (for compression-pointer resolution)
+//   - rdataStart: Byte offset of RDATA within msg
+//   - rdlength: Length of RDATA in bytes
+func ParseRDATAInMessage(recordType uint16, msg []byte, rdataStart, rdlength int) (interface{}, error) {
+	if rdataStart < 0 || rdlength < 0 || rdataStart+rdlength > len(msg) {
+		return nil, &errors.WireFormatError{
+			Operation: "parse RDATA",
+			Offset:    rdataStart,
+			Message:   fmt.Sprintf("RDATA out of bounds: start=%d len=%d msg=%d", rdataStart, rdlength, len(msg)),
+		}
+	}
+	rdata := msg[rdataStart : rdataStart+rdlength]
+
 	switch recordType {
 	case 1: // A record: IPv4 address (4 bytes)
 		if len(rdata) != 4 {
 			return nil, &errors.WireFormatError{
 				Operation: "parse A record",
-				Offset:    0,
+				Offset:    rdataStart,
 				Message:   fmt.Sprintf("invalid A record length: %d bytes, expected 4", len(rdata)),
 			}
 		}
 		return net.IPv4(rdata[0], rdata[1], rdata[2], rdata[3]), nil
 
-	case 12: // PTR record: Domain name
-		name, _, err := ParseName(rdata, 0)
+	case 12: // PTR record: Domain name (may be compressed against msg)
+		name, _, err := ParseName(msg, rdataStart)
 		if err != nil {
 			return nil, err
 		}
@@ -327,11 +358,11 @@ func ParseRDATA(recordType uint16, rdata []byte) (interface{}, error) {
 		}
 		return strings, nil
 
-	case 33: // SRV record: Priority, Weight, Port, Target
+	case 33: // SRV record: Priority, Weight, Port, Target (target may be compressed)
 		if len(rdata) < 6 {
 			return nil, &errors.WireFormatError{
 				Operation: "parse SRV record",
-				Offset:    0,
+				Offset:    rdataStart,
 				Message:   fmt.Sprintf("truncated SRV record: %d bytes, expected at least 6", len(rdata)),
 			}
 		}
@@ -340,8 +371,9 @@ func ParseRDATA(recordType uint16, rdata []byte) (interface{}, error) {
 		weight := binary.BigEndian.Uint16(rdata[2:4])
 		port := binary.BigEndian.Uint16(rdata[4:6])
 
-		// Target is a domain name starting at offset 6
-		target, _, err := ParseName(rdata, 6)
+		// Target is a domain name starting 6 bytes into RDATA; resolve against
+		// the full message so compression pointers work.
+		target, _, err := ParseName(msg, rdataStart+6)
 		if err != nil {
 			return nil, err
 		}
@@ -356,7 +388,7 @@ func ParseRDATA(recordType uint16, rdata []byte) (interface{}, error) {
 	default:
 		return nil, &errors.WireFormatError{
 			Operation: "parse RDATA",
-			Offset:    0,
+			Offset:    rdataStart,
 			Message:   fmt.Sprintf("unsupported record type: %d", recordType),
 		}
 	}

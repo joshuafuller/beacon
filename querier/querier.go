@@ -469,8 +469,9 @@ func (q *Querier) collectResponses(ctx context.Context, _ string, queryType Reco
 					continue
 				}
 
-				// Parse type-specific RDATA
-				data, err := message.ParseRDATA(answer.TYPE, answer.RDATA)
+				// Parse type-specific RDATA against the full message so compressed
+				// PTR/SRV target names (used by Avahi/Bonjour) resolve.
+				data, err := message.ParseRDATAInMessage(answer.TYPE, responseMsg, answer.RDATAOffset, int(answer.RDLENGTH))
 				if err != nil {
 					// Malformed RDATA - skip this record per FR-011
 					continue
@@ -499,17 +500,10 @@ func (q *Querier) collectResponses(ctx context.Context, _ string, queryType Reco
 			// Retain Additional-section records (RFC 6763 §12). DNS-SD responders
 			// bundle SRV/TXT/A here so one PTR query resolves a whole instance;
 			// DiscoverServices consumes them to skip follow-up queries (issue #4).
-			//
-			// CAVEAT: ParseRDATA parses each RDATA slice in isolation, so names
-			// inside RDATA (SRV/PTR targets) that use DNS compression pointers
-			// (0xC0 back-references into the full message — common in Avahi/Bonjour
-			// responses) cannot be resolved and the record is skipped here; the
-			// query falls back to explicit lookups. Beacon's own responder does
-			// not compress, so beacon<->beacon discovery gets the single-round-trip
-			// path. Fixing cross-responder bundling needs ParseRDATA to take the
-			// full message + offset (tracked as a follow-up).
+			// Parsing against the full message resolves compressed SRV/PTR target
+			// names, so bundled additionals from Avahi/Bonjour resolve too.
 			for _, add := range parsedMsg.Additionals {
-				data, err := message.ParseRDATA(add.TYPE, add.RDATA)
+				data, err := message.ParseRDATAInMessage(add.TYPE, responseMsg, add.RDATAOffset, int(add.RDLENGTH))
 				if err != nil {
 					continue
 				}
