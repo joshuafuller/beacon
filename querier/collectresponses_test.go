@@ -522,7 +522,11 @@ func buildPartiallyBundledPTRResponse(serviceType, instance, host string, port u
 }
 
 // feedResponseUntilStopped repeatedly enqueues packet onto q.responseChan on a
-// short interval until the returned stop function is called.
+// short interval until the returned stop function is called. stop blocks
+// until the feeder goroutine has actually exited, not just been signaled -
+// callers defer q.Close() (which closes q.responseChan) after stop, so a
+// send racing that close would be a data race (and a possible panic) if
+// stop returned before the goroutine was guaranteed to have stopped sending.
 //
 // DiscoverServices issues its PTR browse query and any SRV/TXT/A fallback
 // queries as a sequence of independently-timed phases (internal/querier.go),
@@ -536,7 +540,9 @@ func buildPartiallyBundledPTRResponse(serviceType, instance, host string, port u
 // timeout math.
 func feedResponseUntilStopped(q *Querier, packet []byte) (stop func()) {
 	done := make(chan struct{})
+	stopped := make(chan struct{})
 	go func() {
+		defer close(stopped)
 		ticker := time.NewTicker(50 * time.Millisecond)
 		defer ticker.Stop()
 		for {
@@ -546,12 +552,17 @@ func feedResponseUntilStopped(q *Querier, packet []byte) (stop func()) {
 			case <-ticker.C:
 				select {
 				case q.responseChan <- packet:
+				case <-done:
+					return
 				default: // channel full - drop, next tick will retry
 				}
 			}
 		}
 	}()
-	return func() { close(done) }
+	return func() {
+		close(done)
+		<-stopped
+	}
 }
 
 // TestDiscoverServices_FallbackSRV_WhenNotBundled verifies that when the PTR
