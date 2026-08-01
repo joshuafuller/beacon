@@ -67,6 +67,8 @@ func NewResponseBuilder() *ResponseBuilder {
 //   - error: If response construction fails
 //
 // T076: Implement BuildResponse()
+//
+//nolint:gocyclo // Wire-format-critical RFC 6762 §6 response assembly (header, known-answer suppression, PTR/SRV/TXT/A section population, packet-size truncation); splitting it should happen alongside a dedicated contract-test pass, not as an incidental lint fix.
 func (rb *ResponseBuilder) BuildResponse(service *ServiceWithIP, query *message.DNSMessage) (*message.DNSMessage, error) {
 	if service == nil {
 		return nil, fmt.Errorf("service cannot be nil")

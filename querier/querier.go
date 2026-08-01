@@ -280,6 +280,8 @@ func (q *Querier) Query(ctx context.Context, name string, recordType RecordType)
 //	    fmt.Printf("%s at %s:%d (%s)\n",
 //	        svc.InstanceName, svc.AddrIPv4, svc.Port, svc.TXT["path"])
 //	}
+//
+//nolint:gocyclo // Public-API discovery pipeline with several independent per-instance fallback branches (bundled additionals vs. explicit SRV/TXT/A queries); a resolveInstance() extraction would help but touches public behavior, so it deserves its own change with before/after test coverage, not a drive-by split.
 func (q *Querier) DiscoverServices(ctx context.Context, serviceType string) ([]ServiceInstance, error) {
 	// Phase 1: Browse for instances via PTR query.
 	// Allocate ~40% of the remaining time for browsing, rest for resolving details.
