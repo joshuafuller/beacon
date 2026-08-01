@@ -279,18 +279,9 @@ func (q *Querier) Query(ctx context.Context, name string, recordType RecordType)
 //	        svc.InstanceName, svc.AddrIPv4, svc.Port, svc.TXT["path"])
 //	}
 //
-// Public-API discovery pipeline with several independent per-instance fallback branches (bundled additionals vs. explicit SRV/TXT/A queries); a resolveInstance() extraction would help but touches public behavior, so it deserves its own change with before/after test coverage, not a drive-by split.
 func (q *Querier) DiscoverServices(ctx context.Context, serviceType string) ([]ServiceInstance, error) {
 	// Phase 1: Browse for instances via PTR query.
-	// Allocate ~40% of the remaining time for browsing, rest for resolving details.
-	browseTimeout := 1 * time.Second // default if no deadline
-	if deadline, ok := ctx.Deadline(); ok {
-		remaining := time.Until(deadline)
-		browseTimeout = remaining * 2 / 5
-		if browseTimeout < 200*time.Millisecond {
-			browseTimeout = 200 * time.Millisecond
-		}
-	}
+	browseTimeout := computeBrowseTimeout(ctx)
 
 	browseCtx, browseCancel := context.WithTimeout(ctx, browseTimeout)
 	ptrResp, err := q.Query(browseCtx, serviceType, RecordTypePTR)
@@ -300,96 +291,148 @@ func (q *Querier) DiscoverServices(ctx context.Context, serviceType string) ([]S
 	}
 
 	// Phase 2: Resolve each discovered instance.
+	const resolveTimeout = 500 * time.Millisecond
 	services := make([]ServiceInstance, 0, len(ptrResp.Records))
-	resolveTimeout := 500 * time.Millisecond
 
 	for _, record := range ptrResp.Records {
 		target := record.AsPTR()
 		if target == "" {
 			continue
 		}
-
-		svc := ServiceInstance{ServiceType: serviceType}
-
-		// Extract instance name: "My Printer._http._tcp.local" → "My Printer"
-		if strings.HasSuffix(target, "."+serviceType) {
-			svc.InstanceName = strings.TrimSuffix(target, "."+serviceType)
-		} else {
-			svc.InstanceName = target
-		}
-
-		// RFC 6763 §12: prefer SRV/TXT/A bundled in the browse response's
-		// additional section; fall back to explicit queries only for what is
-		// missing (issue #4 — saves up to 3 round-trips per instance).
-		if rr := findInAdditionals(ptrResp.Additionals, target, RecordTypeSRV); rr != nil {
-			if srv := rr.AsSRV(); srv != nil {
-				svc.Hostname = srv.Target
-				svc.Port = srv.Port
-			}
-		}
-		if rr := findInAdditionals(ptrResp.Additionals, target, RecordTypeTXT); rr != nil {
-			if txt := rr.AsTXT(); txt != nil {
-				svc.TXT = ParseTXT(txt)
-			}
-		}
-		if svc.Hostname != "" {
-			if rr := findInAdditionals(ptrResp.Additionals, svc.Hostname, RecordTypeA); rr != nil {
-				if ip := rr.AsA(); ip != nil {
-					svc.AddrIPv4 = ip
-				}
-			}
-		}
-
-		// Fallback: SRV query for hostname + port if not bundled as an additional.
-		if svc.Hostname == "" {
-			srvCtx, srvCancel := context.WithTimeout(ctx, resolveTimeout)
-			srvResp, srvErr := q.Query(srvCtx, target, RecordTypeSRV)
-			srvCancel()
-			if srvErr == nil {
-				for _, r := range srvResp.Records {
-					if srv := r.AsSRV(); srv != nil {
-						svc.Hostname = srv.Target
-						svc.Port = srv.Port
-						break
-					}
-				}
-			}
-		}
-
-		// Fallback: TXT query for metadata if not bundled as an additional.
-		if svc.TXT == nil {
-			txtCtx, txtCancel := context.WithTimeout(ctx, resolveTimeout)
-			txtResp, txtErr := q.Query(txtCtx, target, RecordTypeTXT)
-			txtCancel()
-			if txtErr == nil {
-				for _, r := range txtResp.Records {
-					if txt := r.AsTXT(); txt != nil {
-						svc.TXT = ParseTXT(txt)
-						break
-					}
-				}
-			}
-		}
-
-		// Fallback: A query for IPv4 if we have a hostname but no address yet.
-		if svc.Hostname != "" && svc.AddrIPv4 == nil {
-			aCtx, aCancel := context.WithTimeout(ctx, resolveTimeout)
-			aResp, aErr := q.Query(aCtx, svc.Hostname, RecordTypeA)
-			aCancel()
-			if aErr == nil {
-				for _, r := range aResp.Records {
-					if ip := r.AsA(); ip != nil {
-						svc.AddrIPv4 = ip
-						break
-					}
-				}
-			}
-		}
-
-		services = append(services, svc)
+		services = append(services, q.resolveInstance(ctx, serviceType, target, ptrResp.Additionals, resolveTimeout))
 	}
 
 	return services, nil
+}
+
+// computeBrowseTimeout allocates ~40% of ctx's remaining deadline (floor
+// 200ms) to the PTR browse phase, leaving the rest for per-instance
+// resolution. Returns 1 second if ctx carries no deadline.
+func computeBrowseTimeout(ctx context.Context) time.Duration {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return 1 * time.Second
+	}
+	browseTimeout := time.Until(deadline) * 2 / 5
+	if browseTimeout < 200*time.Millisecond {
+		browseTimeout = 200 * time.Millisecond
+	}
+	return browseTimeout
+}
+
+// deriveInstanceName extracts the user-facing instance name from a PTR
+// target, e.g. "My Printer._http._tcp.local" → "My Printer".
+func deriveInstanceName(target, serviceType string) string {
+	if strings.HasSuffix(target, "."+serviceType) {
+		return strings.TrimSuffix(target, "."+serviceType)
+	}
+	return target
+}
+
+// applyBundledAdditionals fills svc's Hostname/Port/TXT/AddrIPv4 from the
+// browse response's Additional section, per RFC 6763 §12: DNS-SD responders
+// may bundle SRV/TXT/A alongside a PTR answer so one query resolves a whole
+// instance without follow-up round-trips (issue #4).
+func applyBundledAdditionals(svc *ServiceInstance, additionals []ResourceRecord, target string) {
+	if rr := findInAdditionals(additionals, target, RecordTypeSRV); rr != nil {
+		if srv := rr.AsSRV(); srv != nil {
+			svc.Hostname = srv.Target
+			svc.Port = srv.Port
+		}
+	}
+	if rr := findInAdditionals(additionals, target, RecordTypeTXT); rr != nil {
+		if txt := rr.AsTXT(); txt != nil {
+			svc.TXT = ParseTXT(txt)
+		}
+	}
+	if svc.Hostname != "" {
+		if rr := findInAdditionals(additionals, svc.Hostname, RecordTypeA); rr != nil {
+			if ip := rr.AsA(); ip != nil {
+				svc.AddrIPv4 = ip
+			}
+		}
+	}
+}
+
+// queryFallbackSRV issues an explicit SRV query for target's hostname and
+// port, used when the browse response didn't bundle it as an additional.
+func (q *Querier) queryFallbackSRV(ctx context.Context, target string, timeout time.Duration) (hostname string, port uint16, ok bool) {
+	srvCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	srvResp, err := q.Query(srvCtx, target, RecordTypeSRV)
+	if err != nil {
+		return "", 0, false
+	}
+	for _, r := range srvResp.Records {
+		if srv := r.AsSRV(); srv != nil {
+			return srv.Target, srv.Port, true
+		}
+	}
+	return "", 0, false
+}
+
+// queryFallbackTXT issues an explicit TXT query for target's metadata, used
+// when the browse response didn't bundle it as an additional.
+func (q *Querier) queryFallbackTXT(ctx context.Context, target string, timeout time.Duration) (txt map[string]string, ok bool) {
+	txtCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	txtResp, err := q.Query(txtCtx, target, RecordTypeTXT)
+	if err != nil {
+		return nil, false
+	}
+	for _, r := range txtResp.Records {
+		if t := r.AsTXT(); t != nil {
+			return ParseTXT(t), true
+		}
+	}
+	return nil, false
+}
+
+// queryFallbackA issues an explicit A query for hostname's IPv4 address, used
+// when the browse response didn't bundle it as an additional.
+func (q *Querier) queryFallbackA(ctx context.Context, hostname string, timeout time.Duration) (ip net.IP, ok bool) {
+	aCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	aResp, err := q.Query(aCtx, hostname, RecordTypeA)
+	if err != nil {
+		return nil, false
+	}
+	for _, r := range aResp.Records {
+		if addr := r.AsA(); addr != nil {
+			return addr, true
+		}
+	}
+	return nil, false
+}
+
+// resolveInstance resolves a single PTR-discovered target into a fully
+// populated ServiceInstance: it prefers additionals bundled in the browse
+// response (RFC 6763 §12) and falls back to explicit SRV/TXT/A queries only
+// for whichever fields are still missing (issue #4 — saves round-trips).
+func (q *Querier) resolveInstance(ctx context.Context, serviceType, target string, additionals []ResourceRecord, resolveTimeout time.Duration) ServiceInstance {
+	svc := ServiceInstance{ServiceType: serviceType, InstanceName: deriveInstanceName(target, serviceType)}
+	applyBundledAdditionals(&svc, additionals, target)
+
+	if svc.Hostname == "" {
+		if hostname, port, ok := q.queryFallbackSRV(ctx, target, resolveTimeout); ok {
+			svc.Hostname = hostname
+			svc.Port = port
+		}
+	}
+
+	if svc.TXT == nil {
+		if txt, ok := q.queryFallbackTXT(ctx, target, resolveTimeout); ok {
+			svc.TXT = txt
+		}
+	}
+
+	if svc.Hostname != "" && svc.AddrIPv4 == nil {
+		if ip, ok := q.queryFallbackA(ctx, svc.Hostname, resolveTimeout); ok {
+			svc.AddrIPv4 = ip
+		}
+	}
+
+	return svc
 }
 
 // toRecordData normalizes parsed RDATA into the querier's public types.
