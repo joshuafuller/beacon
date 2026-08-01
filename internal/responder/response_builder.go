@@ -168,7 +168,7 @@ func (rb *ResponseBuilder) BuildResponse(service *ServiceWithIP, query *message.
 	// RFC 6762 §18: ANCOUNT/ARCOUNT are wire-format uint16 fields. Validate before
 	// converting so the invariant is enforced explicitly rather than assumed from
 	// the 9000-byte packet limit alone.
-	if len(response.Answers) > 65535 || len(response.Additionals) > 65535 {
+	if len(response.Answers) > math.MaxUint16 || len(response.Additionals) > math.MaxUint16 {
 		return nil, fmt.Errorf("response record count exceeds uint16 max: %d answers, %d additionals", len(response.Answers), len(response.Additionals))
 	}
 

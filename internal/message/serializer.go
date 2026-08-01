@@ -3,6 +3,7 @@ package message
 
 import (
 	"encoding/binary"
+	"math"
 
 	"github.com/joshuafuller/beacon/internal/errors"
 	"github.com/joshuafuller/beacon/internal/protocol"
@@ -81,8 +82,8 @@ func SerializeMessage(msg *DNSMessage) ([]byte, error) {
 
 	// RFC 1035 §4.1.1: QDCOUNT/ANCOUNT/NSCOUNT/ARCOUNT are wire-format uint16
 	// fields. Validate before converting rather than truncating silently.
-	if len(msg.Questions) > 65535 || len(msg.Answers) > 65535 ||
-		len(msg.Authorities) > 65535 || len(msg.Additionals) > 65535 {
+	if len(msg.Questions) > math.MaxUint16 || len(msg.Answers) > math.MaxUint16 ||
+		len(msg.Authorities) > math.MaxUint16 || len(msg.Additionals) > math.MaxUint16 {
 		return nil, &errors.ValidationError{
 			Field:   "DNSMessage",
 			Value:   nil,

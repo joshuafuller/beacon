@@ -5,6 +5,7 @@ package message
 import (
 	"crypto/rand" // Standard library, required for secure DNS query ID generation per gosec G404
 	"encoding/binary"
+	"math"
 	"math/big"
 	"strings"
 
@@ -168,7 +169,7 @@ func BuildResponse(answers []*ResourceRecord) ([]byte, error) {
 	// RFC 6762 §18: ANCOUNT is a wire-format uint16. Validate before
 	// buildResponseHeader converts len(answers), so the overflow is
 	// impossible at the conversion site rather than silently capped.
-	if len(answers) > 65535 {
+	if len(answers) > math.MaxUint16 {
 		return nil, &errors.ValidationError{
 			Field:   "answers",
 			Value:   len(answers),
@@ -260,7 +261,7 @@ func SerializeResourceRecord(rr *ResourceRecord) ([]byte, error) {
 
 	// RFC 1035 §3.2.1: RDLENGTH is a wire-format uint16. Validate here, before
 	// the RDLENGTH conversion below, rather than capping/truncating silently.
-	if len(rr.Data) > 65535 {
+	if len(rr.Data) > math.MaxUint16 {
 		return nil, &errors.ValidationError{
 			Field:   "ResourceRecord.Data",
 			Value:   len(rr.Data),
