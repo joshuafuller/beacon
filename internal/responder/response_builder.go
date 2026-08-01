@@ -67,8 +67,6 @@ func NewResponseBuilder() *ResponseBuilder {
 //   - error: If response construction fails
 //
 // T076: Implement BuildResponse()
-//
-// Wire-format-critical RFC 6762 §6 response assembly (header, known-answer suppression, PTR/SRV/TXT/A section population, packet-size truncation); splitting it should happen alongside a dedicated contract-test pass, not as an incidental lint fix.
 func (rb *ResponseBuilder) BuildResponse(service *ServiceWithIP, query *message.DNSMessage) (*message.DNSMessage, error) {
 	if service == nil {
 		return nil, fmt.Errorf("service cannot be nil")
@@ -77,6 +75,33 @@ func (rb *ResponseBuilder) BuildResponse(service *ServiceWithIP, query *message.
 		return nil, fmt.Errorf("query cannot be nil")
 	}
 
+	response := rb.newResponseSkeleton(query)
+
+	allRecords, err := rb.buildServiceRecords(service)
+	if err != nil {
+		return nil, err
+	}
+
+	knownAnswers := rb.convertKnownAnswers(query)
+
+	// For PTR query, answer is PTR record, additional is SRV/TXT/A
+	// For now, assume first question is PTR query (will enhance later)
+	if len(query.Questions) > 0 && query.Questions[0].QTYPE == uint16(protocol.RecordTypePTR) {
+		rb.populatePTRResponse(response, allRecords, knownAnswers)
+	}
+
+	if err := rb.finalizeCounts(response); err != nil {
+		return nil, err
+	}
+
+	rb.applyPacketSizeTruncation(response)
+
+	return response, nil
+}
+
+// newResponseSkeleton builds an empty mDNS response message per RFC 6762 §6,
+// with the header flags/ID set and every section initialized but unpopulated.
+func (rb *ResponseBuilder) newResponseSkeleton(query *message.DNSMessage) *message.DNSMessage {
 	// Build response header per RFC 6762 §6
 	// Flags: QR=1 (response), OPCODE=0, AA=1 (authoritative), TC=0, RD=0, RA=0, Z=0, RCODE=0
 	// Bit 15 (QR=1): 0x8000
@@ -84,7 +109,7 @@ func (rb *ResponseBuilder) BuildResponse(service *ServiceWithIP, query *message.
 	// Total: 0x8400
 	flags := uint16(0x8400) // QR=1, AA=1
 
-	response := &message.DNSMessage{
+	return &message.DNSMessage{
 		Header: message.DNSHeader{
 			ID:      query.Header.ID, // Match query ID
 			Flags:   flags,           // Response with authoritative answer
@@ -98,7 +123,11 @@ func (rb *ResponseBuilder) BuildResponse(service *ServiceWithIP, query *message.
 		Authorities: []message.Answer{},   // Empty for mDNS
 		Additionals: []message.Answer{},   // Will populate with SRV, TXT, A
 	}
+}
 
+// buildServiceRecords builds the full PTR/SRV/TXT/A record set for service and
+// validates every record's RDATA fits the wire-format RDLENGTH field.
+func (rb *ResponseBuilder) buildServiceRecords(service *ServiceWithIP) ([]*message.ResourceRecord, error) {
 	// Convert Service to records.ServiceInfo for record building
 	serviceInfo := &records.ServiceInfo{
 		InstanceName: service.InstanceName,
@@ -121,6 +150,12 @@ func (rb *ResponseBuilder) BuildResponse(service *ServiceWithIP, query *message.
 		return nil, err
 	}
 
+	return allRecords, nil
+}
+
+// convertKnownAnswers converts query's Answer section (the querier's known
+// answers) to ResourceRecords for known-answer suppression per RFC 6762 §7.1.
+func (rb *ResponseBuilder) convertKnownAnswers(query *message.DNSMessage) []*message.ResourceRecord {
 	// T095: Convert query known-answers (Answer section) to ResourceRecords for suppression
 	knownAnswers := make([]*message.ResourceRecord, 0, len(query.Answers))
 	for _, answer := range query.Answers {
@@ -134,50 +169,58 @@ func (rb *ResponseBuilder) BuildResponse(service *ServiceWithIP, query *message.
 			CacheFlush: (answer.CLASS & 0x8000) != 0,
 		})
 	}
+	return knownAnswers
+}
 
-	// For PTR query, answer is PTR record, additional is SRV/TXT/A
-	// For now, assume first question is PTR query (will enhance later)
-	if len(query.Questions) > 0 {
-		question := query.Questions[0]
-
-		// Check if this is a PTR query
-		if question.QTYPE == uint16(protocol.RecordTypePTR) {
-			// Add PTR record to answer section (with known-answer suppression)
-			for _, rr := range allRecords {
-				if rr.Type == protocol.RecordTypePTR {
-					// T095: Apply known-answer suppression per RFC 6762 §7.1
-					if rb.ApplyKnownAnswerSuppression(rr, knownAnswers) {
-						response.Answers = append(response.Answers, rb.recordToAnswer(rr))
-					}
-					// T096: TODO - log suppressed record
-					break
-				}
+// populatePTRResponse adds the PTR record to response's Answer section and the
+// SRV/TXT/A records to its Additional section, applying known-answer
+// suppression per RFC 6762 §7.1 to each.
+func (rb *ResponseBuilder) populatePTRResponse(response *message.DNSMessage, allRecords, knownAnswers []*message.ResourceRecord) {
+	// Add PTR record to answer section (with known-answer suppression)
+	for _, rr := range allRecords {
+		if rr.Type == protocol.RecordTypePTR {
+			// T095: Apply known-answer suppression per RFC 6762 §7.1
+			if rb.ApplyKnownAnswerSuppression(rr, knownAnswers) {
+				response.Answers = append(response.Answers, rb.recordToAnswer(rr))
 			}
-
-			// Add SRV, TXT, A to additional section (with known-answer suppression)
-			for _, rr := range allRecords {
-				if rr.Type == protocol.RecordTypeSRV || rr.Type == protocol.RecordTypeTXT || rr.Type == protocol.RecordTypeA {
-					// T095: Apply known-answer suppression per RFC 6762 §7.1
-					if rb.ApplyKnownAnswerSuppression(rr, knownAnswers) {
-						response.Additionals = append(response.Additionals, rb.recordToAnswer(rr))
-					}
-					// T096: TODO - log suppressed record
-				}
-			}
+			// T096: TODO - log suppressed record
+			break
 		}
 	}
 
+	// Add SRV, TXT, A to additional section (with known-answer suppression)
+	for _, rr := range allRecords {
+		if rr.Type == protocol.RecordTypeSRV || rr.Type == protocol.RecordTypeTXT || rr.Type == protocol.RecordTypeA {
+			// T095: Apply known-answer suppression per RFC 6762 §7.1
+			if rb.ApplyKnownAnswerSuppression(rr, knownAnswers) {
+				response.Additionals = append(response.Additionals, rb.recordToAnswer(rr))
+			}
+			// T096: TODO - log suppressed record
+		}
+	}
+}
+
+// finalizeCounts validates that response's Answer/Additional sections fit the
+// wire-format uint16 count fields and sets ANCOUNT/ARCOUNT accordingly.
+func (rb *ResponseBuilder) finalizeCounts(response *message.DNSMessage) error {
 	// RFC 6762 §18: ANCOUNT/ARCOUNT are wire-format uint16 fields. Validate before
 	// converting so the invariant is enforced explicitly rather than assumed from
 	// the 9000-byte packet limit alone.
 	if len(response.Answers) > math.MaxUint16 || len(response.Additionals) > math.MaxUint16 {
-		return nil, fmt.Errorf("response record count exceeds uint16 max: %d answers, %d additionals", len(response.Answers), len(response.Additionals))
+		return fmt.Errorf("response record count exceeds uint16 max: %d answers, %d additionals", len(response.Answers), len(response.Additionals))
 	}
 
 	// Update counts
 	response.Header.ANCount = uint16(len(response.Answers))     //nolint:gosec // G115: bounds checked above
 	response.Header.ARCount = uint16(len(response.Additionals)) //nolint:gosec // G115: bounds checked above
 
+	return nil
+}
+
+// applyPacketSizeTruncation enforces the RFC 6762 §17 9000-byte packet limit
+// by gracefully truncating response's Additional section (R005) and setting
+// the TC bit per RFC 6762 §6.5 if any records were dropped.
+func (rb *ResponseBuilder) applyPacketSizeTruncation(response *message.DNSMessage) {
 	// Check packet size limit (RFC 6762 §17: 9000 bytes)
 	estimatedSize := rb.EstimatePacketSize(response)
 	if estimatedSize > rb.maxPacketSize {
@@ -185,7 +228,7 @@ func (rb *ResponseBuilder) BuildResponse(service *ServiceWithIP, query *message.
 		originalAdditionalCount := len(response.Additionals)
 		response.Additionals = rb.truncateAdditionals(response, estimatedSize)
 		// truncateAdditionals only removes entries, so len(response.Additionals)
-		// stays within the bound already checked above.
+		// stays within the bound already checked in finalizeCounts.
 		response.Header.ARCount = uint16(len(response.Additionals)) //nolint:gosec // G115: bounds checked above, truncation only shrinks the slice
 
 		// RFC 6762 §6.5: Set TC bit when truncated
@@ -194,8 +237,6 @@ func (rb *ResponseBuilder) BuildResponse(service *ServiceWithIP, query *message.
 			response.Header.Flags |= 0x0200 // Set TC bit
 		}
 	}
-
-	return response, nil
 }
 
 // EstimatePacketSize estimates the wire format size of a DNS message.
