@@ -300,7 +300,7 @@ func (q *Querier) DiscoverServices(ctx context.Context, serviceType string) ([]S
 	}
 
 	// Phase 2: Resolve each discovered instance.
-	var services []ServiceInstance
+	services := make([]ServiceInstance, 0, len(ptrResp.Records))
 	resolveTimeout := 500 * time.Millisecond
 
 	for _, record := range ptrResp.Records {

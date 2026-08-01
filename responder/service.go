@@ -228,7 +228,7 @@ func describeInvalidServiceType(serviceType string) error {
 	}
 	for i := 1; i < len(name); i++ {
 		c := name[i]
-		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
 			return fmt.Errorf("invalid service type %q: character %q at position %d is not allowed; RFC 6763 §7 permits only lowercase letters, digits, and hyphens in service names (use \"-\" instead of \"_\")", serviceType, string(c), i)
 		}
 	}

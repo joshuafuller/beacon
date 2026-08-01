@@ -13,7 +13,10 @@ import (
 	"github.com/joshuafuller/beacon/internal/transport"
 )
 
-const testServiceName = "My Printer._http._tcp.local"
+const (
+	testServiceName = "My Printer._http._tcp.local"
+	testIPv4Target  = protocol.MulticastAddrIPv4 + ":5353"
+)
 
 // mockConflictDetector is a mock implementation of ConflictDetectorInterface for testing.
 //
@@ -403,12 +406,12 @@ func TestProber_TransportSend(t *testing.T) {
 	// Verify destination is mDNS multicast address
 	for i, call := range calls {
 		if call.Dest == nil {
-			t.Errorf("Send() call %d: dest = nil, want 224.0.0.251:5353", i)
+			t.Errorf("Send() call %d: dest = nil, want %s", i, testIPv4Target)
 			continue
 		}
 		destStr := call.Dest.String()
-		if destStr != "224.0.0.251:5353" {
-			t.Errorf("Send() call %d: dest = %q, want %q", i, destStr, "224.0.0.251:5353")
+		if destStr != testIPv4Target {
+			t.Errorf("Send() call %d: dest = %q, want %q", i, destStr, testIPv4Target)
 		}
 	}
 

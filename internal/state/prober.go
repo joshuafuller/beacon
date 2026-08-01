@@ -171,7 +171,7 @@ func (p *Prober) Probe(ctx context.Context, serviceName string) ProbeResult {
 				packet, _, _, recvErr := p.transport.Receive(receiveCtx)
 				cancelReceive()
 				if recvErr != nil {
-					// Timeout or context cancelled - check if parent ctx is done
+					// Timeout or context canceled - check if parent ctx is done
 					select {
 					case <-ctx.Done():
 						return ProbeResult{Error: ctx.Err()}

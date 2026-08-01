@@ -199,7 +199,7 @@ func TestValidateName_RFC1035_MaxNameLength(t *testing.T) {
 // (gremlins) showed that without it, CONDITIONALS_BOUNDARY and
 // CONDITIONALS_NEGATION mutants on the 'a'/'z', 'A'/'Z', '0'/'9' comparisons
 // survive — i.e. the suite could not tell `>=` from `>`. Each "just outside"
-// case below is the neighbour byte immediately adjacent to a range edge, so it
+// case below is the neighbor byte immediately adjacent to a range edge, so it
 // fails the moment any boundary or negation is perturbed.
 func TestIsValidDNSChar_Boundaries(t *testing.T) {
 	valid := []rune{

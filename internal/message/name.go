@@ -154,7 +154,7 @@ func ParseName(msg []byte, offset int) (name string, newOffset int, err error) {
 	return name, newOffset, nil
 }
 
-// EncodeName encodes a DNS name into wire format per RFC 1035 §3.1.
+// EncodeServiceInstanceName encodes a DNS name into wire format per RFC 1035 §3.1.
 //
 // The name is split into labels (separated by dots), and each label is prefixed
 // by its length byte. A zero-length label (0x00) terminates the name.

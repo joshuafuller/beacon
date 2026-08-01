@@ -229,7 +229,7 @@ func buildResponseHeader(answerCount int) []byte {
 	return header
 }
 
-// serializeResourceRecord serializes a resource record to wire format.
+// SerializeResourceRecord serializes a resource record to wire format.
 //
 // Resource record format per RFC 1035 §3.2.1:
 //   - NAME (variable): Domain name
