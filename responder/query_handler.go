@@ -6,6 +6,7 @@ import (
 	"github.com/joshuafuller/beacon/internal/message"
 	"github.com/joshuafuller/beacon/internal/protocol"
 	"github.com/joshuafuller/beacon/internal/responder"
+	"github.com/joshuafuller/beacon/internal/transport"
 )
 
 // runQueryHandler continuously receives and processes mDNS queries.
@@ -20,8 +21,13 @@ import (
 //  5. Apply rate limiting per RFC 6762 §6.2
 //  6. Send response (unicast or multicast based on QU bit)
 //
+// runQueryHandler continuously receives and processes mDNS queries on the given transport.
+//
+// IPv6 mode is detected by type-asserting tr to *transport.UDPv6Transport, following
+// the same pattern as querier.runReceiveLoop.
+//
 // T080: Query handler goroutine
-func (r *Responder) runQueryHandler() {
+func (r *Responder) runQueryHandler(tr transport.Transport) {
 	defer r.queryHandlerWg.Done()
 	for {
 		select {
@@ -30,87 +36,63 @@ func (r *Responder) runQueryHandler() {
 		case <-r.queryHandlerDone:
 			return
 		default:
-			// Receive query with timeout
 			// 007-interface-specific-addressing T027: Extract interfaceIndex for RFC 6762 §15 compliance
-			// Task 2: Capture source address for subnet validation (RFC 6762 §6.4)
-			packet, srcAddr, interfaceIndex, err := r.transport.Receive(r.ctx)
+			packet, srcAddr, interfaceIndex, err := tr.Receive(r.ctx)
 			if err != nil {
-				// Context cancelled or transport closed
 				select {
 				case <-r.ctx.Done():
 					return
 				case <-r.queryHandlerDone:
 					return
 				default:
-					// Other error - continue receiving
 					continue
 				}
 			}
 
-			// Handle query (T079)
-			// T028: Pass interfaceIndex to enable interface-specific addressing
-			// Task 2: Pass source address for subnet validation
-			_ = r.handleQuery(packet, srcAddr, interfaceIndex)
+			// T028: Pass interfaceIndex and transport for interface-specific addressing
+			_ = r.handleQuery(tr, packet, srcAddr, interfaceIndex)
 		}
 	}
 }
 
 // validateSourceAddress validates that the query source is on the same subnet as the interface.
 //
-// RFC 6762 §6.4: "When a Multicast DNS responder receives a query, it MUST only respond
-// if the source address of the query is on the same subnet as the interface on which
-// the query was received."
-//
-// Parameters:
-//   - srcAddr: Source address of the query
-//   - interfaceIndex: OS interface index that received the query
-//
-// Returns:
-//   - bool: true if source is on same subnet, false otherwise
-//
-// Task 2: Source address validation
-func validateSourceAddress(srcAddr net.Addr, interfaceIndex int) bool {
-	// If interface index is unknown (0), skip validation (graceful degradation)
+// RFC 6762 §6.4: Responders MUST only reply to queries from the same subnet.
+// For IPv6, link-local addresses (fe80::/10) are always accepted per RFC 4291 §2.5.6.
+func validateSourceAddress(srcAddr net.Addr, interfaceIndex int, isIPv6 bool) bool {
 	if interfaceIndex == 0 {
 		return true
 	}
 
-	// Extract IP from source address
 	udpAddr, ok := srcAddr.(*net.UDPAddr)
 	if !ok {
 		return false
 	}
-	srcIP := udpAddr.IP.To4()
-	if srcIP == nil {
-		return false // Not IPv4
+
+	if isIPv6 {
+		ip := udpAddr.IP
+		// Accept link-local IPv6 (fe80::/10) per RFC 4291 §2.5.6
+		return len(ip) == 16 && ip[0] == 0xfe && ip[1]&0xc0 == 0x80
 	}
 
-	// Get interface by index
+	srcIP := udpAddr.IP.To4()
+	if srcIP == nil {
+		return false
+	}
+
 	iface, err := net.InterfaceByIndex(interfaceIndex)
 	if err != nil {
 		return false
 	}
-
-	// Get interface addresses
 	addrs, err := iface.Addrs()
 	if err != nil {
 		return false
 	}
-
-	// Check if source IP is on same subnet as any interface address
 	for _, addr := range addrs {
-		ipnet, ok := addr.(*net.IPNet)
-		if !ok {
-			continue
-		}
-
-		// Check if source IP is in this subnet
-		if ipnet.Contains(srcIP) {
+		if ipnet, ok := addr.(*net.IPNet); ok && ipnet.Contains(srcIP) {
 			return true
 		}
 	}
-
-	// Source IP not on same subnet
 	return false
 }
 
@@ -147,9 +129,12 @@ func validateSourceAddress(srcAddr net.Addr, interfaceIndex int) bool {
 // T079: Implement handleQuery()
 // T029: Added interfaceIndex parameter for interface-specific addressing
 // Task 2: Added srcAddr parameter for source address validation
-func (r *Responder) handleQuery(packet []byte, srcAddr net.Addr, interfaceIndex int) error {
+// RFC 6762 §11: isIPv6 selects FF02::FB multicast destination and AAAA address resolution.
+func (r *Responder) handleQuery(tr transport.Transport, packet []byte, srcAddr net.Addr, interfaceIndex int) error {
+	_, isIPv6 := tr.(*transport.UDPv6Transport)
+
 	// Task 2: RFC 6762 §6.4 - Validate source address is on same subnet
-	if !validateSourceAddress(srcAddr, interfaceIndex) {
+	if !validateSourceAddress(srcAddr, interfaceIndex, isIPv6) {
 		// Source not on same subnet - ignore query per RFC 6762 §6.4
 		return nil
 	}
@@ -207,15 +192,16 @@ func (r *Responder) handleQuery(packet []byte, srcAddr net.Addr, interfaceIndex 
 				continue
 			}
 
-			// Determine destination (unicast vs multicast based on QU bit)
 			quBit := (question.QCLASS & 0x8000) != 0
 			var dest net.Addr
 			if quBit {
 				dest = srcAddr
+			} else if isIPv6 {
+				dest = protocol.MulticastGroupIPv6()
 			}
-			// nil dest = multicast to 224.0.0.251:5353
+			// else nil = multicast to 224.0.0.251:5353
 
-			_ = r.transport.Send(r.ctx, responseMsg, dest)
+			_ = tr.Send(r.ctx, responseMsg, dest)
 			continue
 		}
 
@@ -246,6 +232,11 @@ func (r *Responder) handleQuery(packet []byte, srcAddr net.Addr, interfaceIndex 
 				if r.hostname == question.QNAME {
 					matchedService = service
 				}
+			case uint16(protocol.RecordTypeAAAA):
+				// AAAA: match by hostname per RFC 3596
+				if r.hostname == question.QNAME {
+					matchedService = service
+				}
 			}
 
 			if matchedService != nil {
@@ -254,6 +245,49 @@ func (r *Responder) handleQuery(packet []byte, srcAddr net.Addr, interfaceIndex 
 		}
 
 		if matchedService == nil {
+			continue
+		}
+
+		// AAAA query on IPv6 transport: build AAAA record directly (RFC 3596, RFC 6762 §11)
+		if isIPv6 && question.QTYPE == uint16(protocol.RecordTypeAAAA) {
+			var ipv6Addr net.IP
+			if interfaceIndex == 0 {
+				ipv6Addr, _ = getLocalIPv6()
+			} else {
+				ipv6Addr, _ = getIPv6ForInterface(interfaceIndex)
+			}
+			if ipv6Addr == nil {
+				continue
+			}
+			aaaaRec := &message.ResourceRecord{
+				Name:       r.hostname,
+				Type:       protocol.RecordTypeAAAA,
+				Class:      protocol.ClassIN,
+				TTL:        protocol.TTLHostname,
+				Data:       []byte(ipv6Addr),
+				CacheFlush: true,
+			}
+			aaaaMsg, buildErr := message.BuildResponse([]*message.ResourceRecord{aaaaRec})
+			if buildErr != nil {
+				continue
+			}
+			if r.rateLimiter != nil && srcAddr != nil {
+				srcIP := srcAddr.String()
+				if udpAddr, ok := srcAddr.(*net.UDPAddr); ok {
+					srcIP = udpAddr.IP.String()
+				}
+				if !r.rateLimiter.Allow(srcIP) {
+					continue
+				}
+			}
+			quBit := (question.QCLASS & 0x8000) != 0
+			var dest net.Addr
+			if quBit {
+				dest = srcAddr
+			} else {
+				dest = protocol.MulticastGroupIPv6()
+			}
+			_ = tr.Send(r.ctx, aaaaMsg, dest)
 			continue
 		}
 
@@ -317,22 +351,19 @@ func (r *Responder) handleQuery(packet []byte, srcAddr net.Addr, interfaceIndex 
 			}
 		}
 
-		// RFC 6762 §5.4: Check QU bit (bit 15 of QCLASS) to determine unicast vs multicast
-		// Task 4: QU bit handling
+		// RFC 6762 §5.4: QU bit (bit 15 of QCLASS) selects unicast vs multicast destination
 		quBit := (question.QCLASS & 0x8000) != 0
 
 		var dest net.Addr
 		if quBit {
-			// RFC 6762 §5.4: QU bit set → send unicast response to querier
 			dest = srcAddr
-		} else {
-			// RFC 6762 §5.4: QU bit clear → send multicast response
-			dest = nil // nil = multicast to 224.0.0.251:5353
+		} else if isIPv6 {
+			dest = protocol.MulticastGroupIPv6()
 		}
+		// else nil = multicast to 224.0.0.251:5353
 
-		// Send response
 		responsePacket := buildResponsePacket(response)
-		_ = r.transport.Send(r.ctx, responsePacket, dest)
+		_ = tr.Send(r.ctx, responsePacket, dest)
 	}
 
 	return nil
