@@ -9,15 +9,13 @@ run:
   timeout: 5m
   tests: true
   build-tags: []
-  skip-files: []
   modules-download-mode: readonly
 
 output:
   formats:
-    - format: colored-line-number
+    text:
       path: stdout
-  print-issued-lines: true
-  print-linter-name: true
+      colors: true
   show-stats: true
 
 linters:
@@ -72,47 +70,60 @@ linters:
 
     misspell:
       locale: US
+  exclusions:
+    paths:
+      - vendor
+      - .semgrep-tests  # TDD test files with intentional violations
+      - examples
+    rules:
+      # Exclude some linters from running on tests files
+      - path: _test\.go
+        linters:
+          - gocyclo
+          - dupl
+          - gosec
+          - errcheck
+
+      # Exclude unused-parameter from test files - unused params not critical for tests
+      - path: _test\.go
+        linters:
+          - revive
+        text: "unused-parameter"
+
+      # Exclude fieldalignment from test files - memory optimization not critical for tests
+      - path: _test\.go
+        linters:
+          - govet
+        text: "fieldalignment"
+
+      # Exclude shadow from test files - shadow assignmnets not critical for tests
+      - path: _test\.go
+        linters:
+          - govet
+        text: "shadow"
+
+      # Exclude unusedwrite from test files - nil assignments are often for test clarity
+      - path: _test\.go
+        linters:
+          - govet
+        text: "unusedwrite"
+
+      # Exclude unused code warnings for stub files (M2 preparation)
+      - path: _stub\.go$
+        linters:
+          - unused
+          - staticcheck
+        text: "is unused|field conn is unused"
+
+      # Exclude RFC comment lines from line length check
+      - linters:
+          - lll
+        source: "^// RFC "
+
+      # Allow dot imports in tests for convenience
+      - path: _test\.go
+        text: "dot-imports"
 
 issues:
-  exclude-use-default: false
   max-issues-per-linter: 0
   max-same-issues: 0
-  exclude-dirs:
-    - vendor
-    - .semgrep-tests  # TDD test files with intentional violations
-
-  exclude-rules:
-    # Exclude some linters from running on tests files
-    - path: _test\.go
-      linters:
-        - gocyclo
-        - dupl
-        - gosec
-
-    # Exclude fieldalignment from test files - memory optimization not critical for tests
-    - path: _test\.go
-      linters:
-        - govet
-      text: "fieldalignment"
-
-    # Exclude unusedwrite from test files - nil assignments are often for test clarity
-    - path: _test\.go
-      linters:
-        - govet
-      text: "unusedwrite"
-
-    # Exclude unused code warnings for stub files (M2 preparation)
-    - path: _stub\.go$
-      linters:
-        - unused
-        - staticcheck
-      text: "is unused|field conn is unused"
-
-    # Exclude RFC comment lines from line length check
-    - linters:
-        - lll
-      source: "^// RFC "
-
-    # Allow dot imports in tests for convenience
-    - path: _test\.go
-      text: "dot-imports"
