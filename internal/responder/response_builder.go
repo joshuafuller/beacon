@@ -3,6 +3,7 @@ package responder
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/joshuafuller/beacon/internal/message"
@@ -109,6 +110,15 @@ func (rb *ResponseBuilder) BuildResponse(service *ServiceWithIP, query *message.
 	// Build all records for this service
 	allRecords := records.BuildRecordSet(serviceInfo)
 
+	// RFC 1035 §3.2.1: RDLENGTH is a wire-format uint16. Validate here, before any
+	// record reaches recordToAnswer's int -> uint16 conversion, so a single guard
+	// covers every conversion site instead of threading error returns through
+	// recordToAnswer for a case that RFC 6762 §17's 9000-byte packet limit already
+	// makes unreachable in practice.
+	if err := rb.validateRecordLengths(allRecords); err != nil {
+		return nil, err
+	}
+
 	// T095: Convert query known-answers (Answer section) to ResourceRecords for suppression
 	knownAnswers := make([]*message.ResourceRecord, 0, len(query.Answers))
 	for _, answer := range query.Answers {
@@ -155,9 +165,16 @@ func (rb *ResponseBuilder) BuildResponse(service *ServiceWithIP, query *message.
 		}
 	}
 
+	// RFC 6762 §18: ANCOUNT/ARCOUNT are wire-format uint16 fields. Validate before
+	// converting so the invariant is enforced explicitly rather than assumed from
+	// the 9000-byte packet limit alone.
+	if len(response.Answers) > 65535 || len(response.Additionals) > 65535 {
+		return nil, fmt.Errorf("response record count exceeds uint16 max: %d answers, %d additionals", len(response.Answers), len(response.Additionals))
+	}
+
 	// Update counts
-	response.Header.ANCount = uint16(len(response.Answers))
-	response.Header.ARCount = uint16(len(response.Additionals))
+	response.Header.ANCount = uint16(len(response.Answers))     //nolint:gosec // G115: bounds checked above
+	response.Header.ARCount = uint16(len(response.Additionals)) //nolint:gosec // G115: bounds checked above
 
 	// Check packet size limit (RFC 6762 §17: 9000 bytes)
 	estimatedSize := rb.EstimatePacketSize(response)
@@ -165,7 +182,9 @@ func (rb *ResponseBuilder) BuildResponse(service *ServiceWithIP, query *message.
 		// R005: Gracefully truncate additional records
 		originalAdditionalCount := len(response.Additionals)
 		response.Additionals = rb.truncateAdditionals(response, estimatedSize)
-		response.Header.ARCount = uint16(len(response.Additionals))
+		// truncateAdditionals only removes entries, so len(response.Additionals)
+		// stays within the bound already checked above.
+		response.Header.ARCount = uint16(len(response.Additionals)) //nolint:gosec // G115: bounds checked above, truncation only shrinks the slice
 
 		// RFC 6762 §6.5: Set TC bit when truncated
 		// Bit 9 (TC=1): 0x0200
@@ -250,13 +269,30 @@ func (rb *ResponseBuilder) truncateAdditionals(msg *message.DNSMessage, currentS
 // T076: Helper for response building
 func (rb *ResponseBuilder) recordToAnswer(rr *message.ResourceRecord) message.Answer {
 	return message.Answer{
-		NAME:     rr.Name,
-		TYPE:     uint16(rr.Type),
-		CLASS:    uint16(rr.Class),
-		TTL:      rr.TTL,
-		RDLENGTH: uint16(len(rr.Data)),
+		NAME:  rr.Name,
+		TYPE:  uint16(rr.Type),
+		CLASS: uint16(rr.Class),
+		TTL:   rr.TTL,
+		// G115: length validated by validateRecordLengths in BuildResponse before
+		// any record reaches this conversion.
+		RDLENGTH: uint16(len(rr.Data)), //nolint:gosec // G115: bounds checked in BuildResponse
 		RDATA:    rr.Data,
 	}
+}
+
+// validateRecordLengths ensures every record's RDATA fits in the wire-format
+// RDLENGTH field before recordToAnswer converts len(rr.Data) to uint16.
+//
+// RFC 1035 §3.2.1: RDLENGTH is a 16-bit field. RFC 6762 §17's 9000-byte packet
+// limit makes this unreachable in practice, but we fail fast explicitly rather
+// than relying on that limit implicitly.
+func (rb *ResponseBuilder) validateRecordLengths(recs []*message.ResourceRecord) error {
+	for _, rr := range recs {
+		if len(rr.Data) > math.MaxUint16 {
+			return fmt.Errorf("record %s: RDATA length %d exceeds uint16 max (RFC 1035 §3.2.1)", rr.Name, len(rr.Data))
+		}
+	}
+	return nil
 }
 
 // getHostname returns the hostname for the service.

@@ -79,13 +79,24 @@ func SerializeMessage(msg *DNSMessage) ([]byte, error) {
 		buf = append(buf, rrBytes...)
 	}
 
+	// RFC 1035 §4.1.1: QDCOUNT/ANCOUNT/NSCOUNT/ARCOUNT are wire-format uint16
+	// fields. Validate before converting rather than truncating silently.
+	if len(msg.Questions) > 65535 || len(msg.Answers) > 65535 ||
+		len(msg.Authorities) > 65535 || len(msg.Additionals) > 65535 {
+		return nil, &errors.ValidationError{
+			Field:   "DNSMessage",
+			Value:   nil,
+			Message: "section count exceeds uint16 max (RFC 1035 §4.1.1)",
+		}
+	}
+
 	// Fill in header with actual counts
 	binary.BigEndian.PutUint16(buf[0:2], msg.Header.ID)
 	binary.BigEndian.PutUint16(buf[2:4], msg.Header.Flags)
-	binary.BigEndian.PutUint16(buf[4:6], uint16(len(msg.Questions)))
-	binary.BigEndian.PutUint16(buf[6:8], uint16(len(msg.Answers)))
-	binary.BigEndian.PutUint16(buf[8:10], uint16(len(msg.Authorities)))
-	binary.BigEndian.PutUint16(buf[10:12], uint16(len(msg.Additionals)))
+	binary.BigEndian.PutUint16(buf[4:6], uint16(len(msg.Questions)))     //nolint:gosec // G115: bounds checked above
+	binary.BigEndian.PutUint16(buf[6:8], uint16(len(msg.Answers)))       //nolint:gosec // G115: bounds checked above
+	binary.BigEndian.PutUint16(buf[8:10], uint16(len(msg.Authorities)))  //nolint:gosec // G115: bounds checked above
+	binary.BigEndian.PutUint16(buf[10:12], uint16(len(msg.Additionals))) //nolint:gosec // G115: bounds checked above
 
 	return buf, nil
 }
