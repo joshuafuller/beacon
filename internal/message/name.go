@@ -174,7 +174,7 @@ func ParseName(msg []byte, offset int) (name string, newOffset int, err error) {
 //   - encoded: The wire format representation
 //   - error: ValidationError if the name is invalid
 //
-// nolint:gocyclo // Complexity 21 due to RFC 1035 §3.1 DNS name encoding requirements (label parsing, character validation, compression handling, length constraints)
+// Complexity 21 due to RFC 1035 §3.1 DNS name encoding requirements (label parsing, character validation, compression handling, length constraints)
 // EncodeServiceInstanceName encodes a service instance name per RFC 6763 §4.3.
 //
 // RFC 6763 §4.3: Service instance names use length-prefixed labels where the instance
@@ -229,8 +229,6 @@ func EncodeServiceInstanceName(instanceName, serviceType string) ([]byte, error)
 	return encoded, nil
 }
 
-// EncodeName encodes a DNS name into wire format per RFC 1035 §3.1 with length-prefixed labels and a terminating byte.
-// It validates the name and its labels to ensure they conform to DNS naming rules, returning errors on invalid input.
 func EncodeName(name string) ([]byte, error) {
 	// Handle empty name (root ".")
 	if name == "" || name == "." {
@@ -265,8 +263,31 @@ func EncodeName(name string) ([]byte, error) {
 			}
 		}
 
-		if err := validateLabelChars(name, label); err != nil {
-			return nil, err
+		// Validate characters (ASCII letters, digits, hyphen per RFC 1035)
+		// Note: This is a basic validation. RFC 1123 relaxes some rules.
+		for i, ch := range label {
+			valid := (ch >= 'a' && ch <= 'z') ||
+				(ch >= 'A' && ch <= 'Z') ||
+				(ch >= '0' && ch <= '9') ||
+				ch == '-' ||
+				ch == '_' // Allow underscore for service names (e.g., "_http._tcp.local")
+
+			if !valid {
+				return nil, &errors.ValidationError{
+					Field:   "name",
+					Value:   name,
+					Message: fmt.Sprintf("invalid character %q in label %q (position %d)", ch, label, i),
+				}
+			}
+
+			// Hyphen cannot be first or last character (RFC 1035)
+			if ch == '-' && (i == 0 || i == len(label)-1) {
+				return nil, &errors.ValidationError{
+					Field:   "name",
+					Value:   name,
+					Message: fmt.Sprintf("hyphen cannot be first or last character in label %q", label),
+				}
+			}
 		}
 
 		// Encode: length byte + label bytes
@@ -288,35 +309,4 @@ func EncodeName(name string) ([]byte, error) {
 	}
 
 	return encoded, nil
-}
-
-// validateLabelChars validates a single label's characters per RFC 1035 §3.1
-// (ASCII letters, digits, hyphen; underscore permitted for service names like
-// "_http._tcp.local"). name is the full original name, used only for error context.
-func validateLabelChars(name, label string) error {
-	for i, ch := range label {
-		valid := (ch >= 'a' && ch <= 'z') ||
-			(ch >= 'A' && ch <= 'Z') ||
-			(ch >= '0' && ch <= '9') ||
-			ch == '-' ||
-			ch == '_' // Allow underscore for service names (e.g., "_http._tcp.local")
-
-		if !valid {
-			return &errors.ValidationError{
-				Field:   "name",
-				Value:   name,
-				Message: fmt.Sprintf("invalid character %q in label %q (position %d)", ch, label, i),
-			}
-		}
-
-		// Hyphen cannot be first or last character (RFC 1035)
-		if ch == '-' && (i == 0 || i == len(label)-1) {
-			return &errors.ValidationError{
-				Field:   "name",
-				Value:   name,
-				Message: fmt.Sprintf("hyphen cannot be first or last character in label %q", label),
-			}
-		}
-	}
-	return nil
 }

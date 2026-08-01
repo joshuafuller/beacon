@@ -83,7 +83,7 @@ func NewProber() *Prober {
 //
 // T039: Implement probing with 3 queries × 250ms intervals
 //
-//nolint:gocyclo // Interleaves probe transmission, the §8.1 250ms listen-for-response window, and tie-break detection; active-work state-machine code (see CLAUDE.md probing/announcing polish notes) that deserves its own dedicated decomposition pass with test coverage, not a drive-by split.
+// Interleaves probe transmission, the §8.1 250ms listen-for-response window, and tie-break detection; active-work state-machine code (see CLAUDE.md probing/announcing polish notes) that deserves its own dedicated decomposition pass with test coverage, not a drive-by split.
 func (p *Prober) Probe(ctx context.Context, serviceName string) ProbeResult {
 	const probeCount = 3
 

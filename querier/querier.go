@@ -281,7 +281,7 @@ func (q *Querier) Query(ctx context.Context, name string, recordType RecordType)
 //	        svc.InstanceName, svc.AddrIPv4, svc.Port, svc.TXT["path"])
 //	}
 //
-//nolint:gocyclo // Public-API discovery pipeline with several independent per-instance fallback branches (bundled additionals vs. explicit SRV/TXT/A queries); a resolveInstance() extraction would help but touches public behavior, so it deserves its own change with before/after test coverage, not a drive-by split.
+// Public-API discovery pipeline with several independent per-instance fallback branches (bundled additionals vs. explicit SRV/TXT/A queries); a resolveInstance() extraction would help but touches public behavior, so it deserves its own change with before/after test coverage, not a drive-by split.
 func (q *Querier) DiscoverServices(ctx context.Context, serviceType string) ([]ServiceInstance, error) {
 	// Phase 1: Browse for instances via PTR query.
 	// Allocate ~40% of the remaining time for browsing, rest for resolving details.
@@ -532,7 +532,7 @@ func (q *Querier) collectResponses(ctx context.Context, _ string, queryType Reco
 // FR-006: System MUST receive responses with configurable timeout
 // FR-017: System MUST close socket after query completion
 //
-// nolint:gocyclo // Complexity 22 due to network packet handling with rate limiting, context management, source IP validation, and error recovery
+// Complexity 22 due to network packet handling with rate limiting, context management, source IP validation, and error recovery
 func (q *Querier) receiveLoop() {
 	defer q.wg.Done()
 
