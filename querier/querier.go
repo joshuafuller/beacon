@@ -2,14 +2,12 @@ package querier
 
 import (
 	"context"
-	goerrors "errors"
 	"fmt"
 	"net"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/joshuafuller/beacon/internal/errors"
 	"github.com/joshuafuller/beacon/internal/message"
 	"github.com/joshuafuller/beacon/internal/protocol"
 	"github.com/joshuafuller/beacon/internal/security"
@@ -531,8 +529,6 @@ func (q *Querier) collectResponses(ctx context.Context, _ string, queryType Reco
 //
 // FR-006: System MUST receive responses with configurable timeout
 // FR-017: System MUST close socket after query completion
-//
-// Complexity 22 due to network packet handling with rate limiting, context management, source IP validation, and error recovery
 func (q *Querier) receiveLoop() {
 	defer q.wg.Done()
 
@@ -550,64 +546,15 @@ func (q *Querier) receiveLoop() {
 			cancel()
 
 			if err != nil {
-				// Timeout or network error - continue listening
-				// Check if it's a timeout (expected) or real error
-				var netErr *errors.NetworkError
-				if goerrors.As(err, &netErr) {
-					// Network timeout is expected - continue
-					continue
-				}
-				// Real network error - might want to log in production
+				// Timeout or network error - continue listening.
+				// TODO T063: Distinguish/log real network errors in production
 				continue
 			}
 
-			// T077: Packet size validation per RFC 6762 §17 (FR-034)
-			// Fail fast - reject oversized packets before parsing
-			const maxMDNSPacketSize = 9000 // RFC 6762 §17
-			if len(responseMsg) > maxMDNSPacketSize {
-				// Packet exceeds RFC limit - drop it
-				// TODO T076: Add debug logging (source IP + size)
+			// T077/T075/FR-029: Packet size (RFC 6762 §17), source-IP (RFC 6762 §2),
+			// and rate-limit filtering - see shouldDrop for details.
+			if q.shouldDrop(responseMsg, srcAddr) {
 				continue
-			}
-
-			// Extract source IP for validation and rate limiting
-			var srcIP net.IP
-			var srcIPStr string
-			if udpAddr, ok := srcAddr.(*net.UDPAddr); ok {
-				srcIP = udpAddr.IP
-				srcIPStr = udpAddr.IP.String()
-			}
-
-			// T075: Basic source IP validation (link-local check)
-			// RFC 6762 §2: mDNS is link-local scope
-			// NOTE: Full per-interface source filtering deferred to M2 (requires per-interface transports)
-			// For M1.1, we implement conservative link-local validation:
-			// - Accept link-local addresses (169.254.0.0/16) - ALWAYS valid per RFC 3927
-			// - Accept private addresses (10.x, 172.16.x, 192.168.x) - likely same subnet
-			// - Reject public/routed IPs (8.8.8.8, etc.) - definitely not link-local
-			if srcIP != nil {
-				ip4 := srcIP.To4()
-				if ip4 != nil {
-					// Check if it's a public/routed IP (not private, not link-local)
-					isLinkLocal := ip4[0] == 169 && ip4[1] == 254
-
-					// Reject public/routed IPs (definitely not link-local scope)
-					if !isLinkLocal && !security.IsPrivate(srcIP) {
-						// Public IP - drop packet (violates RFC 6762 §2 link-local scope)
-						// TODO T076: Add debug logging (source IP + reason)
-						continue
-					}
-				}
-			}
-
-			// Apply rate limiting if enabled (FR-029: drop packets from flooding sources)
-			if q.rateLimitEnabled && q.rateLimiter != nil && srcIPStr != "" {
-				if !q.rateLimiter.Allow(srcIPStr) {
-					// Rate limited - drop packet silently
-					// FR-030: Logging (first at warn, subsequent at debug) handled by caller
-					// TODO T063: Add logging in production
-					continue
-				}
 			}
 
 			// Send response to channel (non-blocking)
@@ -620,6 +567,37 @@ func (q *Querier) receiveLoop() {
 			}
 		}
 	}
+}
+
+// isValidSourceIP reports whether srcIP is link-local scope per RFC 6762 §2.
+func isValidSourceIP(srcIP net.IP) bool {
+	ip4 := srcIP.To4()
+	if ip4 == nil {
+		return true // non-IPv4 not covered by this check
+	}
+	isLinkLocal := ip4[0] == 169 && ip4[1] == 254
+	return isLinkLocal || security.IsPrivate(srcIP)
+}
+
+// shouldDrop applies size, source-IP, and rate-limit filtering to a received
+// packet. srcIPStr is returned for logging/future use even when accepted.
+func (q *Querier) shouldDrop(responseMsg []byte, srcAddr net.Addr) bool {
+	const maxMDNSPacketSize = 9000 // RFC 6762 §17
+	if len(responseMsg) > maxMDNSPacketSize {
+		return true
+	}
+	udpAddr, ok := srcAddr.(*net.UDPAddr)
+	if !ok {
+		return false
+	}
+	srcIP := udpAddr.IP
+	if srcIP != nil && !isValidSourceIP(srcIP) {
+		return true
+	}
+	if q.rateLimitEnabled && q.rateLimiter != nil && !q.rateLimiter.Allow(srcIP.String()) {
+		return true
+	}
+	return false
 }
 
 // cleanupLoop periodically cleans up stale rate limiter entries.

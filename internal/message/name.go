@@ -229,6 +229,7 @@ func EncodeServiceInstanceName(instanceName, serviceType string) ([]byte, error)
 	return encoded, nil
 }
 
+// EncodeName encodes a DNS name per RFC 1035 §3.1.
 func EncodeName(name string) ([]byte, error) {
 	// Handle empty name (root ".")
 	if name == "" || name == "." {
@@ -246,53 +247,11 @@ func EncodeName(name string) ([]byte, error) {
 	// Validate and encode
 	encoded := make([]byte, 0, 256) // Pre-allocate typical DNS name size (max 255 bytes)
 	for _, label := range labels {
-		// Validate label length per RFC 1035 §3.1
-		if len(label) == 0 {
-			return nil, &errors.ValidationError{
-				Field:   "name",
-				Value:   name,
-				Message: "empty label (consecutive dots)",
-			}
+		if err := validateLabel(label, name); err != nil {
+			return nil, err
 		}
-
-		if len(label) > protocol.MaxLabelLength {
-			return nil, &errors.ValidationError{
-				Field:   "name",
-				Value:   name,
-				Message: fmt.Sprintf("label %q exceeds maximum length %d bytes per RFC 1035 §3.1", label, protocol.MaxLabelLength),
-			}
-		}
-
-		// Validate characters (ASCII letters, digits, hyphen per RFC 1035)
-		// Note: This is a basic validation. RFC 1123 relaxes some rules.
-		for i, ch := range label {
-			valid := (ch >= 'a' && ch <= 'z') ||
-				(ch >= 'A' && ch <= 'Z') ||
-				(ch >= '0' && ch <= '9') ||
-				ch == '-' ||
-				ch == '_' // Allow underscore for service names (e.g., "_http._tcp.local")
-
-			if !valid {
-				return nil, &errors.ValidationError{
-					Field:   "name",
-					Value:   name,
-					Message: fmt.Sprintf("invalid character %q in label %q (position %d)", ch, label, i),
-				}
-			}
-
-			// Hyphen cannot be first or last character (RFC 1035)
-			if ch == '-' && (i == 0 || i == len(label)-1) {
-				return nil, &errors.ValidationError{
-					Field:   "name",
-					Value:   name,
-					Message: fmt.Sprintf("hyphen cannot be first or last character in label %q", label),
-				}
-			}
-		}
-
-		// Encode: length byte + label bytes
 		encoded = append(encoded, byte(len(label)))
-		encoded = append(encoded, []byte(label)...)
+		encoded = append(encoded, label...)
 	}
 
 	// Append terminator (zero-length label)
@@ -309,4 +268,25 @@ func EncodeName(name string) ([]byte, error) {
 	}
 
 	return encoded, nil
+}
+
+// validateLabel checks a single DNS label per RFC 1035 §3.1.
+func validateLabel(label, name string) error {
+	if len(label) == 0 {
+		return &errors.ValidationError{Field: "name", Value: name, Message: "empty label (consecutive dots)"}
+	}
+	if len(label) > protocol.MaxLabelLength {
+		return &errors.ValidationError{Field: "name", Value: name, Message: fmt.Sprintf("label %q exceeds maximum length %d bytes per RFC 1035 §3.1", label, protocol.MaxLabelLength)}
+	}
+	for i, ch := range label {
+		valid := (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+			(ch >= '0' && ch <= '9') || ch == '-' || ch == '_'
+		if !valid {
+			return &errors.ValidationError{Field: "name", Value: name, Message: fmt.Sprintf("invalid character %q in label %q (position %d)", ch, label, i)}
+		}
+		if ch == '-' && (i == 0 || i == len(label)-1) {
+			return &errors.ValidationError{Field: "name", Value: name, Message: fmt.Sprintf("hyphen cannot be first or last character in label %q", label)}
+		}
+	}
+	return nil
 }
