@@ -35,7 +35,7 @@ func (r *Responder) runQueryHandler() {
 			// Task 2: Capture source address for subnet validation (RFC 6762 §6.4)
 			packet, srcAddr, interfaceIndex, err := r.transport.Receive(r.ctx)
 			if err != nil {
-				// Context cancelled or transport closed
+				// Context canceled or transport closed
 				select {
 				case <-r.ctx.Done():
 					return

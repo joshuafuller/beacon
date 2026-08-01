@@ -98,11 +98,11 @@ func scenario3_ContextCancellation() {
 	// Cancel immediately
 	cancel()
 
-	// Try to create responder with cancelled context
+	// Try to create responder with canceled context
 	_, err := responder.New(ctx)
 	if err != nil {
 		fmt.Printf("✓ Caught context cancellation: %v\n", err)
-		fmt.Printf("  This is expected when context is cancelled\n\n")
+		fmt.Printf("  This is expected when context is canceled\n\n")
 	} else {
 		fmt.Println("✗ Expected context error but operation succeeded\n")
 	}
