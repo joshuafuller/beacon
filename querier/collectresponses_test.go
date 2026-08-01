@@ -481,3 +481,218 @@ func TestDiscoverServices_UsesAdditionals_SingleRoundTrip(t *testing.T) {
 		t.Errorf("AddrIPv4 = %v, want 192.168.1.5 (from bundled A additional)", s.AddrIPv4)
 	}
 }
+
+// buildPartiallyBundledPTRResponse builds a DNS-SD PTR response like
+// buildBundledPTRResponse, but only bundles the additionals selected by
+// includeSRV/includeTXT/includeA. Used to force DiscoverServices to fall back
+// to an explicit SRV/TXT/A query for whichever record is omitted here.
+func buildPartiallyBundledPTRResponse(serviceType, instance, host string, port uint16, ip [4]byte, txt string, includeSRV, includeTXT, includeA bool) []byte {
+	ptrTarget, _ := message.EncodeName(instance)
+
+	msg := &message.DNSMessage{
+		Header: message.DNSHeader{Flags: 0x8400}, // QR=1, AA=1
+		Answers: []message.Answer{
+			{NAME: serviceType, TYPE: uint16(protocol.RecordTypePTR), CLASS: 1, TTL: 120, RDATA: ptrTarget},
+		},
+	}
+
+	if includeSRV {
+		srv := make([]byte, 6)
+		binary.BigEndian.PutUint16(srv[4:6], port)
+		hostEnc, _ := message.EncodeName(host)
+		srv = append(srv, hostEnc...)
+		msg.Additionals = append(msg.Additionals, message.Answer{
+			NAME: instance, TYPE: uint16(protocol.RecordTypeSRV), CLASS: 1, TTL: 120, RDATA: srv,
+		})
+	}
+	if includeTXT {
+		txtRDATA := append([]byte{byte(len(txt))}, []byte(txt)...)
+		msg.Additionals = append(msg.Additionals, message.Answer{
+			NAME: instance, TYPE: uint16(protocol.RecordTypeTXT), CLASS: 1, TTL: 120, RDATA: txtRDATA,
+		})
+	}
+	if includeA {
+		msg.Additionals = append(msg.Additionals, message.Answer{
+			NAME: host, TYPE: uint16(protocol.RecordTypeA), CLASS: 1, TTL: 120, RDATA: ip[:],
+		})
+	}
+
+	packet, _ := message.SerializeMessage(msg)
+	return packet
+}
+
+// feedResponseUntilStopped repeatedly enqueues packet onto q.responseChan on a
+// short interval until the returned stop function is called.
+//
+// DiscoverServices issues its PTR browse query and any SRV/TXT/A fallback
+// queries as a sequence of independently-timed phases (internal/querier.go),
+// each draining q.responseChan only for its own window. Queuing the fallback
+// packet once, up front, is not reliable: the PTR browse phase drains
+// whatever is sitting in the channel during its own window regardless of
+// type, so a packet meant for a later phase can be consumed (and discarded)
+// before that phase ever starts. Resending on an interval guarantees the
+// packet is available whichever phase is actually listening when it's
+// needed, without the test needing to replicate DiscoverServices' internal
+// timeout math.
+func feedResponseUntilStopped(q *Querier, packet []byte) (stop func()) {
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(50 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				select {
+				case q.responseChan <- packet:
+				default: // channel full - drop, next tick will retry
+				}
+			}
+		}
+	}()
+	return func() { close(done) }
+}
+
+// TestDiscoverServices_FallbackSRV_WhenNotBundled verifies that when the PTR
+// browse response's Additional section omits the SRV record (but bundles
+// TXT/A), DiscoverServices falls back to an explicit SRV query to resolve
+// hostname and port (querier.go's queryFallbackSRV path).
+func TestDiscoverServices_FallbackSRV_WhenNotBundled(t *testing.T) {
+	q, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer q.Close()
+
+	const serviceType = "_beacon-fallback-srv._tcp.local"
+	const instance = "Inst._beacon-fallback-srv._tcp.local"
+	const host = "host.local"
+	const port = uint16(8080)
+	ip := [4]byte{192, 168, 1, 5}
+	const txt = "path=/api"
+
+	ptrPacket := buildPartiallyBundledPTRResponse(serviceType, instance, host, port, ip, txt,
+		false /* includeSRV */, true /* includeTXT */, true /* includeA */)
+	q.responseChan <- ptrPacket
+
+	srv := make([]byte, 6)
+	binary.BigEndian.PutUint16(srv[4:6], port)
+	hostEnc, _ := message.EncodeName(host)
+	srv = append(srv, hostEnc...)
+	srvPacket := buildValidResponsePacket(instance, protocol.RecordTypeSRV, srv)
+	defer feedResponseUntilStopped(q, srvPacket)()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	services, err := q.DiscoverServices(ctx, serviceType)
+	if err != nil {
+		t.Fatalf("DiscoverServices error: %v", err)
+	}
+	// Look up by instance name rather than assuming len(services)==1: a real
+	// mDNS socket on a shared network can pick up unrelated PTR traffic
+	// alongside our injected packets (collectResponses doesn't filter by
+	// queried name), so extra entries aren't a sign of a bug here.
+	s := findServiceByInstance(services, "Inst")
+	if s == nil {
+		t.Fatalf("service %q not found in %+v", "Inst", services)
+	}
+	if s.Hostname != host {
+		t.Errorf("Hostname = %q, want %q (must come from SRV fallback query)", s.Hostname, host)
+	}
+	if s.Port != port {
+		t.Errorf("Port = %d, want %d (from SRV fallback query)", s.Port, port)
+	}
+}
+
+// findServiceByInstance returns a pointer to the ServiceInstance with the
+// given InstanceName, or nil if not present.
+func findServiceByInstance(services []ServiceInstance, instanceName string) *ServiceInstance {
+	for i := range services {
+		if services[i].InstanceName == instanceName {
+			return &services[i]
+		}
+	}
+	return nil
+}
+
+// TestDiscoverServices_FallbackTXT_WhenNotBundled verifies that when the PTR
+// browse response's Additional section omits the TXT record (but bundles
+// SRV/A), DiscoverServices falls back to an explicit TXT query to resolve
+// metadata (querier.go's queryFallbackTXT path).
+func TestDiscoverServices_FallbackTXT_WhenNotBundled(t *testing.T) {
+	q, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer q.Close()
+
+	const serviceType = "_beacon-fallback-txt._tcp.local"
+	const instance = "Inst._beacon-fallback-txt._tcp.local"
+	const host = "host.local"
+	const port = uint16(8080)
+	ip := [4]byte{192, 168, 1, 5}
+	const txt = "path=/api"
+
+	ptrPacket := buildPartiallyBundledPTRResponse(serviceType, instance, host, port, ip, txt,
+		true /* includeSRV */, false /* includeTXT */, true /* includeA */)
+	q.responseChan <- ptrPacket
+
+	txtRDATA := append([]byte{byte(len(txt))}, []byte(txt)...)
+	txtPacket := buildValidResponsePacket(instance, protocol.RecordTypeTXT, txtRDATA)
+	defer feedResponseUntilStopped(q, txtPacket)()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	services, err := q.DiscoverServices(ctx, serviceType)
+	if err != nil {
+		t.Fatalf("DiscoverServices error: %v", err)
+	}
+	s := findServiceByInstance(services, "Inst")
+	if s == nil {
+		t.Fatalf("service %q not found in %+v", "Inst", services)
+	}
+	if s.TXT["path"] != "/api" {
+		t.Errorf("TXT[path] = %q, want %q (must come from TXT fallback query)", s.TXT["path"], "/api")
+	}
+}
+
+// TestDiscoverServices_FallbackA_WhenNotBundled verifies that when the PTR
+// browse response's Additional section omits the A record (but bundles
+// SRV/TXT), DiscoverServices falls back to an explicit A query to resolve
+// the IPv4 address (querier.go's queryFallbackA path).
+func TestDiscoverServices_FallbackA_WhenNotBundled(t *testing.T) {
+	q, err := New()
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer q.Close()
+
+	const serviceType = "_beacon-fallback-a._tcp.local"
+	const instance = "Inst._beacon-fallback-a._tcp.local"
+	const host = "host.local"
+	const port = uint16(8080)
+	ip := [4]byte{192, 168, 1, 5}
+	const txt = "path=/api"
+
+	ptrPacket := buildPartiallyBundledPTRResponse(serviceType, instance, host, port, ip, txt,
+		true /* includeSRV */, true /* includeTXT */, false /* includeA */)
+	q.responseChan <- ptrPacket
+
+	aPacket := buildValidResponsePacket(host, protocol.RecordTypeA, ip[:])
+	defer feedResponseUntilStopped(q, aPacket)()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	services, err := q.DiscoverServices(ctx, serviceType)
+	if err != nil {
+		t.Fatalf("DiscoverServices error: %v", err)
+	}
+	s := findServiceByInstance(services, "Inst")
+	if s == nil {
+		t.Fatalf("service %q not found in %+v", "Inst", services)
+	}
+	if s.AddrIPv4 == nil || s.AddrIPv4.String() != "192.168.1.5" {
+		t.Errorf("AddrIPv4 = %v, want 192.168.1.5 (must come from A fallback query)", s.AddrIPv4)
+	}
+}
