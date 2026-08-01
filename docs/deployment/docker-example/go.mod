@@ -1,6 +1,6 @@
 module github.com/joshuafuller/beacon/examples/docker-deployment
 
-go 1.21
+go 1.24.0
 
 require github.com/joshuafuller/beacon v0.0.0
 

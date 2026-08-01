@@ -25,6 +25,11 @@ const (
 	//
 	// FR-004: System MUST use mDNS port 5353 and multicast address 224.0.0.251 for IPv4 queries
 	MulticastAddrIPv4 = "224.0.0.251"
+
+	// MulticastAddrIPv6 is the mDNS IPv6 multicast address (FF02::FB) per RFC 6762 §11.
+	//
+	// RFC 6762 §11: IPv6 mDNS uses the link-local multicast address FF02::FB on port 5353.
+	MulticastAddrIPv6 = "FF02::FB"
 )
 
 // MulticastGroupIPv4 returns the mDNS IPv4 multicast group address.
@@ -36,6 +41,16 @@ func MulticastGroupIPv4() *net.UDPAddr {
 	return &net.UDPAddr{
 		// This IS the protocol package that defines MulticastAddrIPv4 constant
 		IP:   net.ParseIP(MulticastAddrIPv4), // nosemgrep: beacon-hardcoded-multicast-address
+		Port: Port,
+	}
+}
+
+// MulticastGroupIPv6 returns the mDNS IPv6 multicast group address.
+//
+// RFC 6762 §11: IPv6 mDNS uses FF02::FB:5353 (link-local scope).
+func MulticastGroupIPv6() *net.UDPAddr {
+	return &net.UDPAddr{
+		IP:   net.ParseIP(MulticastAddrIPv6), // nosemgrep: beacon-hardcoded-multicast-address
 		Port: Port,
 	}
 }
@@ -74,6 +89,11 @@ const (
 	// Type value: 33
 	RecordTypeSRV RecordType = 33
 
+	// RecordTypeAAAA represents an AAAA (IPv6 address) record per RFC 3596.
+	//
+	// Type value: 28
+	RecordTypeAAAA RecordType = 28
+
 	// RecordTypeANY represents a query for all record types per RFC 1035 §3.2.3.
 	//
 	// RFC 6762 §8.1: "All probe queries SHOULD be done using... query type 'ANY' (255)"
@@ -93,6 +113,8 @@ func (rt RecordType) String() string {
 		return "TXT"
 	case RecordTypeSRV:
 		return "SRV"
+	case RecordTypeAAAA:
+		return "AAAA"
 	case RecordTypeANY:
 		return "ANY"
 	default:
@@ -102,12 +124,12 @@ func (rt RecordType) String() string {
 
 // IsSupported returns true if the RecordType is supported.
 //
-// FR-002: System MUST support querying for A, PTR, SRV, and TXT record types
+// FR-002: System MUST support querying for A, AAAA, PTR, SRV, and TXT record types
 // FR-014: System MUST return ValidationError for invalid query names or unsupported record types
 // RFC 6762 §8.1: ANY type (255) is required for probing
 func (rt RecordType) IsSupported() bool {
 	switch rt {
-	case RecordTypeA, RecordTypePTR, RecordTypeTXT, RecordTypeSRV, RecordTypeANY:
+	case RecordTypeA, RecordTypeAAAA, RecordTypePTR, RecordTypeTXT, RecordTypeSRV, RecordTypeANY:
 		return true
 	default:
 		return false

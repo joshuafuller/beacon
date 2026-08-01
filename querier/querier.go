@@ -48,9 +48,13 @@ import (
 // This reduces struct size from 144 → 120 bytes (16.7% memory savings).
 // Related fields are still documented together via comments.
 type Querier struct {
-	// transport is the network transport abstraction (UDP multicast for mDNS)
+	// transport is the IPv4 network transport (always present)
 	// T031: Migrated from socket net.PacketConn to transport.Transport interface
 	transport transport.Transport
+
+	// transport6 is the IPv6 network transport (nil unless WithIPv6() is used)
+	// RFC 6762 §11: IPv6 mDNS uses FF02::FB:5353
+	transport6 transport.Transport
 
 	// ctx is the lifecycle context for the Querier
 	ctx context.Context
@@ -73,7 +77,7 @@ type Querier struct {
 	// cancel cancels the lifecycle context
 	cancel context.CancelFunc
 
-	// responseChan receives incoming mDNS responses from the receiver goroutine
+	// responseChan receives incoming mDNS responses from both IPv4 and IPv6 receiver goroutines
 	responseChan chan []byte
 
 	// interfaceFilter is a custom interface selection function (if set)
@@ -93,6 +97,10 @@ type Querier struct {
 	// rateLimitEnabled indicates whether rate limiting is enabled (default: true)
 	// Per FR-033: Configurable via WithRateLimit()
 	rateLimitEnabled bool
+
+	// ipv6Enabled indicates whether dual-stack IPv6 operation is requested
+	// Set by WithIPv6(); actual IPv6 availability depends on transport6 != nil
+	ipv6Enabled bool
 }
 
 // New creates a new Querier with optional configuration.
@@ -158,9 +166,21 @@ func New(opts ...Option) (*Querier, error) {
 		go q.cleanupLoop()
 	}
 
-	// Start background receiver goroutine per FR-006
+	// Start background IPv4 receiver goroutine per FR-006
 	q.wg.Add(1)
-	go q.receiveLoop()
+	go q.runReceiveLoop(q.transport)
+
+	// If IPv6 was requested, attempt to create the IPv6 transport.
+	// Failure is non-fatal: the querier continues in IPv4-only mode.
+	if q.ipv6Enabled {
+		tr6, err6 := transport.NewUDPv6Transport()
+		if err6 == nil {
+			q.transport6 = tr6
+			q.wg.Add(1)
+			go q.runReceiveLoop(q.transport6)
+		}
+		// If err6 != nil, IPv6 is silently unavailable (no IPv6 interface).
+	}
 
 	return q, nil
 }
@@ -242,10 +262,16 @@ func (q *Querier) Query(ctx context.Context, name string, recordType RecordType)
 		return nil, err
 	}
 
-	// FR-005: Send query to the mDNS multicast group (224.0.0.251:5353).
+	// FR-005: Send query to the IPv4 mDNS multicast group (224.0.0.251:5353).
 	err = q.transport.Send(ctx, queryMsg, protocol.MulticastGroupIPv4())
 	if err != nil {
 		return nil, err // Already wrapped as NetworkError
+	}
+
+	// RFC 6762 §11: Also send on IPv6 (FF02::FB:5353) when dual-stack is active.
+	// Non-fatal: IPv4 query already sent; IPv6 is best-effort.
+	if q.transport6 != nil {
+		_ = q.transport6.Send(ctx, queryMsg, protocol.MulticastGroupIPv6())
 	}
 
 	// FR-008: Aggregate responses received within timeout window
@@ -380,6 +406,21 @@ func (q *Querier) DiscoverServices(ctx context.Context, serviceType string) ([]S
 				for _, r := range aResp.Records {
 					if ip := r.AsA(); ip != nil {
 						svc.AddrIPv4 = ip
+						break
+					}
+				}
+			}
+		}
+
+		// AAAA query for IPv6 address when dual-stack is active.
+		if q.transport6 != nil && svc.Hostname != "" && svc.AddrIPv6 == nil {
+			aaaaCtx, aaaaCancel := context.WithTimeout(ctx, resolveTimeout)
+			aaaaResp, aaaaErr := q.Query(aaaaCtx, svc.Hostname, RecordTypeAAAA)
+			aaaaCancel()
+			if aaaaErr == nil {
+				for _, r := range aaaaResp.Records {
+					if ip := r.AsAAAA(); ip != nil {
+						svc.AddrIPv6 = ip
 						break
 					}
 				}
@@ -525,46 +566,42 @@ func (q *Querier) collectResponses(ctx context.Context, _ string, queryType Reco
 	}
 }
 
-// receiveLoop runs in a background goroutine to continuously receive mDNS responses.
+// runReceiveLoop is the shared receive goroutine for both IPv4 and IPv6 transports.
+//
+// The transport type itself determines which source-IP validation rules apply:
+//   - *transport.UDPv6Transport → accept fe80::/10 IPv6 link-local addresses
+//   - anything else (IPv4)      → accept 169.254.x.x and RFC-1918 private ranges
 //
 // FR-006: System MUST receive responses with configurable timeout
 // FR-017: System MUST close socket after query completion
 //
-// nolint:gocyclo // Complexity 22 due to network packet handling with rate limiting, context management, source IP validation, and error recovery
-func (q *Querier) receiveLoop() {
+// nolint:gocyclo // Complexity justified: network packet handling with rate limiting, context management, source IP validation, and error recovery
+func (q *Querier) runReceiveLoop(tr transport.Transport) {
 	defer q.wg.Done()
+
+	_, isIPv6Transport := tr.(*transport.UDPv6Transport)
 
 	for {
 		select {
 		case <-q.ctx.Done():
-			// Querier closed - exit loop
 			return
 
 		default:
-			// FR-006: Receive with short timeout to check context periodically
-			// T034: Migrated from network.ReceiveResponse to transport.Receive()
 			ctx, cancel := context.WithTimeout(q.ctx, 100*time.Millisecond)
-			responseMsg, srcAddr, _, err := q.transport.Receive(ctx) // interfaceIndex not used by querier
+			responseMsg, srcAddr, _, err := tr.Receive(ctx)
 			cancel()
 
 			if err != nil {
-				// Timeout or network error - continue listening
-				// Check if it's a timeout (expected) or real error
 				var netErr *errors.NetworkError
 				if goerrors.As(err, &netErr) {
-					// Network timeout is expected - continue
-					continue
+					continue // timeout is expected
 				}
-				// Real network error - might want to log in production
 				continue
 			}
 
 			// T077: Packet size validation per RFC 6762 §17 (FR-034)
-			// Fail fast - reject oversized packets before parsing
-			const maxMDNSPacketSize = 9000 // RFC 6762 §17
+			const maxMDNSPacketSize = 9000
 			if len(responseMsg) > maxMDNSPacketSize {
-				// Packet exceeds RFC limit - drop it
-				// TODO T076: Add debug logging (source IP + size)
 				continue
 			}
 
@@ -576,48 +613,56 @@ func (q *Querier) receiveLoop() {
 				srcIPStr = udpAddr.IP.String()
 			}
 
-			// T075: Basic source IP validation (link-local check)
-			// RFC 6762 §2: mDNS is link-local scope
-			// NOTE: Full per-interface source filtering deferred to M2 (requires per-interface transports)
-			// For M1.1, we implement conservative link-local validation:
-			// - Accept link-local addresses (169.254.0.0/16) - ALWAYS valid per RFC 3927
-			// - Accept private addresses (10.x, 172.16.x, 192.168.x) - likely same subnet
-			// - Reject public/routed IPs (8.8.8.8, etc.) - definitely not link-local
+			// RFC 6762 §2: mDNS is link-local scope — validate source IP accordingly.
 			if srcIP != nil {
-				ip4 := srcIP.To4()
-				if ip4 != nil {
-					// Check if it's a public/routed IP (not private, not link-local)
-					isLinkLocal := ip4[0] == 169 && ip4[1] == 254
-
-					// Reject public/routed IPs (definitely not link-local scope)
-					if !isLinkLocal && !security.IsPrivate(srcIP) {
-						// Public IP - drop packet (violates RFC 6762 §2 link-local scope)
-						// TODO T076: Add debug logging (source IP + reason)
-						continue
-					}
-				}
-			}
-
-			// Apply rate limiting if enabled (FR-029: drop packets from flooding sources)
-			if q.rateLimitEnabled && q.rateLimiter != nil && srcIPStr != "" {
-				if !q.rateLimiter.Allow(srcIPStr) {
-					// Rate limited - drop packet silently
-					// FR-030: Logging (first at warn, subsequent at debug) handled by caller
-					// TODO T063: Add logging in production
+				if !isAcceptableSourceIP(srcIP, isIPv6Transport) {
 					continue
 				}
 			}
 
-			// Send response to channel (non-blocking)
+			// FR-029: Rate limiting — drop packets from flooding sources.
+			if q.rateLimitEnabled && q.rateLimiter != nil && srcIPStr != "" {
+				if !q.rateLimiter.Allow(srcIPStr) {
+					continue
+				}
+			}
+
 			select {
 			case q.responseChan <- responseMsg:
-				// Sent successfully
 			default:
-				// Channel full - drop packet (M1 behavior)
-				// Production might want to expand buffer or log
+				// Channel full — drop packet.
 			}
 		}
 	}
+}
+
+// isAcceptableSourceIP returns true when the source IP is within the link-local
+// scope expected for mDNS traffic per RFC 6762 §2.
+//
+// For IPv4: accept 169.254.0.0/16 (link-local) and RFC-1918 private ranges.
+// For IPv6: accept fe80::/10 (link-local); reject all other addresses.
+func isAcceptableSourceIP(ip net.IP, isIPv6Transport bool) bool {
+	if isIPv6Transport {
+		// fe80::/10 is the only link-local scope for IPv6 per RFC 4291 §2.5.6.
+		if len(ip) == 16 && ip[0] == 0xfe && ip[1]&0xc0 == 0x80 {
+			return true
+		}
+		// IPv4-mapped IPv6 addresses — apply IPv4 rules.
+		if ip4 := ip.To4(); ip4 != nil {
+			return isAcceptableSourceIP(ip4, false)
+		}
+		return false
+	}
+
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return false
+	}
+	// 169.254.0.0/16 — RFC 3927 IPv4 link-local
+	if ip4[0] == 169 && ip4[1] == 254 {
+		return true
+	}
+	return security.IsPrivate(ip)
 }
 
 // cleanupLoop periodically cleans up stale rate limiter entries.
@@ -665,16 +710,25 @@ func (q *Querier) Close() error {
 	// Wait for receiver goroutine to exit
 	q.wg.Wait()
 
-	// Close transport per FR-017
+	// Close IPv4 transport per FR-017
 	// T035: Migrated from network.CloseSocket to transport.Close()
 	// FR-004 FIX: Now properly propagates errors (CloseSocket was swallowing them)
 	err := q.transport.Close()
+
+	// Close IPv6 transport if active; preserve the first error.
+	if q.transport6 != nil {
+		if err6 := q.transport6.Close(); err6 != nil && err == nil {
+			err = err6
+		}
+	}
+
+	// Only close the response channel when all transports closed successfully.
+	// If a transport returned an error the caller may retry Close(); closing
+	// the channel on a partial-failure would panic on the retry.
 	if err != nil {
 		return err
 	}
 
-	// Close response channel
 	close(q.responseChan)
-
 	return nil
 }

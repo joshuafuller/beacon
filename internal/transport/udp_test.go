@@ -364,3 +364,28 @@ func TestUDPv4Transport_ControlMessageUnavailable(t *testing.T) {
 	t.Log("  • udp.go:214: if cm != nil { interfaceIndex = cm.IfIndex }")
 	t.Log("  • responder.go: if interfaceIndex == 0 { fallback to getLocalIPv4() }")
 }
+
+// TestUDPv6Transport_ImplementsTransportInterface verifies the compile-time
+// guarantee that UDPv6Transport satisfies the Transport interface (RFC 6762 §11).
+func TestUDPv6Transport_ImplementsTransportInterface(_ *testing.T) {
+	var _ transport.Transport = (*transport.UDPv6Transport)(nil)
+}
+
+// TestUDPv6Transport_Send_CanceledContext verifies that Send returns an error
+// when the context is already canceled, without touching the network.
+func TestUDPv6Transport_Send_CanceledContext(t *testing.T) {
+	// We cannot create a real UDPv6Transport in all CI environments, so
+	// construct a minimal one to exercise the canceled-context fast path.
+	// The fast path in Send() checks ctx.Done() before WriteTo, so conn=nil
+	// is safe here.
+	tr := &transport.UDPv6Transport{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already canceled
+
+	dest := &net.UDPAddr{IP: net.ParseIP("FF02::FB"), Port: 5353}
+	err := tr.Send(ctx, []byte("test"), dest)
+	if err == nil {
+		t.Fatal("Send with canceled context returned nil error, want NetworkError")
+	}
+}

@@ -319,10 +319,6 @@ func TestBuildQuery_UnsupportedRecordType(t *testing.T) {
 		qtype uint16
 	}{
 		{
-			name:  "AAAA record (IPv6) - not supported in M1",
-			qtype: 28,
-		},
-		{
 			name:  "MX record - not supported in M1",
 			qtype: 15,
 		},
@@ -363,6 +359,10 @@ func TestBuildQuery_SupportedRecordTypes(t *testing.T) {
 		{
 			name:  "TXT record (16)",
 			qtype: 16,
+		},
+		{
+			name:  "AAAA record (28)",
+			qtype: 28,
 		},
 		{
 			name:  "SRV record (33)",

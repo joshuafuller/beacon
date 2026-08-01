@@ -1,0 +1,210 @@
+package transport
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"strconv"
+
+	"golang.org/x/net/ipv6"
+
+	"github.com/joshuafuller/beacon/internal/errors"
+	"github.com/joshuafuller/beacon/internal/protocol"
+)
+
+// UDPv6Transport implements Transport for IPv6 UDP multicast per RFC 6762 §11.
+//
+// It binds to [::]:5353, joins the mDNS IPv6 multicast group FF02::FB on all
+// multicast-capable interfaces, and extracts the receiving interface index from
+// IPv6 control messages for RFC 6762 §15 compliance.
+type UDPv6Transport struct {
+	conn     net.PacketConn
+	ipv6Conn *ipv6.PacketConn
+}
+
+// NewUDPv6Transport creates a UDP IPv6 multicast transport per RFC 6762 §11.
+//
+// It binds to [::]:5353, applies SO_REUSEADDR/SO_REUSEPORT platform options so
+// multiple mDNS daemons can coexist, and joins FF02::FB on every multicast-
+// capable interface that is currently up.
+//
+// Returns NetworkError if no interface can join the multicast group (e.g., the
+// host has no IPv6-capable interfaces).
+func NewUDPv6Transport() (*UDPv6Transport, error) {
+	lc := net.ListenConfig{
+		Control: platformControl,
+	}
+
+	addr := net.JoinHostPort("::", strconv.Itoa(protocol.Port))
+	conn, err := lc.ListenPacket(context.Background(), "udp6", addr)
+	if err != nil {
+		return nil, &errors.NetworkError{
+			Operation: "create IPv6 socket",
+			Err:       err,
+			Details:   fmt.Sprintf("failed to bind udp6 %s", addr),
+		}
+	}
+
+	if udpConn, ok := conn.(*net.UDPConn); ok {
+		if err := udpConn.SetReadBuffer(65536); err != nil {
+			_ = conn.Close()
+			return nil, &errors.NetworkError{
+				Operation: "configure IPv6 socket",
+				Err:       err,
+				Details:   "failed to set read buffer size",
+			}
+		}
+	}
+
+	ipv6Conn := ipv6.NewPacketConn(conn)
+
+	// Enable interface index in incoming control messages (RFC 6762 §15).
+	// Non-fatal on platforms that don't support it; interfaceIndex will be 0.
+	_ = ipv6Conn.SetControlMessage(ipv6.FlagInterface, true)
+
+	// Join FF02::FB on every multicast-capable, up interface.
+	group := &net.UDPAddr{IP: net.ParseIP(protocol.MulticastAddrIPv6)}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		_ = conn.Close()
+		return nil, &errors.NetworkError{
+			Operation: "enumerate interfaces",
+			Err:       err,
+			Details:   "failed to list network interfaces for IPv6 multicast join",
+		}
+	}
+
+	var lastJoinErr error
+	joined := 0
+	for i := range ifaces {
+		iface := &ifaces[i]
+		if iface.Flags&net.FlagMulticast == 0 || iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		if err := ipv6Conn.JoinGroup(iface, group); err != nil {
+			lastJoinErr = err
+			continue
+		}
+		joined++
+	}
+
+	if joined == 0 {
+		_ = conn.Close()
+		err := lastJoinErr
+		if err == nil {
+			err = fmt.Errorf("no multicast-capable interfaces found")
+		}
+		return nil, &errors.NetworkError{
+			Operation: "join IPv6 multicast group",
+			Err:       err,
+			Details:   fmt.Sprintf("failed to join %s on any interface", protocol.MulticastAddrIPv6),
+		}
+	}
+
+	return &UDPv6Transport{conn: conn, ipv6Conn: ipv6Conn}, nil
+}
+
+// Send transmits a packet to dest over IPv6.
+//
+// RFC 6762 §11: Queries are sent to FF02::FB:5353.
+func (t *UDPv6Transport) Send(ctx context.Context, packet []byte, dest net.Addr) error {
+	select {
+	case <-ctx.Done():
+		return &errors.NetworkError{
+			Operation: "send IPv6 query",
+			Err:       ctx.Err(),
+			Details:   "context canceled before send",
+		}
+	default:
+	}
+
+	n, err := t.conn.WriteTo(packet, dest)
+	if err != nil {
+		return &errors.NetworkError{
+			Operation: "send IPv6 query",
+			Err:       err,
+			Details:   fmt.Sprintf("failed to send %d bytes to %s", len(packet), dest),
+		}
+	}
+	if n != len(packet) {
+		return &errors.NetworkError{
+			Operation: "send IPv6 query",
+			Err:       fmt.Errorf("partial write: %d/%d bytes", n, len(packet)),
+			Details:   "incomplete transmission",
+		}
+	}
+	return nil
+}
+
+// Receive waits for an incoming IPv6 packet, respecting context cancellation.
+//
+// Returns the interface index from the IPv6 control message when available
+// (RFC 6762 §15); zero indicates the interface is unknown.
+func (t *UDPv6Transport) Receive(ctx context.Context) ([]byte, net.Addr, int, error) {
+	select {
+	case <-ctx.Done():
+		return nil, nil, 0, &errors.NetworkError{
+			Operation: "receive IPv6 response",
+			Err:       ctx.Err(),
+			Details:   "context canceled before receive",
+		}
+	default:
+	}
+
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := t.conn.SetReadDeadline(deadline); err != nil {
+			return nil, nil, 0, &errors.NetworkError{
+				Operation: "set IPv6 read deadline",
+				Err:       err,
+				Details:   fmt.Sprintf("failed to set deadline %v", deadline),
+			}
+		}
+	}
+
+	bufPtr := GetBuffer()
+	defer PutBuffer(bufPtr)
+	buffer := *bufPtr
+
+	n, cm, srcAddr, err := t.ipv6Conn.ReadFrom(buffer)
+	if err != nil {
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			return nil, nil, 0, &errors.NetworkError{
+				Operation: "receive IPv6 response",
+				Err:       err,
+				Details:   "timeout",
+			}
+		}
+		return nil, nil, 0, &errors.NetworkError{
+			Operation: "receive IPv6 response",
+			Err:       err,
+			Details:   "failed to read from IPv6 socket",
+		}
+	}
+
+	interfaceIndex := 0
+	if cm != nil {
+		interfaceIndex = cm.IfIndex
+	}
+
+	result := make([]byte, n)
+	copy(result, buffer[:n])
+	return result, srcAddr, interfaceIndex, nil
+}
+
+// Close releases the IPv6 socket.
+func (t *UDPv6Transport) Close() error {
+	if t.conn == nil {
+		return nil
+	}
+	if err := t.conn.Close(); err != nil {
+		return &errors.NetworkError{
+			Operation: "close IPv6 socket",
+			Err:       err,
+			Details:   "failed to close UDP IPv6 connection",
+		}
+	}
+	return nil
+}
+
+// Compile-time verification that UDPv6Transport implements Transport.
+var _ Transport = (*UDPv6Transport)(nil)

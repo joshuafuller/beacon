@@ -54,21 +54,31 @@ func NewSourceFilter(iface net.Interface) (*SourceFilter, error) {
 //
 // Task T074: Implement link-local + same subnet check per FR-023
 func (sf *SourceFilter) IsValid(srcIP net.IP) bool {
+	// Check 1: IPv6 link-local (fe80::/10) per RFC 4291 §2.5.6
+	// These are always valid for mDNS per RFC 6762 §11.
+	if len(srcIP) == 16 && srcIP[0] == 0xfe && srcIP[1]&0xc0 == 0x80 {
+		return true
+	}
+
 	// Convert to IPv4 if possible
 	ip4 := srcIP.To4()
 	if ip4 == nil {
-		// IPv6 support deferred to M2
-		// For now, reject IPv6 packets
+		// Non-link-local IPv6 — check against interface subnets.
+		for _, ipnet := range sf.ifaceAddrs {
+			if ipnet.Contains(srcIP) {
+				return true
+			}
+		}
 		return false
 	}
 
-	// Check 1: IPv4 link-local (169.254.0.0/16) - RFC 3927
+	// Check 2: IPv4 link-local (169.254.0.0/16) - RFC 3927
 	// Link-local addresses are ALWAYS valid per RFC 6762 §2
 	if ip4[0] == 169 && ip4[1] == 254 {
 		return true // RFC 3927 link-local address
 	}
 
-	// Check 2: Same subnet as interface
+	// Check 3: Same subnet as interface
 	// Packets from the same subnet as the receiving interface are valid
 	for _, ipnet := range sf.ifaceAddrs {
 		if ipnet.Contains(srcIP) {

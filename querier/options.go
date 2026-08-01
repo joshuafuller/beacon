@@ -176,6 +176,25 @@ func WithRateLimitCooldown(cooldown time.Duration) Option {
 	}
 }
 
+// WithIPv6 enables dual-stack mDNS operation per RFC 6762 §11.
+//
+// When enabled, the Querier creates a second UDP transport bound to the IPv6
+// mDNS multicast group (FF02::FB:5353) and sends queries on both IPv4 and
+// IPv6 networks. AAAA records are accepted and surfaced in responses.
+//
+// If the host has no IPv6-capable multicast interface, New() gracefully falls
+// back to IPv4-only operation rather than returning an error.
+//
+// Example:
+//
+//	q, err := querier.New(querier.WithIPv6())
+func WithIPv6() Option {
+	return func(q *Querier) error {
+		q.ipv6Enabled = true
+		return nil
+	}
+}
+
 // TODO M2 (T100): Add WithTransport() option for test isolation
 // This would allow injecting MockTransport for unit testing without real network.
 // Current gap: All querier tests use real UDP sockets, making edge cases harder to test.

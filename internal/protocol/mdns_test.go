@@ -136,9 +136,9 @@ func TestRecordType_IsSupported(t *testing.T) {
 			want:       true,
 		},
 		{
-			name:       "AAAA record not supported in M1",
-			recordType: RecordType(28), // AAAA (IPv6)
-			want:       false,
+			name:       "AAAA record supported per FR-M4-001",
+			recordType: RecordTypeAAAA, // AAAA (IPv6)
+			want:       true,
 		},
 		{
 			name:       "MX record not supported in M1",
