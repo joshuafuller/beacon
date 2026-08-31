@@ -82,6 +82,36 @@ func TestHasUsableIPv6Address(t *testing.T) {
 	}
 }
 
+// RFC 6762 §§20, 22: Construction either joins the IPv6 mDNS group on at
+// least one IPv6-capable interface or reports that this host cannot participate.
+func TestNewUDPv6TransportMatchesHostCapability(t *testing.T) {
+	tr, err := NewUDPv6Transport()
+	if err != nil {
+		for _, iface := range mustNetworkInterfaces(t) {
+			addresses, addrErr := iface.Addrs()
+			if addrErr == nil && iface.Flags&net.FlagUp != 0 && iface.Flags&net.FlagMulticast != 0 && hasUsableIPv6Address(addresses) {
+				t.Fatalf("NewUDPv6Transport() failed with an IPv6-capable multicast interface %s: %v", iface.Name, err)
+			}
+		}
+		return
+	}
+	if len(tr.joinedInterfaces) == 0 {
+		t.Fatal("NewUDPv6Transport() succeeded without a joined IPv6 interface")
+	}
+	if closeErr := tr.Close(); closeErr != nil {
+		t.Fatalf("Close() failed: %v", closeErr)
+	}
+}
+
+func mustNetworkInterfaces(t *testing.T) []net.Interface {
+	t.Helper()
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		t.Fatalf("net.Interfaces(): %v", err)
+	}
+	return interfaces
+}
+
 func TestUDPv6TransportSendMulticastFailsWithoutJoinedInterface(t *testing.T) {
 	tr := &UDPv6Transport{}
 	if err := tr.Send(context.Background(), []byte{1}, protocol.MulticastGroupIPv6()); err == nil {
