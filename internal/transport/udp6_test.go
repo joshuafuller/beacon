@@ -60,6 +60,20 @@ func TestUDPv6TransportSendMulticastUsesEveryJoinedInterface(t *testing.T) {
 	}
 }
 
+func TestUDPv6TransportJoinedInterfaceIndexesReturnsCopy(t *testing.T) {
+	tr := &UDPv6Transport{joinedInterfaces: []int{2, 7}}
+
+	got := tr.JoinedInterfaceIndexes()
+	if want := []int{2, 7}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("JoinedInterfaceIndexes() = %v, want %v", got, want)
+	}
+
+	got[0] = 99
+	if want := []int{2, 7}; !reflect.DeepEqual(tr.joinedInterfaces, want) {
+		t.Fatalf("mutating returned indexes changed transport state to %v", tr.joinedInterfaces)
+	}
+}
+
 // RFC 6762 §20: A host participates in the IPv6 .local zone only through
 // interfaces on which it has IPv6 connectivity.
 func TestHasUsableIPv6Address(t *testing.T) {
