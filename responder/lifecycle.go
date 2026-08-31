@@ -67,49 +67,11 @@ func (r *Responder) Register(service *Service) error {
 		// US2 GREEN: Store record set for contract test validation
 		r.lastAnnouncedRecords = recordSet
 
-		// Create and run state machine
-		machine := state.NewMachine()
 		serviceName := service.InstanceName + "." + service.ServiceType
-
-		// Wire transport so probes and announcements are sent on the wire
-		machine.SetTransport(r.transport)
-
-		// Apply test hooks (if any)
-		if r.injectConflict {
-			machine.SetInjectConflict(true)
-		}
-
-		// US2 GREEN: Store machine for message capture (contract test support)
-		r.lastMachine = machine
-
-		// US2 GREEN: Apply callbacks to new machine (if any)
-		if r.onProbeCallback != nil {
-			prober := machine.GetProber()
-			if prober != nil {
-				prober.SetOnSendQuery(r.onProbeCallback)
-			}
-		}
-		if r.onAnnounceCallback != nil {
-			announcer := machine.GetAnnouncer()
-			if announcer != nil {
-				announcer.SetOnSendAnnouncement(r.onAnnounceCallback)
-			}
-		}
-
-		// Provide resource records to announcer for DNS message serialization
-		announcer := machine.GetAnnouncer()
-		if announcer != nil {
-			announcer.SetRecords(recordSet)
-		}
-
-		// Run state machine (probing + announcing)
-		err = machine.Run(r.ctx, serviceName)
+		finalState, err := r.runProbeAndAnnounce(recordSet, serviceName)
 		if err != nil {
-			return fmt.Errorf("state machine failed: %w", err)
+			return err
 		}
-
-		// Check final state
-		finalState := machine.GetState()
 
 		if finalState == state.StateConflictDetected {
 			// Conflict detected - rename and retry (unless max attempts reached)
@@ -141,6 +103,49 @@ func (r *Responder) Register(service *Service) error {
 
 	// Should never reach here (loop returns on success or max attempts)
 	return fmt.Errorf("unexpected: register loop completed without result")
+}
+
+// runProbeAndAnnounce builds a state machine for recordSet/serviceName, wires
+// the transport and any test hooks, runs the probing + announcing sequence
+// (RFC 6762 §8), and returns the resulting state.
+func (r *Responder) runProbeAndAnnounce(recordSet []*message.ResourceRecord, serviceName string) (state.State, error) {
+	machine := state.NewMachine()
+
+	// Wire transport so probes and announcements are sent on the wire
+	machine.SetTransport(r.transport)
+
+	// Apply test hooks (if any)
+	if r.injectConflict {
+		machine.SetInjectConflict(true)
+	}
+
+	// US2 GREEN: Store machine for message capture (contract test support)
+	r.lastMachine = machine
+
+	// US2 GREEN: Apply callbacks to new machine (if any)
+	if r.onProbeCallback != nil {
+		if prober := machine.GetProber(); prober != nil {
+			prober.SetOnSendQuery(r.onProbeCallback)
+		}
+	}
+	if r.onAnnounceCallback != nil {
+		if announcer := machine.GetAnnouncer(); announcer != nil {
+			announcer.SetOnSendAnnouncement(r.onAnnounceCallback)
+		}
+	}
+
+	// Provide resource records to announcer for DNS message serialization
+	if announcer := machine.GetAnnouncer(); announcer != nil {
+		announcer.SetRecords(recordSet)
+	}
+
+	// Run state machine (probing + announcing)
+	if err := machine.Run(r.ctx, serviceName); err != nil {
+		var zero state.State
+		return zero, fmt.Errorf("state machine failed: %w", err)
+	}
+
+	return machine.GetState(), nil
 }
 
 // Unregister unregisters a service and sends goodbye packets per RFC 6762 §10.1.

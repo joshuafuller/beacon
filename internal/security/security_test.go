@@ -280,10 +280,10 @@ func TestIsPrivate(t *testing.T) {
 		{"172.16 lower edge", "172.16.0.0", true},            // exactly 16 → private
 		{"172.31 upper edge", "172.31.255.255", true},        // exactly 31 → private
 		{"172.32 just above range", "172.32.0.0", false},     // 32 > 31 → not private
-		// 192.168.0.0/16 neighbours (pins ip4[1] == 168).
+		// 192.168.0.0/16 neighbors (pins ip4[1] == 168).
 		{"192.167 not private", "192.167.1.1", false},
 		{"192.169 not private", "192.169.1.1", false},
-		// 10/8 boundary neighbours (pins ip4[0] == 10).
+		// 10/8 boundary neighbors (pins ip4[0] == 10).
 		{"9.x not private", "9.255.255.255", false},
 		{"11.x not private", "11.0.0.0", false},
 	}

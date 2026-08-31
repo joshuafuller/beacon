@@ -41,7 +41,7 @@
 //	    }
 //
 //	    // Service is now discoverable via mDNS.
-//	    // Block until context is cancelled.
+//	    // Block until context is canceled.
 //	    <-ctx.Done()
 //	}
 //

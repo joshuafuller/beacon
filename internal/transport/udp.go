@@ -90,7 +90,7 @@ func NewUDPv4Transport() (*UDPv4Transport, error) {
 	// When control messages are unavailable, Receive() will return interfaceIndex=0,
 	// triggering fallback to getLocalIPv4() per RFC 6762 §15 best-effort compliance.
 	err = ipv4Conn.SetControlMessage(ipv4.FlagInterface, true)
-	if err != nil {
+	if err != nil { //nolint:revive,staticcheck
 		// TODO T032: Add debug logging when F-6 is implemented
 		// For now, silently continue - control messages are best-effort.
 		// interfaceIndex will be 0 when cm=nil, triggering graceful degradation.

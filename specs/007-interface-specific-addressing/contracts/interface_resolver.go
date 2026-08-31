@@ -129,6 +129,7 @@ func DefaultPolicy() InterfaceResolutionPolicy {
 	}
 }
 
+// IsValidIPv4ForResponse validates IPv4 addresses in responses
 // ValidationRules for IPv4 addresses in responses
 //
 // RFC 6762 §15 Requirements:

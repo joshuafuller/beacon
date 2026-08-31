@@ -5,6 +5,7 @@ package message
 import (
 	"crypto/rand" // Standard library, required for secure DNS query ID generation per gosec G404
 	"encoding/binary"
+	"math"
 	"math/big"
 	"strings"
 
@@ -165,6 +166,17 @@ func buildQuestionSection(encodedName []byte, recordType uint16) []byte {
 //   - []byte: The wire format DNS response message
 //   - error: ValidationError if answers are invalid
 func BuildResponse(answers []*ResourceRecord) ([]byte, error) {
+	// RFC 6762 §18: ANCOUNT is a wire-format uint16. Validate before
+	// buildResponseHeader converts len(answers), so the overflow is
+	// impossible at the conversion site rather than silently capped.
+	if len(answers) > math.MaxUint16 {
+		return nil, &errors.ValidationError{
+			Field:   "answers",
+			Value:   len(answers),
+			Message: "answer count exceeds uint16 max (RFC 6762 §18 ANCOUNT)",
+		}
+	}
+
 	// Build response header
 	header := buildResponseHeader(len(answers))
 
@@ -212,13 +224,10 @@ func buildResponseHeader(answerCount int) []byte {
 	binary.BigEndian.PutUint16(header[4:6], 0)
 
 	// ANCOUNT: Number of answer records
-	// G115: RFC 6762 §4.3 specifies ANCOUNT as uint16, max 65535. DNS message size limit
-	// (9000 bytes per RFC 6762) ensures answerCount never exceeds uint16.
-	// Defensive bounds check for safety.
-	if answerCount > 65535 { //nolint:gosec // G115: bounds checked, max message size 9000 bytes
-		answerCount = 65535 // Cap at maximum uint16
-	}
-	binary.BigEndian.PutUint16(header[6:8], uint16(answerCount))
+	// G115: answerCount is validated <= 65535 by BuildResponse, the only caller,
+	// before this function is invoked.
+	// #nosec G115 -- bounds checked in BuildResponse.
+	binary.BigEndian.PutUint16(header[6:8], uint16(answerCount)) //nolint:gosec
 
 	// NSCOUNT: 0 authority records
 	binary.BigEndian.PutUint16(header[8:10], 0)
@@ -229,7 +238,7 @@ func buildResponseHeader(answerCount int) []byte {
 	return header
 }
 
-// serializeResourceRecord serializes a resource record to wire format.
+// SerializeResourceRecord serializes a resource record to wire format.
 //
 // Resource record format per RFC 1035 §3.2.1:
 //   - NAME (variable): Domain name
@@ -248,6 +257,16 @@ func SerializeResourceRecord(rr *ResourceRecord) ([]byte, error) {
 			Field:   "ResourceRecord",
 			Value:   nil,
 			Message: "cannot serialize nil resource record",
+		}
+	}
+
+	// RFC 1035 §3.2.1: RDLENGTH is a wire-format uint16. Validate here, before
+	// the RDLENGTH conversion below, rather than capping/truncating silently.
+	if len(rr.Data) > math.MaxUint16 {
+		return nil, &errors.ValidationError{
+			Field:   "ResourceRecord.Data",
+			Value:   len(rr.Data),
+			Message: "RDATA length exceeds uint16 max (RFC 1035 §3.2.1 RDLENGTH)",
 		}
 	}
 
@@ -318,15 +337,10 @@ func SerializeResourceRecord(rr *ResourceRecord) ([]byte, error) {
 	record = append(record, ttlBytes...)
 
 	// RDLENGTH (2 bytes)
-	// G115: RFC 1035 §3.2.1 specifies RDLENGTH as uint16, max 65535. DNS message size
-	// limit (9000 bytes per RFC 6762) ensures rdata length never exceeds uint16.
-	// Defensive bounds check for safety.
-	rdataLen := len(rr.Data)
-	if rdataLen > 65535 { //nolint:gosec // G115: bounds checked, max message size 9000 bytes
-		rdataLen = 65535 // Cap at maximum uint16
-	}
+	// G115: len(rr.Data) validated <= 65535 above.
 	rdlengthBytes := make([]byte, 2)
-	binary.BigEndian.PutUint16(rdlengthBytes, uint16(rdataLen))
+	// #nosec G115 -- bounds checked above.
+	binary.BigEndian.PutUint16(rdlengthBytes, uint16(len(rr.Data))) //nolint:gosec
 	record = append(record, rdlengthBytes...)
 
 	// RDATA

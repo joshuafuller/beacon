@@ -297,7 +297,7 @@ func TestBuildQuery_InvalidName(t *testing.T) {
 			}
 
 			// For non-empty error message expectations, verify the error
-			if tt.errMsg != "" && err != nil {
+			if tt.errMsg != "" {
 				errStr := err.Error()
 				if len(errStr) == 0 || (len(tt.errMsg) > 0 && len(errStr) > 0 && errStr[0] != tt.errMsg[0]) {
 					// Basic check that error message is reasonable
