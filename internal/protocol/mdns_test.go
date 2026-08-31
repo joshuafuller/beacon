@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"net"
 	"testing"
 )
 
@@ -57,6 +58,18 @@ func TestMulticastGroupIPv4(t *testing.T) {
 	}
 }
 
+// RFC 6762 §§20, 22: The IPv6 .local zone uses FF02::FB on port 5353.
+func TestMulticastGroupIPv6(t *testing.T) {
+	addr := MulticastGroupIPv6()
+	wantIP := net.ParseIP("ff02::fb")
+	if !addr.IP.Equal(wantIP) {
+		t.Fatalf("MulticastGroupIPv6().IP = %s, want %s", addr.IP, wantIP)
+	}
+	if addr.Port != Port || !addr.IP.IsMulticast() {
+		t.Fatalf("MulticastGroupIPv6() = %v, want IPv6 multicast port %d", addr, Port)
+	}
+}
+
 // TestRecordType_String validates that RecordType.String() returns correct
 // human-readable names per RFC 1035 (FR-002).
 //
@@ -86,6 +99,11 @@ func TestRecordType_String(t *testing.T) {
 			name:       "SRV record",
 			recordType: RecordTypeSRV,
 			want:       "SRV",
+		},
+		{
+			name:       "AAAA record",
+			recordType: RecordTypeAAAA,
+			want:       "AAAA",
 		},
 		{
 			name:       "Unknown record type",

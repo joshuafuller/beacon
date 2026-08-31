@@ -18,7 +18,7 @@ import (
 
 // Responder manages mDNS service registration and response per RFC 6762.
 //
-// Interface-Specific Addressing (RFC 6762 §15):
+// Interface-Specific Addressing (RFC 6762 §6.2):
 // The responder automatically detects which network interface received each query
 // and responds with ONLY the IP address valid on that interface. This ensures
 // clients can connect to the correct IP when the host has multiple network interfaces.
@@ -204,7 +204,7 @@ func fromInternalService(s *responder.Service) *Service {
 // getLocalIPv4 gets the first non-loopback IPv4 address from any interface.
 //
 // DEPRECATED for query response building: Use getIPv4ForInterface(interfaceIndex) instead
-// to comply with RFC 6762 §15 (interface-specific addressing).
+// to comply with RFC 6762 §6.2 (interface-specific addressing).
 //
 // Still used for:
 //   - Service registration (choosing default interface for A record)
@@ -234,7 +234,7 @@ func getLocalIPv4() ([]byte, error) {
 
 // getIPv4ForInterface returns the IPv4 address assigned to the specified network interface.
 //
-// RFC 6762 §15 "Responding to Address Queries" (lines 1020-1024):
+// RFC 6762 §6.2 "Responding to Address Queries" (lines 1020-1024):
 //
 //	When a Multicast DNS responder sends a Multicast DNS response message
 //	containing its own address records, it MUST include all addresses
@@ -306,8 +306,8 @@ func getIPv4ForInterface(ifIndex int) ([]byte, error) {
 
 // getIPv6ForInterface returns every IPv6 address on the specified interface.
 //
-// RFC 6762 §11: mDNS on IPv6 uses link-local multicast (FF02::FB). Responses must
-// include only addresses valid on the receiving interface (RFC 6762 §15).
+// RFC 6762 §§20, 22: mDNS on IPv6 uses link-local multicast (FF02::FB). Responses must
+// include only addresses valid on the receiving interface (RFC 6762 §6.2).
 func getIPv6ForInterface(ifIndex int) ([]net.IP, error) {
 	iface, err := net.InterfaceByIndex(ifIndex)
 	if err != nil {
@@ -344,7 +344,7 @@ func getIPv6ForInterface(ifIndex int) ([]net.IP, error) {
 }
 
 // getIPv6ResponseAddresses returns only addresses valid on the interface that
-// received the query. Without that interface identity, RFC 6762 section 15's
+// received the query. Without that interface identity, RFC 6762 §6.2's
 // address-scoping requirement cannot be satisfied, so the responder fails closed.
 func getIPv6ResponseAddresses(ifIndex int) ([]net.IP, error) {
 	if ifIndex <= 0 {
@@ -355,4 +355,38 @@ func getIPv6ResponseAddresses(ifIndex int) ([]net.IP, error) {
 		}
 	}
 	return getIPv6ForInterface(ifIndex)
+}
+
+// getResponseAddresses returns address records scoped to the interface on
+// which a query arrived. RFC 6762 §6.2 requires interface-valid addresses and
+// recommends including the other address family for fate sharing when present.
+// The queried network's address family is mandatory; the other is best-effort.
+func getResponseAddresses(ipv6Network bool, ifIndex int) ([]byte, [][]byte, error) {
+	if ifIndex == 0 {
+		if ipv6Network {
+			ipv6Addresses, err := getIPv6ResponseAddresses(ifIndex)
+			return nil, ipBytes(ipv6Addresses), err
+		}
+		ipv4, err := getLocalIPv4()
+		return ipv4, nil, err
+	}
+
+	ipv4, ipv4Err := getIPv4ForInterface(ifIndex)
+	ipv6Addresses, ipv6Err := getIPv6ForInterface(ifIndex)
+	if ipv6Network {
+		if ipv6Err != nil {
+			return nil, nil, ipv6Err
+		}
+		if ipv4Err != nil {
+			ipv4 = nil
+		}
+		return ipv4, ipBytes(ipv6Addresses), nil
+	}
+	if ipv4Err != nil {
+		return nil, nil, ipv4Err
+	}
+	if ipv6Err != nil {
+		ipv6Addresses = nil
+	}
+	return ipv4, ipBytes(ipv6Addresses), nil
 }

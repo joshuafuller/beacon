@@ -58,7 +58,7 @@ func WithRateLimiter(rl *security.RateLimiter) Option {
 
 // WithIPv6 enables dual-stack operation by adding an IPv6 multicast transport.
 //
-// RFC 6762 §11: IPv6 mDNS uses the link-local multicast address FF02::FB on port 5353.
+// RFC 6762 §§20, 22: Dual-stack mDNS participates in the IPv6 zone at FF02::FB:5353.
 //
 // If IPv6 is unavailable on this host, this option degrades gracefully and the
 // responder continues in IPv4-only mode.

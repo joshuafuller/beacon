@@ -32,7 +32,7 @@ func (r *Responder) runQueryHandler(tr transport.Transport, ipv6Network bool) {
 			return
 		default:
 			// Receive query with timeout
-			// 007-interface-specific-addressing T027: Extract interfaceIndex for RFC 6762 §15 compliance
+			// 007-interface-specific-addressing T027: Extract interfaceIndex for RFC 6762 §6.2 compliance
 			// Task 2: Capture source address for subnet validation (RFC 6762 §6.4)
 			packet, srcAddr, interfaceIndex, err := tr.Receive(r.ctx)
 			if err != nil {
@@ -56,11 +56,10 @@ func (r *Responder) runQueryHandler(tr transport.Transport, ipv6Network bool) {
 	}
 }
 
-// validateSourceAddress validates that the query source is on the same subnet as the interface.
+// validateSourceAddressOnNetwork validates that a unicast query source is on
+// the same subnet or IPv6 on-link prefix as the receiving interface.
 //
-// RFC 6762 §6.4: "When a Multicast DNS responder receives a query, it MUST only respond
-// if the source address of the query is on the same subnet as the interface on which
-// the query was received."
+// RFC 6762 §11 defines the IPv4 subnet-mask and IPv6 on-link-prefix checks.
 //
 // Parameters:
 //   - srcAddr: Source address of the query
@@ -81,14 +80,6 @@ func validateSourceAddressOnNetwork(srcAddr net.Addr, interfaceIndex int, ipv6Ne
 	if !ok {
 		return false
 	}
-	if ipv6Network {
-		return udpAddr.IP.IsLinkLocalUnicast()
-	}
-	srcIP := udpAddr.IP.To4()
-	if srcIP == nil {
-		return false // Not IPv4
-	}
-
 	// Get interface by index
 	iface, err := net.InterfaceByIndex(interfaceIndex)
 	if err != nil {
@@ -101,15 +92,21 @@ func validateSourceAddressOnNetwork(srcAddr net.Addr, interfaceIndex int, ipv6Ne
 		return false
 	}
 
-	// Check if source IP is on same subnet as any interface address
+	// Check if source IP is on the same IPv4 subnet or IPv6 on-link prefix as
+	// any address configured on the receiving interface (RFC 6762 §11).
 	for _, addr := range addrs {
 		ipnet, ok := addr.(*net.IPNet)
 		if !ok {
 			continue
 		}
-
-		// Check if source IP is in this subnet
-		if ipnet.Contains(srcIP) {
+		if ipv6Network {
+			if udpAddr.IP.To4() == nil && ipnet.IP.To4() == nil && ipnet.Contains(udpAddr.IP) {
+				return true
+			}
+			continue
+		}
+		srcIP := udpAddr.IP.To4()
+		if srcIP != nil && ipnet.IP.To4() != nil && ipnet.Contains(srcIP) {
 			return true
 		}
 	}
@@ -123,11 +120,10 @@ func validateSourceAddressOnNetwork(srcAddr net.Addr, interfaceIndex int, ipv6Ne
 // RFC 6762 §6: "When a Multicast DNS responder receives a query, it must determine
 // whether the query is requesting information for which this responder is authoritative."
 //
-// RFC 6762 §6.4: "When a Multicast DNS responder receives a query, it MUST only respond
-// if the source address of the query is on the same subnet as the interface on which
-// the query was received."
+// RFC 6762 §11: For unicast traffic, source addresses are checked against the
+// receiving interface's IPv4 subnets or IPv6 on-link prefixes.
 //
-// RFC 6762 §15: Responses MUST include only addresses valid on the receiving interface,
+// RFC 6762 §6.2: Responses MUST include only addresses valid on the receiving interface,
 // and MUST NOT include addresses from other interfaces.
 //
 // Process:
@@ -157,9 +153,9 @@ func (r *Responder) handleQuery(tr transport.Transport, packet []byte, srcAddr n
 }
 
 func (r *Responder) handleQueryOnTransport(tr transport.Transport, ipv6Network bool, packet []byte, srcAddr net.Addr, interfaceIndex int) error {
-	// Task 2: RFC 6762 §6.4 - Validate source address is on same subnet
+	// Task 2: RFC 6762 §11 - Validate source address is on-link
 	if !validateSourceAddressOnNetwork(srcAddr, interfaceIndex, ipv6Network) {
-		// Source not on same subnet - ignore query per RFC 6762 §6.4
+		// Source not on-link - ignore the query.
 		return nil
 	}
 
@@ -281,37 +277,22 @@ func (r *Responder) findMatchingService(question message.Question) *responder.Se
 }
 
 // respondToQuery builds and sends a response for a matched service using the
-// query's receiving interface (RFC 6762 §15), applying per-source rate limiting
+// query's receiving interface (RFC 6762 §6.2), applying per-source rate limiting
 // (RFC 6762 §6.2) and unicast/multicast destination selection based on the QU
 // bit (RFC 6762 §5.4).
 //
-// RFC 6762 §15 "Responding to Address Queries":
+// RFC 6762 §6.2 "Responding to Address Queries":
 // "When a Multicast DNS responder sends a Multicast DNS response message
 // containing its own address records in response to a query received on
 // a particular interface, it MUST include only addresses that are valid
 // on that interface, and MUST NOT include addresses configured on other
 // interfaces."
 func (r *Responder) respondToQuery(tr transport.Transport, ipv6Network bool, matchedService *responder.Service, msg *message.DNSMessage, question message.Question, srcAddr net.Addr, interfaceIndex int) {
-	var ipv4 []byte
-	var ipv6Addresses [][]byte
-	var ipErr error
-
-	if ipv6Network {
-		var ips []net.IP
-		ips, ipErr = getIPv6ResponseAddresses(interfaceIndex)
-		ipv6Addresses = ipBytes(ips)
-	} else if interfaceIndex == 0 {
-		// Degraded mode: Use default interface IP (legacy behavior)
-		// TODO T032: Add debug logging when F-6 (Logging & Observability) is implemented
-		ipv4, ipErr = getLocalIPv4()
-	} else {
-		// RFC 6762 §15 compliance: Use ONLY the IP from the receiving interface
-		ipv4, ipErr = getIPv4ForInterface(interfaceIndex)
-	}
+	ipv4, ipv6Addresses, ipErr := getResponseAddresses(ipv6Network, interfaceIndex)
 
 	if ipErr != nil {
 		// T031: If interface-specific IP lookup fails, skip response for this query
-		// This is correct behavior per RFC 6762 §15: Better to not respond than
+		// This is correct behavior per RFC 6762 §6.2: Better to not respond than
 		// to respond with an incorrect (wrong interface) IP address
 		// TODO T032: Add error logging when F-6 is implemented
 		// Common failure causes: interface went down, no IPv4 configured, invalid index

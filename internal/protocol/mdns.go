@@ -26,9 +26,9 @@ const (
 	// FR-004: System MUST use mDNS port 5353 and multicast address 224.0.0.251 for IPv4 queries
 	MulticastAddrIPv4 = "224.0.0.251"
 
-	// MulticastAddrIPv6 is the mDNS IPv6 multicast address (FF02::FB) per RFC 6762 §11.
+	// MulticastAddrIPv6 is the deployed link-local mDNS IPv6 multicast address per RFC 6762 §22.
 	//
-	// RFC 6762 §11: IPv6 mDNS uses the link-local multicast address FF02::FB on port 5353.
+	// RFC 6762 §22: FF02::FB is the deployed link-local IPv6 multicast group.
 	MulticastAddrIPv6 = "FF02::FB"
 )
 
@@ -47,7 +47,7 @@ func MulticastGroupIPv4() *net.UDPAddr {
 
 // MulticastGroupIPv6 returns the mDNS IPv6 multicast group address.
 //
-// RFC 6762 §11: IPv6 mDNS uses FF02::FB:5353 (link-local scope).
+// RFC 6762 §§20, 22: Dual-stack mDNS uses FF02::FB:5353 for its IPv6 zone.
 func MulticastGroupIPv6() *net.UDPAddr {
 	return &net.UDPAddr{
 		IP:   net.ParseIP(MulticastAddrIPv6), // nosemgrep: beacon-hardcoded-multicast-address

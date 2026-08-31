@@ -176,7 +176,7 @@ func WithRateLimitCooldown(cooldown time.Duration) Option {
 	}
 }
 
-// WithIPv6 enables dual-stack mDNS operation per RFC 6762 §11.
+// WithIPv6 enables dual-stack mDNS operation per RFC 6762 §20.
 //
 // When enabled, the Querier creates a second UDP transport bound to the IPv6
 // mDNS multicast group (FF02::FB:5353) and sends queries on both IPv4 and

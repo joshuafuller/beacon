@@ -12,11 +12,11 @@ import (
 	"github.com/joshuafuller/beacon/internal/protocol"
 )
 
-// UDPv6Transport implements Transport for IPv6 UDP multicast per RFC 6762 §11.
+// UDPv6Transport implements the IPv6 side of dual-stack mDNS per RFC 6762 §20.
 //
 // It binds to [::]:5353, joins the mDNS IPv6 multicast group FF02::FB on all
 // multicast-capable interfaces, and extracts the receiving interface index from
-// IPv6 control messages for RFC 6762 §15 compliance.
+// IPv6 control messages for RFC 6762 §6.2 interface scoping.
 type UDPv6Transport struct {
 	conn             net.PacketConn
 	ipv6Conn         *ipv6.PacketConn
@@ -25,7 +25,7 @@ type UDPv6Transport struct {
 	readFrom         func([]byte) (int, *ipv6.ControlMessage, net.Addr, error)
 }
 
-// NewUDPv6Transport creates a UDP IPv6 multicast transport per RFC 6762 §11.
+// NewUDPv6Transport creates a UDP IPv6 multicast transport per RFC 6762 §§20, 22.
 //
 // It binds to [::]:5353, applies SO_REUSEADDR/SO_REUSEPORT platform options so
 // multiple mDNS daemons can coexist, and joins FF02::FB on every multicast-
@@ -61,7 +61,7 @@ func NewUDPv6Transport() (*UDPv6Transport, error) {
 
 	ipv6Conn := ipv6.NewPacketConn(conn)
 
-	// Enable interface index in incoming control messages (RFC 6762 §15).
+	// Enable interface index in incoming control messages (RFC 6762 §6.2).
 	// Non-fatal on platforms that don't support it; interfaceIndex will be 0.
 	_ = ipv6Conn.SetControlMessage(ipv6.FlagInterface, true)
 
@@ -117,7 +117,7 @@ func NewUDPv6Transport() (*UDPv6Transport, error) {
 
 // Send transmits a packet to dest over IPv6.
 //
-// RFC 6762 §11: Queries are sent to FF02::FB:5353.
+// RFC 6762 §22: Deployed IPv6 mDNS uses FF02::FB:5353.
 func (t *UDPv6Transport) Send(ctx context.Context, packet []byte, dest net.Addr) error {
 	select {
 	case <-ctx.Done():
@@ -167,7 +167,7 @@ func (t *UDPv6Transport) sendMulticastOnJoinedInterfaces(packet []byte, dest net
 		}
 		sent++
 	}
-	if sent > 0 {
+	if sent == len(t.joinedInterfaces) && sent > 0 {
 		return nil
 	}
 	if lastErr == nil {
@@ -183,7 +183,7 @@ func (t *UDPv6Transport) sendMulticastOnJoinedInterfaces(packet []byte, dest net
 // Receive waits for an incoming IPv6 packet, respecting context cancellation.
 //
 // Returns the interface index from the IPv6 control message when available
-// (RFC 6762 §15); zero indicates the interface is unknown.
+// (RFC 6762 §6.2); zero indicates the interface is unknown.
 func (t *UDPv6Transport) Receive(ctx context.Context) ([]byte, net.Addr, int, error) {
 	select {
 	case <-ctx.Done():

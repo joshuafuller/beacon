@@ -366,7 +366,7 @@ func TestUDPv4Transport_ControlMessageUnavailable(t *testing.T) {
 }
 
 // TestUDPv6Transport_ImplementsTransportInterface verifies the compile-time
-// guarantee that UDPv6Transport satisfies the Transport interface (RFC 6762 §11).
+// guarantee that UDPv6Transport satisfies the Transport interface (RFC 6762 §20).
 func TestUDPv6Transport_ImplementsTransportInterface(_ *testing.T) {
 	var _ transport.Transport = (*transport.UDPv6Transport)(nil)
 }

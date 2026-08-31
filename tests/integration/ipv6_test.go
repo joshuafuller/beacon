@@ -1,4 +1,4 @@
-// Package integration provides end-to-end IPv6 integration tests per RFC 6762 §11.
+// Package integration provides end-to-end IPv6 integration tests per RFC 6762 §§20, 22.
 package integration
 
 import (
@@ -47,7 +47,7 @@ func TestIPv6MulticastTransportRoundTrip(t *testing.T) {
 // TestQuerier_IPv6_Transport validates that a dual-stack querier can be created
 // and issues AAAA queries on the IPv6 multicast transport (FF02::FB:5353).
 //
-// RFC 6762 §11: IPv6 mDNS uses the link-local multicast address FF02::FB on port 5353.
+// RFC 6762 §22: Deployed IPv6 mDNS uses FF02::FB on port 5353.
 //
 // This test skips if IPv6 is unavailable on the host (graceful degradation).
 // It accepts empty results — the network may have no IPv6 mDNS responders.
@@ -92,7 +92,7 @@ func TestQuerier_IPv6_Transport(t *testing.T) {
 // TestQuerier_IPv6_DualStack validates that a dual-stack querier initializes correctly
 // and can send queries on both IPv4 and IPv6 transports simultaneously.
 //
-// RFC 6762 §11: Implementations SHOULD support both IPv4 and IPv6.
+// RFC 6762 §20: Dual-stack hosts should register and look up names using both IPv4 and IPv6.
 //
 // Test strategy: construct the querier (validates transport creation), issue a
 // standard PTR query, then an AAAA query. Both must complete without panicking.
