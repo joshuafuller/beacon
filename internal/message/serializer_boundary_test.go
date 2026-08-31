@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"testing"
 
+	beaconerrors "github.com/joshuafuller/beacon/internal/errors"
 	"github.com/joshuafuller/beacon/internal/protocol"
 )
 
@@ -61,4 +62,18 @@ func TestSerializeMessage_SectionCountBoundary(t *testing.T) {
 				"(RFC 1035 §4.1.1: ANCOUNT is a wire-format uint16 field)")
 		}
 	})
+}
+
+func TestSerializeMessage_RejectsOversizedSectionBeforeEncoding(t *testing.T) {
+	questions := make([]Question, 65536)
+	questions[0] = Question{QNAME: "invalid..name", QTYPE: uint16(protocol.RecordTypeA)}
+
+	_, err := SerializeMessage(&DNSMessage{Questions: questions})
+	validationErr, ok := err.(*beaconerrors.ValidationError)
+	if !ok {
+		t.Fatalf("SerializeMessage() error = %T, want *errors.ValidationError", err)
+	}
+	if validationErr.Field != "DNSMessage" {
+		t.Fatalf("ValidationError.Field = %q, want DNSMessage", validationErr.Field)
+	}
 }

@@ -35,6 +35,18 @@ func SerializeMessage(msg *DNSMessage) ([]byte, error) {
 		}
 	}
 
+	// RFC 1035 §4.1.1: QDCOUNT/ANCOUNT/NSCOUNT/ARCOUNT are wire-format uint16
+	// fields. Reject oversized sections before serializing them so invalid input
+	// cannot consume work and memory proportional to an unrepresentable message.
+	if len(msg.Questions) > math.MaxUint16 || len(msg.Answers) > math.MaxUint16 ||
+		len(msg.Authorities) > math.MaxUint16 || len(msg.Additionals) > math.MaxUint16 {
+		return nil, &errors.ValidationError{
+			Field:   "DNSMessage",
+			Value:   nil,
+			Message: "section count exceeds uint16 max (RFC 1035 §4.1.1)",
+		}
+	}
+
 	// Pre-allocate buffer with reasonable initial capacity
 	buf := make([]byte, 0, 512)
 
@@ -78,17 +90,6 @@ func SerializeMessage(msg *DNSMessage) ([]byte, error) {
 			return nil, err
 		}
 		buf = append(buf, rrBytes...)
-	}
-
-	// RFC 1035 §4.1.1: QDCOUNT/ANCOUNT/NSCOUNT/ARCOUNT are wire-format uint16
-	// fields. Validate before converting rather than truncating silently.
-	if len(msg.Questions) > math.MaxUint16 || len(msg.Answers) > math.MaxUint16 ||
-		len(msg.Authorities) > math.MaxUint16 || len(msg.Additionals) > math.MaxUint16 {
-		return nil, &errors.ValidationError{
-			Field:   "DNSMessage",
-			Value:   nil,
-			Message: "section count exceeds uint16 max (RFC 1035 §4.1.1)",
-		}
 	}
 
 	// Fill in header with actual counts
