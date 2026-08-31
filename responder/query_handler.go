@@ -296,15 +296,9 @@ func (r *Responder) respondToQuery(tr transport.Transport, ipv6Network bool, mat
 	var ipv6Addresses [][]byte
 	var ipErr error
 
-	// T030: Graceful fallback when interface index unavailable (interfaceIndex=0)
-	// This happens when control messages aren't supported or platform doesn't provide IP_PKTINFO
-	if ipv6Network && interfaceIndex == 0 {
+	if ipv6Network {
 		var ips []net.IP
-		ips, ipErr = getLocalIPv6()
-		ipv6Addresses = ipBytes(ips)
-	} else if ipv6Network {
-		var ips []net.IP
-		ips, ipErr = getIPv6ForInterface(interfaceIndex)
+		ips, ipErr = getIPv6ResponseAddresses(interfaceIndex)
 		ipv6Addresses = ipBytes(ips)
 	} else if interfaceIndex == 0 {
 		// Degraded mode: Use default interface IP (legacy behavior)

@@ -343,25 +343,16 @@ func getIPv6ForInterface(ifIndex int) ([]net.IP, error) {
 	}
 }
 
-// getLocalIPv6 returns every non-loopback IPv6 address from the selected
-// fallback view when the receiving interface is unknown.
-//
-// Fallback used when interfaceIndex is unknown (0). Mirrors getLocalIPv4 for IPv6.
-func getLocalIPv6() ([]net.IP, error) {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return nil, err
-	}
-	ips := make([]net.IP, 0, len(addrs))
-	for _, addr := range addrs {
-		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			if ip := ipnet.IP; ip.To4() == nil && len(ip) == 16 {
-				ips = append(ips, append(net.IP(nil), ip...))
-			}
+// getIPv6ResponseAddresses returns only addresses valid on the interface that
+// received the query. Without that interface identity, RFC 6762 section 15's
+// address-scoping requirement cannot be satisfied, so the responder fails closed.
+func getIPv6ResponseAddresses(ifIndex int) ([]net.IP, error) {
+	if ifIndex <= 0 {
+		return nil, &errors.ValidationError{
+			Field:   "interfaceIndex",
+			Value:   ifIndex,
+			Message: "receiving interface is required for an IPv6 response",
 		}
 	}
-	if len(ips) > 0 {
-		return ips, nil
-	}
-	return nil, fmt.Errorf("no non-loopback IPv6 address found")
+	return getIPv6ForInterface(ifIndex)
 }
