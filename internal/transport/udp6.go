@@ -85,6 +85,14 @@ func NewUDPv6Transport() (*UDPv6Transport, error) {
 		if iface.Flags&net.FlagMulticast == 0 || iface.Flags&net.FlagUp == 0 {
 			continue
 		}
+		addresses, addrErr := iface.Addrs()
+		if addrErr != nil {
+			lastJoinErr = addrErr
+			continue
+		}
+		if !hasUsableIPv6Address(addresses) {
+			continue
+		}
 		if err := ipv6Conn.JoinGroup(iface, group); err != nil {
 			lastJoinErr = err
 			continue
@@ -113,6 +121,22 @@ func NewUDPv6Transport() (*UDPv6Transport, error) {
 		writeTo:          ipv6Conn.WriteTo,
 		readFrom:         ipv6Conn.ReadFrom,
 	}, nil
+}
+
+func hasUsableIPv6Address(addresses []net.Addr) bool {
+	for _, address := range addresses {
+		var ip net.IP
+		switch value := address.(type) {
+		case *net.IPNet:
+			ip = value.IP
+		case *net.IPAddr:
+			ip = value.IP
+		}
+		if ip != nil && ip.To4() == nil && ip.To16() != nil && !ip.IsUnspecified() {
+			return true
+		}
+	}
+	return false
 }
 
 // Send transmits a packet to dest over IPv6.
