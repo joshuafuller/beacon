@@ -2,12 +2,47 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
 
+	"github.com/joshuafuller/beacon/internal/protocol"
+	"github.com/joshuafuller/beacon/internal/transport"
 	"github.com/joshuafuller/beacon/querier"
 )
+
+func TestIPv6MulticastTransportRoundTrip(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping IPv6 network integration test in short mode")
+	}
+
+	tr, err := transport.NewUDPv6Transport()
+	if err != nil {
+		t.Skipf("host has no usable IPv6 multicast transport: %v", err)
+	}
+	defer func() { _ = tr.Close() }()
+
+	want := []byte("beacon-ipv6-integration")
+	if err := tr.Send(context.Background(), want, protocol.MulticastGroupIPv6()); err != nil {
+		t.Fatalf("IPv6 multicast send failed: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	for {
+		got, _, ifIndex, err := tr.Receive(ctx)
+		if err != nil {
+			t.Fatalf("did not receive the IPv6 multicast packet: %v", err)
+		}
+		if bytes.Equal(got, want) {
+			if ifIndex == 0 {
+				t.Fatal("IPv6 multicast packet arrived without a receiving interface index")
+			}
+			return
+		}
+	}
+}
 
 // TestQuerier_IPv6_Transport validates that a dual-stack querier can be created
 // and issues AAAA queries on the IPv6 multicast transport (FF02::FB:5353).
@@ -54,7 +89,7 @@ func TestQuerier_IPv6_Transport(t *testing.T) {
 	}
 }
 
-// TestQuerier_IPv6_DualStack validates that a dual-stack querier initialises correctly
+// TestQuerier_IPv6_DualStack validates that a dual-stack querier initializes correctly
 // and can send queries on both IPv4 and IPv6 transports simultaneously.
 //
 // RFC 6762 §11: Implementations SHOULD support both IPv4 and IPv6.

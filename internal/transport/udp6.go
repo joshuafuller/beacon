@@ -18,8 +18,10 @@ import (
 // multicast-capable interfaces, and extracts the receiving interface index from
 // IPv6 control messages for RFC 6762 §15 compliance.
 type UDPv6Transport struct {
-	conn     net.PacketConn
-	ipv6Conn *ipv6.PacketConn
+	conn             net.PacketConn
+	ipv6Conn         *ipv6.PacketConn
+	joinedInterfaces []int
+	writeTo          func([]byte, *ipv6.ControlMessage, net.Addr) (int, error)
 }
 
 // NewUDPv6Transport creates a UDP IPv6 multicast transport per RFC 6762 §11.
@@ -46,11 +48,11 @@ func NewUDPv6Transport() (*UDPv6Transport, error) {
 	}
 
 	if udpConn, ok := conn.(*net.UDPConn); ok {
-		if err := udpConn.SetReadBuffer(65536); err != nil {
+		if bufferErr := udpConn.SetReadBuffer(65536); bufferErr != nil {
 			_ = conn.Close()
 			return nil, &errors.NetworkError{
 				Operation: "configure IPv6 socket",
-				Err:       err,
+				Err:       bufferErr,
 				Details:   "failed to set read buffer size",
 			}
 		}
@@ -76,6 +78,7 @@ func NewUDPv6Transport() (*UDPv6Transport, error) {
 
 	var lastJoinErr error
 	joined := 0
+	joinedInterfaces := make([]int, 0, len(ifaces))
 	for i := range ifaces {
 		iface := &ifaces[i]
 		if iface.Flags&net.FlagMulticast == 0 || iface.Flags&net.FlagUp == 0 {
@@ -86,6 +89,7 @@ func NewUDPv6Transport() (*UDPv6Transport, error) {
 			continue
 		}
 		joined++
+		joinedInterfaces = append(joinedInterfaces, iface.Index)
 	}
 
 	if joined == 0 {
@@ -101,7 +105,12 @@ func NewUDPv6Transport() (*UDPv6Transport, error) {
 		}
 	}
 
-	return &UDPv6Transport{conn: conn, ipv6Conn: ipv6Conn}, nil
+	return &UDPv6Transport{
+		conn:             conn,
+		ipv6Conn:         ipv6Conn,
+		joinedInterfaces: joinedInterfaces,
+		writeTo:          ipv6Conn.WriteTo,
+	}, nil
 }
 
 // Send transmits a packet to dest over IPv6.
@@ -116,6 +125,11 @@ func (t *UDPv6Transport) Send(ctx context.Context, packet []byte, dest net.Addr)
 			Details:   "context canceled before send",
 		}
 	default:
+	}
+
+	udpDest, isUDP := dest.(*net.UDPAddr)
+	if isUDP && udpDest.IP.IsMulticast() && udpDest.IP.To4() == nil && udpDest.Zone == "" {
+		return t.sendMulticastOnJoinedInterfaces(packet, dest)
 	}
 
 	n, err := t.conn.WriteTo(packet, dest)
@@ -134,6 +148,34 @@ func (t *UDPv6Transport) Send(ctx context.Context, packet []byte, dest net.Addr)
 		}
 	}
 	return nil
+}
+
+func (t *UDPv6Transport) sendMulticastOnJoinedInterfaces(packet []byte, dest net.Addr) error {
+	var lastErr error
+	sent := 0
+	for _, ifIndex := range t.joinedInterfaces {
+		n, err := t.writeTo(packet, &ipv6.ControlMessage{IfIndex: ifIndex}, dest)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if n != len(packet) {
+			lastErr = fmt.Errorf("partial write on interface %d: %d/%d bytes", ifIndex, n, len(packet))
+			continue
+		}
+		sent++
+	}
+	if sent > 0 {
+		return nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("transport has no joined IPv6 multicast interfaces")
+	}
+	return &errors.NetworkError{
+		Operation: "send IPv6 multicast query",
+		Err:       lastErr,
+		Details:   fmt.Sprintf("failed to send %d bytes to %s", len(packet), dest),
+	}
 }
 
 // Receive waits for an incoming IPv6 packet, respecting context cancellation.
