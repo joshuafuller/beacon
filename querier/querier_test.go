@@ -5,6 +5,8 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"github.com/joshuafuller/beacon/internal/transport"
 )
 
 // BenchmarkQuery measures the query processing overhead per NFR-001.
@@ -513,5 +515,35 @@ func TestWithIPv6_OptionSetsFlag(t *testing.T) {
 
 	if !q.ipv6Enabled {
 		t.Error("WithIPv6() did not set ipv6Enabled = true")
+	}
+}
+
+// TestWithIPv6Transport_UsesGivenTransportForBothStacks verifies that
+// WithIPv6Transport (T100 companion) implies ipv6Enabled and that New()
+// dispatches Query() sends to the injected v4 and v6 mocks instead of
+// opening real UDP sockets.
+func TestWithIPv6Transport_UsesGivenTransportForBothStacks(t *testing.T) {
+	mockV4 := transport.NewMockTransport()
+	mockV6 := transport.NewMockTransport()
+
+	q, err := New(WithTransport(mockV4), WithIPv6Transport(mockV6))
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer func() { _ = q.Close() }()
+
+	if !q.ipv6Enabled {
+		t.Error("WithIPv6Transport() did not set ipv6Enabled = true")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, _ = q.Query(ctx, "test.local", RecordTypeA)
+
+	if len(mockV4.SendCalls()) != 1 {
+		t.Errorf("mockV4 SendCalls = %d, want 1", len(mockV4.SendCalls()))
+	}
+	if len(mockV6.SendCalls()) != 1 {
+		t.Errorf("mockV6 SendCalls = %d, want 1", len(mockV6.SendCalls()))
 	}
 }
