@@ -204,6 +204,60 @@ func (t *UDPv6Transport) sendMulticastOnJoinedInterfaces(packet []byte, dest net
 	}
 }
 
+// JoinedInterfaceIndexes returns a copy of the interfaces on which this
+// transport joined FF02::FB. Callers use these indexes to build RFC 6762 §6.2
+// address records scoped to the interface that will carry the packet.
+func (t *UDPv6Transport) JoinedInterfaceIndexes() []int {
+	return append([]int(nil), t.joinedInterfaces...)
+}
+
+// SendOnInterface sends one IPv6 multicast packet on a specific joined
+// interface. This prevents interface-specific address records from being
+// broadcast on links where those addresses are invalid (RFC 6762 §6.2).
+func (t *UDPv6Transport) SendOnInterface(ctx context.Context, packet []byte, destination net.Addr, ifIndex int) error {
+	select {
+	case <-ctx.Done():
+		return &errors.NetworkError{
+			Operation: "send IPv6 multicast on interface",
+			Err:       ctx.Err(),
+			Details:   "context canceled before send",
+		}
+	default:
+	}
+
+	joined := false
+	for _, joinedIndex := range t.joinedInterfaces {
+		if joinedIndex == ifIndex {
+			joined = true
+			break
+		}
+	}
+	if !joined {
+		return &errors.NetworkError{
+			Operation: "send IPv6 multicast on interface",
+			Err:       fmt.Errorf("interface %d is not joined", ifIndex),
+			Details:   fmt.Sprintf("cannot send %d bytes to %s", len(packet), destination),
+		}
+	}
+
+	n, err := t.writeTo(packet, &ipv6.ControlMessage{IfIndex: ifIndex}, destination)
+	if err != nil {
+		return &errors.NetworkError{
+			Operation: "send IPv6 multicast on interface",
+			Err:       err,
+			Details:   fmt.Sprintf("failed to send %d bytes on interface %d", len(packet), ifIndex),
+		}
+	}
+	if n != len(packet) {
+		return &errors.NetworkError{
+			Operation: "send IPv6 multicast on interface",
+			Err:       fmt.Errorf("partial write: %d/%d bytes", n, len(packet)),
+			Details:   fmt.Sprintf("incomplete transmission on interface %d", ifIndex),
+		}
+	}
+	return nil
+}
+
 // Receive waits for an incoming IPv6 packet, respecting context cancellation.
 //
 // Returns the interface index from the IPv6 control message when available

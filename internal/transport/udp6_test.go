@@ -141,6 +141,18 @@ func TestUDPv6TransportSendMulticastReportsPartialInterfaceFailure(t *testing.T)
 	}
 }
 
+func TestUDPv6TransportSendOnInterfaceRejectsUnjoinedInterface(t *testing.T) {
+	tr := &UDPv6Transport{
+		joinedInterfaces: []int{2},
+		writeTo: func(packet []byte, _ *ipv6.ControlMessage, _ net.Addr) (int, error) {
+			return len(packet), nil
+		},
+	}
+	if err := tr.SendOnInterface(context.Background(), []byte{1}, protocol.MulticastGroupIPv6(), 7); err == nil {
+		t.Fatal("SendOnInterface() accepted an interface that was not joined")
+	}
+}
+
 func TestUDPv6TransportReceiveReturnsPacketSourceAndInterface(t *testing.T) {
 	src := &net.UDPAddr{IP: net.ParseIP("fe80::2"), Port: protocol.Port, Zone: "eth0"}
 	conn := &ipv6PacketConnStub{}
