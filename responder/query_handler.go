@@ -6,6 +6,7 @@ import (
 	"github.com/joshuafuller/beacon/internal/message"
 	"github.com/joshuafuller/beacon/internal/protocol"
 	"github.com/joshuafuller/beacon/internal/responder"
+	"github.com/joshuafuller/beacon/internal/transport"
 )
 
 // runQueryHandler continuously receives and processes mDNS queries.
@@ -21,7 +22,7 @@ import (
 //  6. Send response (unicast or multicast based on QU bit)
 //
 // T080: Query handler goroutine
-func (r *Responder) runQueryHandler() {
+func (r *Responder) runQueryHandler(tr transport.Transport, ipv6Network bool) {
 	defer r.queryHandlerWg.Done()
 	for {
 		select {
@@ -33,7 +34,7 @@ func (r *Responder) runQueryHandler() {
 			// Receive query with timeout
 			// 007-interface-specific-addressing T027: Extract interfaceIndex for RFC 6762 §15 compliance
 			// Task 2: Capture source address for subnet validation (RFC 6762 §6.4)
-			packet, srcAddr, interfaceIndex, err := r.transport.Receive(r.ctx)
+			packet, srcAddr, interfaceIndex, err := tr.Receive(r.ctx)
 			if err != nil {
 				// Context canceled or transport closed
 				select {
@@ -50,7 +51,7 @@ func (r *Responder) runQueryHandler() {
 			// Handle query (T079)
 			// T028: Pass interfaceIndex to enable interface-specific addressing
 			// Task 2: Pass source address for subnet validation
-			_ = r.handleQuery(packet, srcAddr, interfaceIndex)
+			_ = r.handleQueryOnTransport(tr, ipv6Network, packet, srcAddr, interfaceIndex)
 		}
 	}
 }
@@ -69,7 +70,7 @@ func (r *Responder) runQueryHandler() {
 //   - bool: true if source is on same subnet, false otherwise
 //
 // Task 2: Source address validation
-func validateSourceAddress(srcAddr net.Addr, interfaceIndex int) bool {
+func validateSourceAddressOnNetwork(srcAddr net.Addr, interfaceIndex int, ipv6Network bool) bool {
 	// If interface index is unknown (0), skip validation (graceful degradation)
 	if interfaceIndex == 0 {
 		return true
@@ -79,6 +80,9 @@ func validateSourceAddress(srcAddr net.Addr, interfaceIndex int) bool {
 	udpAddr, ok := srcAddr.(*net.UDPAddr)
 	if !ok {
 		return false
+	}
+	if ipv6Network {
+		return udpAddr.IP.IsLinkLocalUnicast()
 	}
 	srcIP := udpAddr.IP.To4()
 	if srcIP == nil {
@@ -147,9 +151,14 @@ func validateSourceAddress(srcAddr net.Addr, interfaceIndex int) bool {
 // T079: Implement handleQuery()
 // T029: Added interfaceIndex parameter for interface-specific addressing
 // Task 2: Added srcAddr parameter for source address validation
-func (r *Responder) handleQuery(packet []byte, srcAddr net.Addr, interfaceIndex int) error {
+func (r *Responder) handleQuery(tr transport.Transport, packet []byte, srcAddr net.Addr, interfaceIndex int) error {
+	_, ipv6Network := tr.(*transport.UDPv6Transport)
+	return r.handleQueryOnTransport(tr, ipv6Network, packet, srcAddr, interfaceIndex)
+}
+
+func (r *Responder) handleQueryOnTransport(tr transport.Transport, ipv6Network bool, packet []byte, srcAddr net.Addr, interfaceIndex int) error {
 	// Task 2: RFC 6762 §6.4 - Validate source address is on same subnet
-	if !validateSourceAddress(srcAddr, interfaceIndex) {
+	if !validateSourceAddressOnNetwork(srcAddr, interfaceIndex, ipv6Network) {
 		// Source not on same subnet - ignore query per RFC 6762 §6.4
 		return nil
 	}
@@ -171,7 +180,7 @@ func (r *Responder) handleQuery(packet []byte, srcAddr net.Addr, interfaceIndex 
 		// RFC 6763 §9: Service Type Enumeration
 		// A PTR query for "_services._dns-sd._udp.local" returns all unique service types.
 		if question.QTYPE == uint16(protocol.RecordTypePTR) && question.QNAME == serviceEnumerationName {
-			r.handleServiceEnumerationQuery(question, srcAddr)
+			r.handleServiceEnumerationQuery(tr, ipv6Network, question, srcAddr)
 			continue
 		}
 
@@ -180,7 +189,7 @@ func (r *Responder) handleQuery(packet []byte, srcAddr net.Addr, interfaceIndex 
 			continue
 		}
 
-		r.respondToQuery(matchedService, msg, question, srcAddr, interfaceIndex)
+		r.respondToQuery(tr, ipv6Network, matchedService, msg, question, srcAddr, interfaceIndex)
 	}
 
 	return nil
@@ -191,7 +200,7 @@ const serviceEnumerationName = "_services._dns-sd._udp.local"
 
 // handleServiceEnumerationQuery responds to a DNS-SD Service Type Enumeration
 // query (RFC 6763 §9) with a PTR record for each unique registered service type.
-func (r *Responder) handleServiceEnumerationQuery(question message.Question, srcAddr net.Addr) {
+func (r *Responder) handleServiceEnumerationQuery(tr transport.Transport, ipv6Network bool, question message.Question, srcAddr net.Addr) {
 	serviceTypes := r.registry.ListServiceTypes()
 	if len(serviceTypes) == 0 {
 		return // No services registered, no response needed
@@ -230,10 +239,12 @@ func (r *Responder) handleServiceEnumerationQuery(question message.Question, src
 	var dest net.Addr
 	if quBit {
 		dest = srcAddr
+	} else if ipv6Network {
+		dest = protocol.MulticastGroupIPv6()
 	}
 	// nil dest = multicast to 224.0.0.251:5353
 
-	_ = r.transport.Send(r.ctx, responseMsg, dest)
+	_ = tr.Send(r.ctx, responseMsg, dest)
 }
 
 // findMatchingService finds a registered service matching question's QTYPE/QNAME.
@@ -258,7 +269,7 @@ func (r *Responder) findMatchingService(question message.Question) *responder.Se
 			if fullName == question.QNAME {
 				return service
 			}
-		case uint16(protocol.RecordTypeA):
+		case uint16(protocol.RecordTypeA), uint16(protocol.RecordTypeAAAA):
 			// A: match by hostname (e.g., "myhost.local")
 			if r.hostname == question.QNAME {
 				return service
@@ -280,13 +291,22 @@ func (r *Responder) findMatchingService(question message.Question) *responder.Se
 // a particular interface, it MUST include only addresses that are valid
 // on that interface, and MUST NOT include addresses configured on other
 // interfaces."
-func (r *Responder) respondToQuery(matchedService *responder.Service, msg *message.DNSMessage, question message.Question, srcAddr net.Addr, interfaceIndex int) {
+func (r *Responder) respondToQuery(tr transport.Transport, ipv6Network bool, matchedService *responder.Service, msg *message.DNSMessage, question message.Question, srcAddr net.Addr, interfaceIndex int) {
 	var ipv4 []byte
+	var ipv6Addresses [][]byte
 	var ipErr error
 
 	// T030: Graceful fallback when interface index unavailable (interfaceIndex=0)
 	// This happens when control messages aren't supported or platform doesn't provide IP_PKTINFO
-	if interfaceIndex == 0 {
+	if ipv6Network && interfaceIndex == 0 {
+		var ips []net.IP
+		ips, ipErr = getLocalIPv6()
+		ipv6Addresses = ipBytes(ips)
+	} else if ipv6Network {
+		var ips []net.IP
+		ips, ipErr = getIPv6ForInterface(interfaceIndex)
+		ipv6Addresses = ipBytes(ips)
+	} else if interfaceIndex == 0 {
 		// Degraded mode: Use default interface IP (legacy behavior)
 		// TODO T032: Add debug logging when F-6 (Logging & Observability) is implemented
 		ipv4, ipErr = getLocalIPv4()
@@ -305,13 +325,14 @@ func (r *Responder) respondToQuery(matchedService *responder.Service, msg *messa
 	}
 
 	serviceWithIP := &responder.ServiceWithIP{
-		InstanceName: matchedService.InstanceName,
-		ServiceType:  matchedService.ServiceType,
-		Domain:       "local",
-		Port:         matchedService.Port,
-		IPv4Address:  ipv4,
-		TXTRecords:   matchedService.TXT, // internal.Service uses TXT field
-		Hostname:     r.hostname,
+		InstanceName:  matchedService.InstanceName,
+		ServiceType:   matchedService.ServiceType,
+		Domain:        "local",
+		Port:          matchedService.Port,
+		IPv4Address:   ipv4,
+		IPv6Addresses: ipv6Addresses,
+		TXTRecords:    matchedService.TXT, // internal.Service uses TXT field
+		Hostname:      r.hostname,
 	}
 
 	// Build response (T076)
@@ -339,6 +360,8 @@ func (r *Responder) respondToQuery(matchedService *responder.Service, msg *messa
 	if quBit {
 		// RFC 6762 §5.4: QU bit set → send unicast response to querier
 		dest = srcAddr
+	} else if ipv6Network {
+		dest = protocol.MulticastGroupIPv6()
 	} else {
 		// RFC 6762 §5.4: QU bit clear → send multicast response
 		dest = nil // nil = multicast to 224.0.0.251:5353
@@ -346,7 +369,17 @@ func (r *Responder) respondToQuery(matchedService *responder.Service, msg *messa
 
 	// Send response
 	responsePacket := buildResponsePacket(response)
-	_ = r.transport.Send(r.ctx, responsePacket, dest)
+	_ = tr.Send(r.ctx, responsePacket, dest)
+}
+
+func ipBytes(ips []net.IP) [][]byte {
+	result := make([][]byte, 0, len(ips))
+	for _, ip := range ips {
+		if ip16 := ip.To16(); ip16 != nil && ip.To4() == nil {
+			result = append(result, append([]byte(nil), ip16...))
+		}
+	}
+	return result
 }
 
 // parseMessage is a wrapper around message.ParseMessage for easier imports.

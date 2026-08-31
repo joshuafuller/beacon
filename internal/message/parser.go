@@ -306,6 +306,8 @@ func ParseRDATA(recordType uint16, rdata []byte) (interface{}, error) {
 //   - msg: The complete DNS message (for compression-pointer resolution)
 //   - rdataStart: Byte offset of RDATA within msg
 //   - rdlength: Length of RDATA in bytes
+//
+//nolint:gocyclo // Wire-format dispatch validates each supported DNS RDATA shape independently.
 func ParseRDATAInMessage(recordType uint16, msg []byte, rdataStart, rdlength int) (interface{}, error) {
 	if rdataStart < 0 || rdlength < 0 || rdataStart+rdlength > len(msg) {
 		return nil, &errors.WireFormatError{

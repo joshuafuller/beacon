@@ -765,7 +765,7 @@ func TestParseRDATA_A(t *testing.T) {
 }
 
 func TestParseRDATA_AAAA(t *testing.T) {
-	// TODO add tests to mimic the a recrod parse tests
+	// TODO add tests to mimic the A record parse tests
 	// Removed this from TestParseRDATA_UnsupportedType:
 	// 		{
 	//			name:       "AAAA record (type 28) - not supported in M1",

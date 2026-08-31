@@ -4,6 +4,7 @@ package records
 import (
 	"encoding/binary"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/joshuafuller/beacon/internal/message"
@@ -17,12 +18,13 @@ import (
 //
 // T033: ServiceInfo type for BuildRecordSet()
 type ServiceInfo struct {
-	InstanceName string            // "My Printer"
-	ServiceType  string            // "_http._tcp.local"
-	Hostname     string            // "myhost.local"
-	Port         uint16            // 8080
-	IPv4Address  []byte            // [192, 168, 1, 100]
-	TXTRecords   map[string]string // {"version": "1.0"}
+	InstanceName  string            // "My Printer"
+	ServiceType   string            // "_http._tcp.local"
+	Hostname      string            // "myhost.local"
+	Port          uint16            // 8080
+	IPv4Address   []byte            // [192, 168, 1, 100]
+	IPv6Addresses [][]byte          // all 16-byte IPv6 addresses valid on the interface
+	TXTRecords    map[string]string // {"version": "1.0"}
 }
 
 // BuildRecordSet constructs a complete set of resource records for a service.
@@ -42,7 +44,7 @@ type ServiceInfo struct {
 // FR-032: System MUST build complete record set (PTR, SRV, TXT, A)
 // T033: Implement BuildRecordSet()
 func BuildRecordSet(service *ServiceInfo) []*message.ResourceRecord {
-	records := make([]*message.ResourceRecord, 0, 4)
+	records := make([]*message.ResourceRecord, 0, 5)
 
 	// 1. PTR record: _service._proto.local → instance._service._proto.local
 	ptrRecord := buildPTRRecord(service)
@@ -56,9 +58,14 @@ func BuildRecordSet(service *ServiceInfo) []*message.ResourceRecord {
 	txtRecord := buildTXTRecordFromService(service)
 	records = append(records, txtRecord)
 
-	// 4. A record: hostname.local → IPv4 address
-	aRecord := buildARecord(service)
-	records = append(records, aRecord)
+	if len(service.IPv4Address) == net.IPv4len {
+		records = append(records, buildARecord(service))
+	}
+	for _, address := range service.IPv6Addresses {
+		if len(address) == net.IPv6len {
+			records = append(records, buildAAAARecord(service, address))
+		}
+	}
 
 	return records
 }
@@ -213,12 +220,9 @@ func buildTXTRecord(txtRecords map[string]string) []byte {
 //
 // T033: A record construction
 func buildARecord(service *ServiceInfo) *message.ResourceRecord {
-	if len(service.IPv4Address) != 4 {
-		// Invalid IPv4 address - return placeholder
-		// In production, this should return an error
+	if len(service.IPv4Address) != net.IPv4len {
 		service.IPv4Address = []byte{0, 0, 0, 0}
 	}
-
 	return &message.ResourceRecord{
 		Name:       service.Hostname,
 		Type:       protocol.RecordTypeA,
@@ -226,6 +230,17 @@ func buildARecord(service *ServiceInfo) *message.ResourceRecord {
 		TTL:        4500, // RFC 6762 §10: 4500 seconds (75 min) for hostname records
 		Data:       service.IPv4Address,
 		CacheFlush: true, // A is unique (one hostname = one IP)
+	}
+}
+
+func buildAAAARecord(service *ServiceInfo, address []byte) *message.ResourceRecord {
+	return &message.ResourceRecord{
+		Name:       service.Hostname,
+		Type:       protocol.RecordTypeAAAA,
+		Class:      protocol.ClassIN,
+		TTL:        protocol.TTLHostname,
+		Data:       address,
+		CacheFlush: true,
 	}
 }
 

@@ -100,10 +100,10 @@ func New(ctx context.Context, opts ...Option) (*Responder, error) {
 
 	// Start query handler goroutine(s). IPv6 goroutine starts only when transport6 is set.
 	r.queryHandlerWg.Add(1)
-	go r.runQueryHandler(r.transport)
+	go r.runQueryHandler(r.transport, false)
 	if r.transport6 != nil {
 		r.queryHandlerWg.Add(1)
-		go r.runQueryHandler(r.transport6)
+		go r.runQueryHandler(r.transport6, true)
 	}
 
 	return r, nil
@@ -304,11 +304,11 @@ func getIPv4ForInterface(ifIndex int) ([]byte, error) {
 	}
 }
 
-// getIPv6ForInterface returns the first IPv6 address on the specified network interface.
+// getIPv6ForInterface returns every IPv6 address on the specified interface.
 //
 // RFC 6762 §11: mDNS on IPv6 uses link-local multicast (FF02::FB). Responses must
 // include only addresses valid on the receiving interface (RFC 6762 §15).
-func getIPv6ForInterface(ifIndex int) (net.IP, error) {
+func getIPv6ForInterface(ifIndex int) ([]net.IP, error) {
 	iface, err := net.InterfaceByIndex(ifIndex)
 	if err != nil {
 		return nil, &errors.NetworkError{
@@ -325,12 +325,16 @@ func getIPv6ForInterface(ifIndex int) (net.IP, error) {
 			Details:   fmt.Sprintf("failed to get addresses for %s", iface.Name),
 		}
 	}
+	ips := make([]net.IP, 0, len(addrs))
 	for _, addr := range addrs {
 		if ipnet, ok := addr.(*net.IPNet); ok {
 			if ip := ipnet.IP; ip.To4() == nil && len(ip) == 16 {
-				return ip, nil
+				ips = append(ips, append(net.IP(nil), ip...))
 			}
 		}
+	}
+	if len(ips) > 0 {
+		return ips, nil
 	}
 	return nil, &errors.ValidationError{
 		Field:   "interface",
@@ -339,20 +343,25 @@ func getIPv6ForInterface(ifIndex int) (net.IP, error) {
 	}
 }
 
-// getLocalIPv6 returns the first non-loopback IPv6 address from any interface.
+// getLocalIPv6 returns every non-loopback IPv6 address from the selected
+// fallback view when the receiving interface is unknown.
 //
 // Fallback used when interfaceIndex is unknown (0). Mirrors getLocalIPv4 for IPv6.
-func getLocalIPv6() (net.IP, error) {
+func getLocalIPv6() ([]net.IP, error) {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
 		return nil, err
 	}
+	ips := make([]net.IP, 0, len(addrs))
 	for _, addr := range addrs {
 		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
 			if ip := ipnet.IP; ip.To4() == nil && len(ip) == 16 {
-				return ip, nil
+				ips = append(ips, append(net.IP(nil), ip...))
 			}
 		}
+	}
+	if len(ips) > 0 {
+		return ips, nil
 	}
 	return nil, fmt.Errorf("no non-loopback IPv6 address found")
 }

@@ -48,7 +48,8 @@ import (
 type Querier struct {
 	// transport is the network transport abstraction (UDP multicast for mDNS)
 	// T031: Migrated from socket net.PacketConn to transport.Transport interface
-	transport transport.Transport
+	transport  transport.Transport
+	transport6 transport.Transport
 
 	// ctx is the lifecycle context for the Querier
 	ctx context.Context
@@ -91,6 +92,10 @@ type Querier struct {
 	// rateLimitEnabled indicates whether rate limiting is enabled (default: true)
 	// Per FR-033: Configurable via WithRateLimit()
 	rateLimitEnabled bool
+
+	// ipv6Enabled is set by WithIPv6. transport6 remains nil when the host has
+	// no usable IPv6 multicast interface.
+	ipv6Enabled bool
 }
 
 // New creates a new Querier with optional configuration.
@@ -156,9 +161,19 @@ func New(opts ...Option) (*Querier, error) {
 		go q.cleanupLoop()
 	}
 
-	// Start background receiver goroutine per FR-006
+	if q.ipv6Enabled {
+		if tr6, err6 := transport.NewUDPv6Transport(); err6 == nil {
+			q.transport6 = tr6
+		}
+	}
+
+	// Start background receiver goroutine(s) per FR-006.
 	q.wg.Add(1)
-	go q.receiveLoop()
+	go q.runReceiveLoop(q.transport, false)
+	if q.transport6 != nil {
+		q.wg.Add(1)
+		go q.runReceiveLoop(q.transport6, true)
+	}
 
 	return q, nil
 }
@@ -244,6 +259,11 @@ func (q *Querier) Query(ctx context.Context, name string, recordType RecordType)
 	err = q.transport.Send(ctx, queryMsg, protocol.MulticastGroupIPv4())
 	if err != nil {
 		return nil, err // Already wrapped as NetworkError
+	}
+	if q.transport6 != nil {
+		// IPv4 has already succeeded, so an individual IPv6 link failure must not
+		// discard usable IPv4 results.
+		_ = q.transport6.Send(ctx, queryMsg, protocol.MulticastGroupIPv6())
 	}
 
 	// FR-008: Aggregate responses received within timeout window
@@ -350,6 +370,11 @@ func applyBundledAdditionals(svc *ServiceInstance, additionals []ResourceRecord,
 				svc.AddrIPv4 = ip
 			}
 		}
+		if rr := findInAdditionals(additionals, svc.Hostname, RecordTypeAAAA); rr != nil {
+			if ip := rr.AsAAAA(); ip != nil {
+				svc.AddrIPv6 = ip
+			}
+		}
 	}
 }
 
@@ -404,6 +429,21 @@ func (q *Querier) queryFallbackA(ctx context.Context, hostname string, timeout t
 	return nil, false
 }
 
+func (q *Querier) queryFallbackAAAA(ctx context.Context, hostname string, timeout time.Duration) (net.IP, bool) {
+	aaaaCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	aaaaResp, err := q.Query(aaaaCtx, hostname, RecordTypeAAAA)
+	if err != nil {
+		return nil, false
+	}
+	for _, r := range aaaaResp.Records {
+		if addr := r.AsAAAA(); addr != nil {
+			return addr, true
+		}
+	}
+	return nil, false
+}
+
 // resolveInstance resolves a single PTR-discovered target into a fully
 // populated ServiceInstance: it prefers additionals bundled in the browse
 // response (RFC 6763 §12) and falls back to explicit SRV/TXT/A queries only
@@ -428,6 +468,11 @@ func (q *Querier) resolveInstance(ctx context.Context, serviceType, target strin
 	if svc.Hostname != "" && svc.AddrIPv4 == nil {
 		if ip, ok := q.queryFallbackA(ctx, svc.Hostname, resolveTimeout); ok {
 			svc.AddrIPv4 = ip
+		}
+	}
+	if q.transport6 != nil && svc.Hostname != "" && svc.AddrIPv6 == nil {
+		if ip, ok := q.queryFallbackAAAA(ctx, svc.Hostname, resolveTimeout); ok {
+			svc.AddrIPv6 = ip
 		}
 	}
 
@@ -571,7 +616,7 @@ func (q *Querier) collectResponses(ctx context.Context, _ string, queryType Reco
 //
 // FR-006: System MUST receive responses with configurable timeout
 // FR-017: System MUST close socket after query completion
-func (q *Querier) receiveLoop() {
+func (q *Querier) runReceiveLoop(tr transport.Transport, ipv6Network bool) {
 	defer q.wg.Done()
 
 	for {
@@ -584,7 +629,7 @@ func (q *Querier) receiveLoop() {
 			// FR-006: Receive with short timeout to check context periodically
 			// T034: Migrated from network.ReceiveResponse to transport.Receive()
 			ctx, cancel := context.WithTimeout(q.ctx, 100*time.Millisecond)
-			responseMsg, srcAddr, _, err := q.transport.Receive(ctx) // interfaceIndex not used by querier
+			responseMsg, srcAddr, _, err := tr.Receive(ctx) // interfaceIndex not used by querier
 			cancel()
 
 			if err != nil {
@@ -595,7 +640,7 @@ func (q *Querier) receiveLoop() {
 
 			// T077/T075/FR-029: Packet size (RFC 6762 §17), source-IP (RFC 6762 §2),
 			// and rate-limit filtering - see shouldDrop for details.
-			if q.shouldDrop(responseMsg, srcAddr) {
+			if q.shouldDrop(responseMsg, srcAddr, ipv6Network) {
 				continue
 			}
 
@@ -612,18 +657,30 @@ func (q *Querier) receiveLoop() {
 }
 
 // isValidSourceIP reports whether srcIP is link-local scope per RFC 6762 §2.
-func isValidSourceIP(srcIP net.IP) bool {
+func isValidSourceIP(srcIP net.IP, ipv6Network bool) bool {
+	if ipv6Network {
+		if ip4 := srcIP.To4(); ip4 != nil {
+			return isValidSourceIP(ip4, false)
+		}
+		return srcIP.IsLinkLocalUnicast()
+	}
 	ip4 := srcIP.To4()
 	if ip4 == nil {
-		return true // non-IPv4 not covered by this check
+		return false
 	}
 	isLinkLocal := ip4[0] == 169 && ip4[1] == 254
 	return isLinkLocal || security.IsPrivate(srcIP)
 }
 
+// isAcceptableSourceIP is retained for focused package tests and callers that
+// need to validate a source independently of a receive loop.
+func isAcceptableSourceIP(srcIP net.IP, ipv6Network bool) bool {
+	return isValidSourceIP(srcIP, ipv6Network)
+}
+
 // shouldDrop applies size, source-IP, and rate-limit filtering to a received
 // packet. srcIPStr is returned for logging/future use even when accepted.
-func (q *Querier) shouldDrop(responseMsg []byte, srcAddr net.Addr) bool {
+func (q *Querier) shouldDrop(responseMsg []byte, srcAddr net.Addr, ipv6Network bool) bool {
 	const maxMDNSPacketSize = 9000 // RFC 6762 §17
 	if len(responseMsg) > maxMDNSPacketSize {
 		return true
@@ -633,7 +690,7 @@ func (q *Querier) shouldDrop(responseMsg []byte, srcAddr net.Addr) bool {
 		return false
 	}
 	srcIP := udpAddr.IP
-	if srcIP != nil && !isValidSourceIP(srcIP) {
+	if srcIP != nil && !isValidSourceIP(srcIP, ipv6Network) {
 		return true
 	}
 	if q.rateLimitEnabled && q.rateLimiter != nil && !q.rateLimiter.Allow(srcIP.String()) {
@@ -691,6 +748,11 @@ func (q *Querier) Close() error {
 	// T035: Migrated from network.CloseSocket to transport.Close()
 	// FR-004 FIX: Now properly propagates errors (CloseSocket was swallowing them)
 	err := q.transport.Close()
+	if q.transport6 != nil {
+		if err6 := q.transport6.Close(); err == nil {
+			err = err6
+		}
+	}
 	if err != nil {
 		return err
 	}
