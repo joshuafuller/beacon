@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/joshuafuller/beacon/internal/errors"
+	"github.com/joshuafuller/beacon/internal/transport"
 )
 
 // Option is a functional option for configuring a Querier.
@@ -195,27 +196,43 @@ func WithIPv6() Option {
 	}
 }
 
-// TODO M2 (T100): Add WithTransport() option for test isolation
-// This would allow injecting MockTransport for unit testing without real network.
-// Current gap: All querier tests use real UDP sockets, making edge cases harder to test.
+// WithTransport overrides the default IPv4 transport (normally a real UDP
+// multicast socket bound to 224.0.0.251:5353). New() skips creating that
+// socket when this option is supplied.
 //
-// Proposed implementation:
-//   func WithTransport(t transport.Transport) Option {
-//       return func(q *Querier) error {
-//           q.transport = t
-//           return nil
-//       }
-//   }
+// This exists for test isolation (T100): injecting transport.NewMockTransport()
+// lets tests drive Querier's aggregation/dedup/DiscoverServices logic via
+// fixture packets without a real socket racing against live mDNS traffic on
+// the host's network.
 //
-// Usage in tests:
-//   mock := transport.NewMockTransport()
-//   q, _ := New(WithTransport(mock))
+// Example:
 //
-// This enables:
-// - Testing without real network
-// - Mocking specific network failures
-// - Simulating exact mDNS responses
-// - Faster test execution
+//	mock := transport.NewMockTransport()
+//	q, _ := New(WithTransport(mock))
 //
-// Decision: Deferred to M2 (current integration coverage adequate for M1.1)
 // See: specs/004-m1-1-architectural-hardening/tasks.md Phase 8, T100
+func WithTransport(t transport.Transport) Option {
+	return func(q *Querier) error {
+		q.transport = t
+		return nil
+	}
+}
+
+// WithIPv6Transport overrides the default IPv6 transport and implies WithIPv6
+// (dual-stack is meaningless without it). New() skips creating the real
+// UDPv6Transport when this option is supplied.
+//
+// Companion to WithTransport (T100) for tests that need to exercise dual-stack
+// Query() behavior (e.g. verifying both transports are sent to) without
+// opening real IPv4 and IPv6 multicast sockets.
+//
+// Example:
+//
+//	q, _ := New(WithTransport(mockV4), WithIPv6Transport(mockV6))
+func WithIPv6Transport(t transport.Transport) Option {
+	return func(q *Querier) error {
+		q.transport6 = t
+		q.ipv6Enabled = true
+		return nil
+	}
+}

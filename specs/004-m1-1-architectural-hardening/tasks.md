@@ -216,7 +216,7 @@
 - [x] T097 Remove stale TODO comments from internal/network/interfaces_test.go (T037-T038 - tests ARE implemented, just had stale comments)
 - [x] T098 Remove stale test skeleton from internal/transport/socket_test.go (TestPlatformControl T017 - covered by platform-specific tests + Avahi integration)
 - [x] T099 Remove stale TDD RED tests from querier/querier_test.go (T027-T028 - transport field exists, MockTransport deferred to M2)
-- [ ] T100 [FUTURE] Add WithTransport() option to enable MockTransport injection (deferred to M2 - enables better test isolation)
+- [x] T100 Add WithTransport()/WithIPv6Transport() options to enable MockTransport injection (querier/options.go) - eliminates real-socket races with fixture-injected tests in querier/collectresponses_test.go
 - [x] T101 Document test removal rationale in commit messages and code comments
 - [x] T102 Verify all tests still PASS after cleanup (10/10 packages confirmed)
 - [x] T103 Verify legitimate skips remain (6 skips: platform-specific, manual validation, environment-dependent)
