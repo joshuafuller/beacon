@@ -3,9 +3,14 @@ package contract
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"testing"
 	"time"
 
+	"github.com/joshuafuller/beacon/internal/message"
+	"github.com/joshuafuller/beacon/internal/protocol"
+	"github.com/joshuafuller/beacon/internal/transport"
 	"github.com/joshuafuller/beacon/querier"
 )
 
@@ -202,55 +207,67 @@ func TestQuery_RFC1035_NameCompression(t *testing.T) {
 // FR-007: System MUST deduplicate identical responses from multiple responders
 // FR-008: System MUST aggregate responses received within timeout window
 //
-// NOTE: This test validates aggregation behavior
+// Drives this via a mock transport queued with synthetic PTR answers
+// (simulating multiple distinct responders answering the DNS-SD meta-query,
+// per RFC 6763 §9, plus one exact duplicate) rather than querying the real
+// LAN. Real service discovery traffic made this test both non-deterministic
+// (record count depends on what's on the network) and silently wrong: the
+// old duplicate check keyed only on Name+Type, but every answer to this
+// meta-query shares the same Name ("_services._dns-sd._udp.local") and Type
+// (PTR) and differs only in RDATA - so it flagged every distinct real
+// service type as a "duplicate" of the first.
 func TestQuery_RFC6762_MultipleResponses(t *testing.T) {
-	q, err := querier.New()
+	mock := transport.NewMockTransport()
+	q, err := querier.New(querier.WithTransport(mock))
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
 	defer func() { _ = q.Close() }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	serviceTypes := []string{"_http._tcp.local", "_ipp._tcp.local", "_ssh._tcp.local"}
+	srcAddr := &net.UDPAddr{IP: net.ParseIP("192.168.1.10"), Port: 5353}
+	for i, svcType := range serviceTypes {
+		target, err := message.EncodeName(svcType)
+		if err != nil {
+			t.Fatalf("EncodeName(%q) failed: %v", svcType, err)
+		}
+		packet, err := message.BuildResponse([]*message.ResourceRecord{{
+			Name:  "_services._dns-sd._udp.local",
+			Type:  protocol.RecordTypePTR,
+			Class: protocol.ClassIN,
+			TTL:   120,
+			Data:  target,
+		}})
+		if err != nil {
+			t.Fatalf("BuildResponse(%q) failed: %v", svcType, err)
+		}
+		mock.QueueReceive(packet, srcAddr, 0)
+		if i == 0 {
+			// A second responder answering with the exact same record - FR-007.
+			mock.QueueReceive(packet, srcAddr, 0)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 
-	// Query for service discovery (likely to get multiple responses)
 	response, err := q.Query(ctx, "_services._dns-sd._udp.local", querier.RecordTypePTR)
 	if err != nil {
-		t.Logf("Query() returned error: %v (acceptable in isolated test)", err)
-		return
+		t.Fatalf("Query() error = %v", err)
 	}
 
-	if response == nil {
-		t.Logf("Query() received no responses (timeout)")
-		return
+	if len(response.Records) != len(serviceTypes) {
+		t.Fatalf("Query() aggregated %d records, want %d (duplicate answer must be deduplicated per FR-007)",
+			len(response.Records), len(serviceTypes))
 	}
+	t.Logf("Query() aggregated %d distinct responses per FR-008", len(response.Records))
 
-	recordCount := len(response.Records)
-	if recordCount == 0 {
-		t.Logf("Query() aggregated 0 responses (no services on network)")
-		return
-	}
-
-	if recordCount == 1 {
-		t.Logf("Query() aggregated 1 response per FR-008")
-	} else {
-		t.Logf("Query() aggregated %d responses per FR-008", recordCount)
-
-		// Verify deduplication per FR-007
-		seen := make(map[string]bool)
-		duplicates := 0
-		for _, record := range response.Records {
-			key := record.Name + "|" + string(rune(record.Type))
-			if seen[key] {
-				duplicates++
-			}
-			seen[key] = true
+	seen := make(map[string]bool)
+	for _, record := range response.Records {
+		key := fmt.Sprintf("%s|%d|%v", record.Name, record.Type, record.Data)
+		if seen[key] {
+			t.Errorf("Query() returned duplicate record %q (deduplication failed per FR-007)", key)
 		}
-
-		if duplicates > 0 {
-			t.Errorf("Query() returned %d duplicate records (deduplication failed per FR-007)", duplicates)
-		} else {
-			t.Logf("Query() successfully deduplicated records per FR-007")
-		}
+		seen[key] = true
 	}
 }
