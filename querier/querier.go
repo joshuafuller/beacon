@@ -278,7 +278,6 @@ func (q *Querier) Query(ctx context.Context, name string, recordType RecordType)
 //	    fmt.Printf("%s at %s:%d (%s)\n",
 //	        svc.InstanceName, svc.AddrIPv4, svc.Port, svc.TXT["path"])
 //	}
-//
 func (q *Querier) DiscoverServices(ctx context.Context, serviceType string) ([]ServiceInstance, error) {
 	// Phase 1: Browse for instances via PTR query.
 	browseTimeout := computeBrowseTimeout(ctx)
