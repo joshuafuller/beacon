@@ -123,7 +123,9 @@ func (a *Announcer) Announce(ctx context.Context, _ string, records []byte) erro
 				IP:   net.ParseIP(protocol.MulticastAddrIPv4),
 				Port: protocol.Port,
 			}
-			_ = a.transport.Send(ctx, announceMsg, dest) // nosemgrep: beacon-error-swallowing
+			if err := a.transport.Send(ctx, announceMsg, dest); err != nil {
+				return err
+			}
 		}
 
 		// Wait 1s before next announcement (except after last)

@@ -1,11 +1,47 @@
 package records
 
 import (
+	"bytes"
 	"testing"
 	"time"
 
 	"github.com/joshuafuller/beacon/internal/protocol"
 )
+
+// RFC 6762 §6.2: Include every address valid on the sending interface and
+// reject malformed addresses rather than emitting invalid AAAA records.
+func TestBuildRecordSetIncludesEveryValidIPv6Address(t *testing.T) {
+	want := [][]byte{
+		{0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+		{0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2},
+	}
+	service := &ServiceInfo{
+		InstanceName:  "Printer",
+		ServiceType:   "_ipp._tcp.local",
+		Hostname:      "printer.local",
+		Port:          631,
+		IPv4Address:   []byte{192, 0, 2, 1},
+		IPv6Addresses: append(append([][]byte(nil), want...), []byte{1, 2, 3}),
+	}
+
+	var got [][]byte
+	for _, record := range BuildRecordSet(service) {
+		if record.Type == protocol.RecordTypeAAAA {
+			got = append(got, record.Data)
+			if !record.CacheFlush || record.TTL != protocol.TTLHostname {
+				t.Fatalf("AAAA metadata = cache-flush %v, TTL %d", record.CacheFlush, record.TTL)
+			}
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("AAAA record count = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if !bytes.Equal(got[i], want[i]) {
+			t.Fatalf("AAAA record %d = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
 
 // recordsClock is a deterministic clock for exercising the RFC 6762 §6.2
 // rate-limit boundaries (1s multicast, 250ms probe defense) and TTL expiry

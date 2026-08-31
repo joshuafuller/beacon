@@ -33,13 +33,14 @@ type ResponseBuilder struct {
 //
 // T075: Service type for ResponseBuilder tests
 type ServiceWithIP struct {
-	InstanceName string
-	ServiceType  string
-	Domain       string
-	Port         uint16
-	IPv4Address  []byte
-	TXTRecords   map[string]string
-	Hostname     string
+	InstanceName  string
+	ServiceType   string
+	Domain        string
+	Port          uint16
+	IPv4Address   []byte
+	IPv6Addresses [][]byte
+	TXTRecords    map[string]string
+	Hostname      string
 }
 
 // NewResponseBuilder creates a new ResponseBuilder with RFC 6762 defaults.
@@ -88,6 +89,8 @@ func (rb *ResponseBuilder) BuildResponse(service *ServiceWithIP, query *message.
 	// For now, assume first question is PTR query (will enhance later)
 	if len(query.Questions) > 0 && query.Questions[0].QTYPE == uint16(protocol.RecordTypePTR) {
 		rb.populatePTRResponse(response, allRecords, knownAnswers)
+	} else if len(query.Questions) > 0 {
+		rb.populateDirectResponse(response, allRecords, knownAnswers, protocol.RecordType(query.Questions[0].QTYPE))
 	}
 
 	if err := rb.finalizeCounts(response); err != nil {
@@ -130,12 +133,13 @@ func (rb *ResponseBuilder) newResponseSkeleton(query *message.DNSMessage) *messa
 func (rb *ResponseBuilder) buildServiceRecords(service *ServiceWithIP) ([]*message.ResourceRecord, error) {
 	// Convert Service to records.ServiceInfo for record building
 	serviceInfo := &records.ServiceInfo{
-		InstanceName: service.InstanceName,
-		ServiceType:  service.ServiceType,
-		Hostname:     rb.getHostname(service),
-		Port:         service.Port,
-		IPv4Address:  service.IPv4Address,
-		TXTRecords:   service.TXTRecords,
+		InstanceName:  service.InstanceName,
+		ServiceType:   service.ServiceType,
+		Hostname:      rb.getHostname(service),
+		Port:          service.Port,
+		IPv4Address:   service.IPv4Address,
+		IPv6Addresses: service.IPv6Addresses,
+		TXTRecords:    service.TXTRecords,
 	}
 
 	// Build all records for this service
@@ -190,12 +194,20 @@ func (rb *ResponseBuilder) populatePTRResponse(response *message.DNSMessage, all
 
 	// Add SRV, TXT, A to additional section (with known-answer suppression)
 	for _, rr := range allRecords {
-		if rr.Type == protocol.RecordTypeSRV || rr.Type == protocol.RecordTypeTXT || rr.Type == protocol.RecordTypeA {
+		if rr.Type == protocol.RecordTypeSRV || rr.Type == protocol.RecordTypeTXT || rr.Type == protocol.RecordTypeA || rr.Type == protocol.RecordTypeAAAA {
 			// T095: Apply known-answer suppression per RFC 6762 §7.1
 			if rb.ApplyKnownAnswerSuppression(rr, knownAnswers) {
 				response.Additionals = append(response.Additionals, rb.recordToAnswer(rr))
 			}
 			// T096: TODO - log suppressed record
+		}
+	}
+}
+
+func (rb *ResponseBuilder) populateDirectResponse(response *message.DNSMessage, allRecords, knownAnswers []*message.ResourceRecord, recordType protocol.RecordType) {
+	for _, rr := range allRecords {
+		if rr.Type == recordType && rb.ApplyKnownAnswerSuppression(rr, knownAnswers) {
+			response.Answers = append(response.Answers, rb.recordToAnswer(rr))
 		}
 	}
 }

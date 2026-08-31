@@ -270,9 +270,9 @@ func TestValidateRecordType_FR002_SupportedTypes(t *testing.T) {
 			wantErr:    false,
 		},
 		{
-			name:       "AAAA record (28) not supported in M1",
+			name:       "AAAA record (28) supported per per FR-M4-001",
 			recordType: 28,
-			wantErr:    true,
+			wantErr:    false,
 		},
 		{
 			name:       "MX record (15) not supported in M1",

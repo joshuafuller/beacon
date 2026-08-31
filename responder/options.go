@@ -56,6 +56,24 @@ func WithRateLimiter(rl *security.RateLimiter) Option {
 	}
 }
 
+// WithIPv6 enables dual-stack operation by adding an IPv6 multicast transport.
+//
+// RFC 6762 §§20, 22: Dual-stack mDNS participates in the IPv6 zone at FF02::FB:5353.
+//
+// If IPv6 is unavailable on this host, this option degrades gracefully and the
+// responder continues in IPv4-only mode.
+func WithIPv6() Option {
+	return func(r *Responder) error {
+		tr6, err := transport.NewUDPv6Transport()
+		if err != nil {
+			// Graceful degradation: IPv6 unavailable, continue IPv4-only.
+			return nil
+		}
+		r.transport6 = tr6
+		return nil
+	}
+}
+
 // WithHostname sets a custom hostname for the responder.
 //
 // If not provided, the system hostname will be used.

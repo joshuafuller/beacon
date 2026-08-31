@@ -2,6 +2,7 @@ package querier
 
 import (
 	"context"
+	"net"
 	"testing"
 	"time"
 )
@@ -421,5 +422,96 @@ func TestQuery_HonorsDefaultTimeout_DeadlinelessContext(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("Query did not return within 3s; WithTimeout is not honored for a deadline-less context (issue #5)")
+	}
+}
+
+// ── IPv6 unit tests ───────────────────────────────────────────────────────────
+
+// TestRecordTypeAAAA_Constant verifies the AAAA record type constant value per RFC 3596.
+func TestRecordTypeAAAA_Constant(t *testing.T) {
+	if RecordTypeAAAA != 28 {
+		t.Errorf("RecordTypeAAAA = %d, want 28 per RFC 3596", RecordTypeAAAA)
+	}
+}
+
+// TestResourceRecord_AsAAAA validates the AsAAAA accessor on AAAA and non-AAAA records.
+func TestResourceRecord_AsAAAA(t *testing.T) {
+	fe80 := net.ParseIP("fe80::1")
+
+	aaaaRecord := ResourceRecord{
+		Name: "host.local",
+		Type: RecordTypeAAAA,
+		Data: fe80,
+	}
+	aRecord := ResourceRecord{
+		Name: "host.local",
+		Type: RecordTypeA,
+		Data: net.IPv4(192, 168, 1, 1),
+	}
+
+	if ip := aaaaRecord.AsAAAA(); ip == nil {
+		t.Error("AsAAAA() on AAAA record returned nil, want IPv6 address")
+	}
+	if ip := aRecord.AsAAAA(); ip != nil {
+		t.Errorf("AsAAAA() on A record returned %v, want nil", ip)
+	}
+	// AsA must not match AAAA records
+	if ip := aaaaRecord.AsA(); ip != nil {
+		t.Errorf("AsA() on AAAA record returned %v, want nil", ip)
+	}
+}
+
+// TestIsAcceptableSourceIP covers IPv4 and IPv6 source-IP filtering per RFC 6762 §2.
+func TestIsAcceptableSourceIP(t *testing.T) {
+	tests := []struct {
+		name     string
+		ip       net.IP
+		isIPv6tr bool
+		want     bool
+	}{
+		// IPv4 transport cases
+		{"ipv4 link-local accepted", net.ParseIP("169.254.1.1"), false, true},
+		{"ipv4 RFC-1918 10.x accepted", net.ParseIP("10.0.0.1"), false, true},
+		{"ipv4 RFC-1918 192.168.x accepted", net.ParseIP("192.168.1.1"), false, true},
+		{"ipv4 RFC-1918 172.16.x accepted", net.ParseIP("172.16.0.1"), false, true},
+		{"ipv4 public rejected", net.ParseIP("8.8.8.8"), false, false},
+		// IPv6 transport cases
+		{"ipv6 link-local fe80 accepted", net.ParseIP("fe80::1"), true, true},
+		{"ipv6 link-local fe80::abcd accepted", net.ParseIP("fe80::abcd"), true, true},
+		{"ipv6 global unicast rejected", net.ParseIP("2001:db8::1"), true, false},
+		{"ipv6 loopback rejected", net.ParseIP("::1"), true, false},
+		// IPv4-mapped in IPv6 transport
+		{"ipv4-mapped private accepted via ipv6 tr", net.ParseIP("::ffff:192.168.1.1"), true, true},
+		{"ipv4-mapped public rejected via ipv6 tr", net.ParseIP("::ffff:8.8.8.8"), true, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isAcceptableSourceIP(tt.ip, tt.isIPv6tr)
+			if got != tt.want {
+				t.Errorf("isAcceptableSourceIP(%v, ipv6=%v) = %v, want %v",
+					tt.ip, tt.isIPv6tr, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestWithIPv6_OptionSetsFlag verifies that WithIPv6() sets the ipv6Enabled flag
+// on the Querier without affecting other fields.
+func TestWithIPv6_OptionSetsFlag(t *testing.T) {
+	q := &Querier{
+		defaultTimeout:     time.Second,
+		rateLimitThreshold: 100,
+		rateLimitCooldown:  60 * time.Second,
+		rateLimitEnabled:   true,
+	}
+
+	opt := WithIPv6()
+	if err := opt(q); err != nil {
+		t.Fatalf("WithIPv6() returned error: %v", err)
+	}
+
+	if !q.ipv6Enabled {
+		t.Error("WithIPv6() did not set ipv6Enabled = true")
 	}
 }

@@ -115,10 +115,9 @@ func TestQuery_ValidationError_UnsupportedRecordType(t *testing.T) {
 		name       string
 		recordType querier.RecordType
 	}{
-		{"AAAA (28)", querier.RecordType(28)}, // IPv6 - not supported in M1
-		{"MX (15)", querier.RecordType(15)},   // Mail exchange - not supported
-		{"CNAME (5)", querier.RecordType(5)},  // Canonical name - not supported
-		{"NS (2)", querier.RecordType(2)},     // Name server - not supported
+		{"MX (15)", querier.RecordType(15)},  // Mail exchange - not supported
+		{"CNAME (5)", querier.RecordType(5)}, // Canonical name - not supported
+		{"NS (2)", querier.RecordType(2)},    // Name server - not supported
 	}
 
 	for _, tt := range unsupportedTypes {

@@ -176,7 +176,9 @@ func (p *Prober) sendProbe(ctx context.Context, serviceName string) error {
 			IP:   net.ParseIP(protocol.MulticastAddrIPv4),
 			Port: protocol.Port,
 		}
-		_ = p.transport.Send(ctx, probeMsg, dest) // nosemgrep: beacon-error-swallowing
+		if err := p.transport.Send(ctx, probeMsg, dest); err != nil {
+			return err
+		}
 	}
 
 	return nil

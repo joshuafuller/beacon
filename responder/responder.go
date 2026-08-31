@@ -18,7 +18,7 @@ import (
 
 // Responder manages mDNS service registration and response per RFC 6762.
 //
-// Interface-Specific Addressing (RFC 6762 §15):
+// Interface-Specific Addressing (RFC 6762 §6.2):
 // The responder automatically detects which network interface received each query
 // and responds with ONLY the IP address valid on that interface. This ensures
 // clients can connect to the correct IP when the host has multiple network interfaces.
@@ -43,6 +43,7 @@ import (
 type Responder struct {
 	ctx              context.Context
 	transport        transport.Transport
+	transport6       transport.Transport // IPv6 transport (nil if IPv6 not enabled)
 	registry         *responder.Registry
 	hostname         string
 	queryHandlerWg   sync.WaitGroup             // Synchronize query handler goroutine shutdown
@@ -97,9 +98,13 @@ func New(ctx context.Context, opts ...Option) (*Responder, error) {
 		}
 	}
 
-	// Start query handler goroutine (T080)
+	// Start query handler goroutine(s). IPv6 goroutine starts only when transport6 is set.
 	r.queryHandlerWg.Add(1)
-	go r.runQueryHandler()
+	go r.runQueryHandler(r.transport, false)
+	if r.transport6 != nil {
+		r.queryHandlerWg.Add(1)
+		go r.runQueryHandler(r.transport6, true)
+	}
 
 	return r, nil
 }
@@ -127,11 +132,15 @@ func (r *Responder) Close() error {
 		_ = r.Unregister(instanceName)
 	}
 
-	// Close transport - this also unblocks the query handler goroutine's
-	// Receive() call so it can observe the queryHandlerDone signal and exit.
+	// Close transport(s) — this unblocks Receive() calls so goroutines can exit.
 	var closeErr error
 	if r.transport != nil {
 		closeErr = r.transport.Close()
+	}
+	if r.transport6 != nil {
+		if err6 := r.transport6.Close(); err6 != nil && closeErr == nil {
+			closeErr = err6
+		}
 	}
 
 	// Wait for query handler goroutine to finish after transport is closed.
@@ -195,7 +204,7 @@ func fromInternalService(s *responder.Service) *Service {
 // getLocalIPv4 gets the first non-loopback IPv4 address from any interface.
 //
 // DEPRECATED for query response building: Use getIPv4ForInterface(interfaceIndex) instead
-// to comply with RFC 6762 §15 (interface-specific addressing).
+// to comply with RFC 6762 §6.2 (interface-specific addressing).
 //
 // Still used for:
 //   - Service registration (choosing default interface for A record)
@@ -225,7 +234,7 @@ func getLocalIPv4() ([]byte, error) {
 
 // getIPv4ForInterface returns the IPv4 address assigned to the specified network interface.
 //
-// RFC 6762 §15 "Responding to Address Queries" (lines 1020-1024):
+// RFC 6762 §6.2 "Responding to Address Queries" (lines 1020-1024):
 //
 //	When a Multicast DNS responder sends a Multicast DNS response message
 //	containing its own address records, it MUST include all addresses
@@ -293,4 +302,91 @@ func getIPv4ForInterface(ifIndex int) ([]byte, error) {
 		Value:   iface.Name,
 		Message: "no IPv4 address found on interface",
 	}
+}
+
+// getIPv6ForInterface returns every IPv6 address on the specified interface.
+//
+// RFC 6762 §§20, 22: mDNS on IPv6 uses link-local multicast (FF02::FB). Responses must
+// include only addresses valid on the receiving interface (RFC 6762 §6.2).
+func getIPv6ForInterface(ifIndex int) ([]net.IP, error) {
+	iface, err := net.InterfaceByIndex(ifIndex)
+	if err != nil {
+		return nil, &errors.NetworkError{
+			Operation: "lookup interface for IPv6",
+			Err:       err,
+			Details:   fmt.Sprintf("interface index %d not found", ifIndex),
+		}
+	}
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return nil, &errors.NetworkError{
+			Operation: "get interface addresses for IPv6",
+			Err:       err,
+			Details:   fmt.Sprintf("failed to get addresses for %s", iface.Name),
+		}
+	}
+	ips := make([]net.IP, 0, len(addrs))
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok {
+			if ip := ipnet.IP; ip.To4() == nil && len(ip) == 16 {
+				ips = append(ips, append(net.IP(nil), ip...))
+			}
+		}
+	}
+	if len(ips) > 0 {
+		return ips, nil
+	}
+	return nil, &errors.ValidationError{
+		Field:   "interface",
+		Value:   iface.Name,
+		Message: "no IPv6 address found on interface",
+	}
+}
+
+// getIPv6ResponseAddresses returns only addresses valid on the interface that
+// received the query. Without that interface identity, RFC 6762 §6.2's
+// address-scoping requirement cannot be satisfied, so the responder fails closed.
+func getIPv6ResponseAddresses(ifIndex int) ([]net.IP, error) {
+	if ifIndex <= 0 {
+		return nil, &errors.ValidationError{
+			Field:   "interfaceIndex",
+			Value:   ifIndex,
+			Message: "receiving interface is required for an IPv6 response",
+		}
+	}
+	return getIPv6ForInterface(ifIndex)
+}
+
+// getResponseAddresses returns address records scoped to the interface on
+// which a query arrived. RFC 6762 §6.2 requires interface-valid addresses and
+// recommends including the other address family for fate sharing when present.
+// The queried network's address family is mandatory; the other is best-effort.
+func getResponseAddresses(ipv6Network bool, ifIndex int) ([]byte, [][]byte, error) {
+	if ifIndex == 0 {
+		if ipv6Network {
+			ipv6Addresses, err := getIPv6ResponseAddresses(ifIndex)
+			return nil, ipBytes(ipv6Addresses), err
+		}
+		ipv4, err := getLocalIPv4()
+		return ipv4, nil, err
+	}
+
+	ipv4, ipv4Err := getIPv4ForInterface(ifIndex)
+	ipv6Addresses, ipv6Err := getIPv6ForInterface(ifIndex)
+	if ipv6Network {
+		if ipv6Err != nil {
+			return nil, nil, ipv6Err
+		}
+		if ipv4Err != nil {
+			ipv4 = nil
+		}
+		return ipv4, ipBytes(ipv6Addresses), nil
+	}
+	if ipv4Err != nil {
+		return nil, nil, ipv4Err
+	}
+	if ipv6Err != nil {
+		ipv6Addresses = nil
+	}
+	return ipv4, ipBytes(ipv6Addresses), nil
 }

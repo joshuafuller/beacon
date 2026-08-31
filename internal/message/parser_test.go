@@ -650,3 +650,39 @@ func TestParseRDATAInMessage_CompressedPTRTarget(t *testing.T) {
 		t.Errorf("PTR target = %q, want %q (compression pointer must resolve)", name, "Inst._http._tcp.local")
 	}
 }
+
+// TestParseRDATA_AAAARecord validates that ParseRDATA correctly parses AAAA
+// record RDATA (IPv6 address, 16 bytes) per RFC 3596.
+func TestParseRDATA_AAAARecord(t *testing.T) {
+	// fe80::1 in wire format
+	rdata := []byte{
+		0xfe, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+	}
+
+	result, err := ParseRDATA(28, rdata) // TYPE = AAAA (28)
+	if err != nil {
+		t.Fatalf("ParseRDATA AAAA failed: %v", err)
+	}
+
+	ip, ok := result.(net.IP)
+	if !ok {
+		t.Fatalf("ParseRDATA AAAA returned %T, want net.IP per RFC 3596", result)
+	}
+
+	expected := net.ParseIP("fe80::1")
+	if !ip.Equal(expected) {
+		t.Errorf("AAAA IP = %s, want %s", ip, expected)
+	}
+}
+
+// TestParseRDATA_AAAARecord_InvalidLength validates that a malformed AAAA
+// record (wrong byte count) returns a WireFormatError per FR-011.
+func TestParseRDATA_AAAARecord_InvalidLength(t *testing.T) {
+	rdata := []byte{0xfe, 0x80, 0x00, 0x01} // only 4 bytes, need 16
+
+	_, err := ParseRDATA(28, rdata)
+	if err == nil {
+		t.Fatal("expected error for truncated AAAA RDATA, got nil")
+	}
+}

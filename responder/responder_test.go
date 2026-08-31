@@ -1046,7 +1046,7 @@ func TestHandleQuery_QUBitUnicastResponse(t *testing.T) {
 		uint16(protocol.RecordTypePTR),
 		uint16(protocol.ClassIN)|0x8000)
 
-	_ = r.handleQuery(quPacket, unicastSrc, 0)
+	_ = r.handleQuery(r.transport, quPacket, unicastSrc, 0)
 
 	// Verify response was sent to the querier (unicast), not multicast
 	for _, dest := range destinations {
@@ -1169,7 +1169,7 @@ func TestHandleQuery_SRVQuery(t *testing.T) {
 	srcAddr := &net.UDPAddr{IP: net.ParseIP("192.168.1.100"), Port: 5353}
 
 	// Call handleQuery directly
-	err := r.handleQuery(queryPacket, srcAddr, 0)
+	err := r.handleQuery(r.transport, queryPacket, srcAddr, 0)
 	if err != nil {
 		t.Fatalf("handleQuery() error = %v", err)
 	}
@@ -1238,7 +1238,7 @@ func TestHandleQuery_TXTQuery(t *testing.T) {
 
 	srcAddr := &net.UDPAddr{IP: net.ParseIP("192.168.1.100"), Port: 5353}
 
-	err := r.handleQuery(queryPacket, srcAddr, 0)
+	err := r.handleQuery(r.transport, queryPacket, srcAddr, 0)
 	if err != nil {
 		t.Fatalf("handleQuery() error = %v", err)
 	}
@@ -1307,7 +1307,7 @@ func TestHandleQuery_AQuery(t *testing.T) {
 
 	srcAddr := &net.UDPAddr{IP: net.ParseIP("192.168.1.100"), Port: 5353}
 
-	err := r.handleQuery(queryPacket, srcAddr, 0)
+	err := r.handleQuery(r.transport, queryPacket, srcAddr, 0)
 	if err != nil {
 		t.Fatalf("handleQuery() error = %v", err)
 	}

@@ -764,6 +764,16 @@ func TestParseRDATA_A(t *testing.T) {
 	}
 }
 
+func TestParseRDATA_AAAA(t *testing.T) {
+	// TODO add tests to mimic the A record parse tests
+	// Removed this from TestParseRDATA_UnsupportedType:
+	// 		{
+	//			name:       "AAAA record (type 28) - not supported in M1",
+	//			recordType: 28,
+	//			rdata:      make([]byte, 16), // 16-byte IPv6 address
+	//		},
+}
+
 // TestParseRDATA_UnsupportedType validates that ParseRDATA returns an error
 // for unsupported record types.
 func TestParseRDATA_UnsupportedType(t *testing.T) {
@@ -772,11 +782,6 @@ func TestParseRDATA_UnsupportedType(t *testing.T) {
 		recordType uint16
 		rdata      []byte
 	}{
-		{
-			name:       "AAAA record (type 28) - not supported in M1",
-			recordType: 28,
-			rdata:      make([]byte, 16), // 16-byte IPv6 address
-		},
 		{
 			name:       "MX record (type 15) - not supported in M1",
 			recordType: 15,

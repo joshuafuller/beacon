@@ -1,12 +1,15 @@
 package responder
 
 import (
+	"context"
 	"fmt"
+	"net"
 
 	"github.com/joshuafuller/beacon/internal/message"
 	"github.com/joshuafuller/beacon/internal/protocol"
 	"github.com/joshuafuller/beacon/internal/records"
 	"github.com/joshuafuller/beacon/internal/state"
+	"github.com/joshuafuller/beacon/internal/transport"
 )
 
 // maxRenameAttempts is the maximum number of times to rename a service on conflict.
@@ -111,8 +114,14 @@ func (r *Responder) Register(service *Service) error {
 func (r *Responder) runProbeAndAnnounce(recordSet []*message.ResourceRecord, serviceName string) (state.State, error) {
 	machine := state.NewMachine()
 
-	// Wire transport so probes and announcements are sent on the wire
-	machine.SetTransport(r.transport)
+	// Wire transport so probes and announcements are sent in every configured
+	// .local zone (RFC 6762 §20).
+	registrationTransport, err := r.registrationTransport(recordSet)
+	if err != nil {
+		var zero state.State
+		return zero, fmt.Errorf("build registration transport: %w", err)
+	}
+	machine.SetTransport(registrationTransport)
 
 	// Apply test hooks (if any)
 	if r.injectConflict {
@@ -146,6 +155,145 @@ func (r *Responder) runProbeAndAnnounce(recordSet []*message.ResourceRecord, ser
 	}
 
 	return machine.GetState(), nil
+}
+
+// registrationMulticastTransport mirrors state-machine lifecycle sends into
+// the independent IPv4 and IPv6 .local zones described by RFC 6762 §20. It
+// borrows the responder's transports and therefore never closes them.
+type registrationMulticastTransport struct {
+	ipv4              transport.Transport
+	ipv6              transport.Transport
+	ipv6Announcements map[int][]byte
+}
+
+type interfaceScopedIPv6Transport interface {
+	transport.Transport
+	JoinedInterfaceIndexes() []int
+	SendOnInterface(context.Context, []byte, net.Addr, int) error
+}
+
+func (t *registrationMulticastTransport) Send(ctx context.Context, packet []byte, destination net.Addr) error {
+	err := t.ipv4.Send(ctx, packet, destination)
+	if t.ipv6 != nil {
+		if scoped, ok := t.ipv6.(interfaceScopedIPv6Transport); ok && isDNSResponse(packet) && len(t.ipv6Announcements) > 0 {
+			for _, ifIndex := range scoped.JoinedInterfaceIndexes() {
+				projected, found := t.ipv6Announcements[ifIndex]
+				if !found {
+					if err == nil {
+						err = fmt.Errorf("missing IPv6 announcement projection for interface %d", ifIndex)
+					}
+					continue
+				}
+				if ipv6Err := scoped.SendOnInterface(ctx, projected, protocol.MulticastGroupIPv6(), ifIndex); ipv6Err != nil && err == nil {
+					err = ipv6Err
+				}
+			}
+		} else if ipv6Err := t.ipv6.Send(ctx, packet, protocol.MulticastGroupIPv6()); err == nil {
+			err = ipv6Err
+		}
+	}
+	return err
+}
+
+func isDNSResponse(packet []byte) bool {
+	return len(packet) >= 3 && packet[2]&0x80 != 0
+}
+
+func (t *registrationMulticastTransport) Receive(ctx context.Context) ([]byte, net.Addr, int, error) {
+	return t.ipv4.Receive(ctx)
+}
+
+func (*registrationMulticastTransport) Close() error { return nil }
+
+func (r *Responder) registrationTransport(recordSet []*message.ResourceRecord) (transport.Transport, error) {
+	if r.transport6 == nil {
+		return r.transport, nil
+	}
+	registrationTransport := &registrationMulticastTransport{ipv4: r.transport, ipv6: r.transport6}
+	if scoped, ok := r.transport6.(interfaceScopedIPv6Transport); ok {
+		projections, err := buildIPv6AnnouncementProjections(recordSet, scoped.JoinedInterfaceIndexes(), lookupLifecycleAddresses)
+		if err != nil {
+			return nil, err
+		}
+		registrationTransport.ipv6Announcements = projections
+	}
+	return registrationTransport, nil
+}
+
+func projectLifecycleRecordsForInterface(recordSet []*message.ResourceRecord, ipv4 []byte, ipv6Addresses []net.IP) []*message.ResourceRecord {
+	projected := make([]*message.ResourceRecord, 0, len(recordSet)+len(ipv6Addresses))
+	var hostname string
+	addressClass := protocol.ClassIN
+	addressTTL := uint32(protocol.TTLHostname)
+	addressCacheFlush := true
+	for _, record := range recordSet {
+		if record.Type == protocol.RecordTypeA || record.Type == protocol.RecordTypeAAAA {
+			if hostname == "" {
+				hostname = record.Name
+				addressClass = record.Class
+				addressTTL = record.TTL
+				addressCacheFlush = record.CacheFlush
+			}
+			continue
+		}
+		clone := *record
+		clone.Data = append([]byte(nil), record.Data...)
+		projected = append(projected, &clone)
+	}
+	if hostname == "" {
+		return projected
+	}
+	if len(ipv4) == net.IPv4len {
+		projected = append(projected, &message.ResourceRecord{
+			Name:       hostname,
+			Type:       protocol.RecordTypeA,
+			Class:      addressClass,
+			TTL:        addressTTL,
+			Data:       append([]byte(nil), ipv4...),
+			CacheFlush: addressCacheFlush,
+		})
+	}
+	for _, ip := range ipv6Addresses {
+		if ip16 := ip.To16(); ip16 != nil && ip.To4() == nil {
+			projected = append(projected, &message.ResourceRecord{
+				Name:       hostname,
+				Type:       protocol.RecordTypeAAAA,
+				Class:      addressClass,
+				TTL:        addressTTL,
+				Data:       append([]byte(nil), ip16...),
+				CacheFlush: addressCacheFlush,
+			})
+		}
+	}
+	return projected
+}
+
+type lifecycleAddressLookup func(int) ([]byte, []net.IP, error)
+
+func buildIPv6AnnouncementProjections(recordSet []*message.ResourceRecord, interfaceIndexes []int, lookup lifecycleAddressLookup) (map[int][]byte, error) {
+	projections := make(map[int][]byte, len(interfaceIndexes))
+	for _, ifIndex := range interfaceIndexes {
+		ipv4, ipv6Addresses, err := lookup(ifIndex)
+		if err != nil {
+			return nil, fmt.Errorf("lookup addresses for interface %d: %w", ifIndex, err)
+		}
+		recordsForInterface := projectLifecycleRecordsForInterface(recordSet, ipv4, ipv6Addresses)
+		packet, err := message.BuildResponse(recordsForInterface)
+		if err != nil {
+			return nil, fmt.Errorf("build announcement for interface %d: %w", ifIndex, err)
+		}
+		projections[ifIndex] = packet
+	}
+	return projections, nil
+}
+
+func lookupLifecycleAddresses(ifIndex int) ([]byte, []net.IP, error) {
+	ipv6Addresses, err := getIPv6ForInterface(ifIndex)
+	if err != nil {
+		return nil, nil, err
+	}
+	ipv4, _ := getIPv4ForInterface(ifIndex)
+	return ipv4, ipv6Addresses, nil
 }
 
 // Unregister unregisters a service and sends goodbye packets per RFC 6762 §10.1.
@@ -191,7 +339,7 @@ func (r *Responder) Unregister(serviceID string) error {
 
 	// RFC 6762 §10.1: Goodbye is best-effort (SHOULD, not MUST).
 	// Ignore send errors; we still remove from the registry below.
-	_ = r.transport.Send(r.ctx, goodbyePacket, protocol.MulticastGroupIPv4()) // nosemgrep: beacon-error-swallowing
+	_ = r.sendLifecyclePacket(goodbyePacket, goodbyeRecords, lookupLifecycleAddresses) // nosemgrep: beacon-error-swallowing
 
 	// Remove from registry using instance name
 	if err := r.registry.Remove(svc.InstanceName); err != nil {
@@ -299,12 +447,27 @@ func (r *Responder) UpdateService(serviceID string, txtRecords map[string]string
 		}
 	}
 
-	responseBytes, err := message.BuildResponse(msgRecords)
-	if err != nil {
-		return nil // Registry updated, announcement failed - best effort
-	}
-
-	_ = r.transport.Send(r.ctx, responseBytes, protocol.MulticastGroupIPv4()) // nosemgrep: beacon-error-swallowing
+	_ = r.sendLifecycleRecords(msgRecords, lookupLifecycleAddresses) // nosemgrep: beacon-error-swallowing
 
 	return nil
+}
+
+func (r *Responder) sendLifecycleRecords(recordSet []*message.ResourceRecord, lookup lifecycleAddressLookup) error {
+	packet, err := message.BuildResponse(recordSet)
+	if err != nil {
+		return err
+	}
+	return r.sendLifecyclePacket(packet, recordSet, lookup)
+}
+
+func (r *Responder) sendLifecyclePacket(packet []byte, recordSet []*message.ResourceRecord, lookup lifecycleAddressLookup) error {
+	lifecycleTransport := &registrationMulticastTransport{ipv4: r.transport, ipv6: r.transport6}
+	if scoped, ok := r.transport6.(interfaceScopedIPv6Transport); ok {
+		projections, err := buildIPv6AnnouncementProjections(recordSet, scoped.JoinedInterfaceIndexes(), lookup)
+		if err != nil {
+			return err
+		}
+		lifecycleTransport.ipv6Announcements = projections
+	}
+	return lifecycleTransport.Send(r.ctx, packet, protocol.MulticastGroupIPv4())
 }

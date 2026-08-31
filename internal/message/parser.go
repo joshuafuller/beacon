@@ -270,6 +270,7 @@ func ParseAnswer(msg []byte, offset int) (Answer, int, error) {
 //
 // Supported types (per FR-002):
 //   - A (1): IPv4 address → net.IP
+//   - AAAA (28): IPv6 address → net.IP
 //   - PTR (12): Domain name → string
 //   - TXT (16): Text strings → []string
 //   - SRV (33): Service location → SRVData
@@ -305,6 +306,8 @@ func ParseRDATA(recordType uint16, rdata []byte) (interface{}, error) {
 //   - msg: The complete DNS message (for compression-pointer resolution)
 //   - rdataStart: Byte offset of RDATA within msg
 //   - rdlength: Length of RDATA in bytes
+//
+//nolint:gocyclo // Wire-format dispatch validates each supported DNS RDATA shape independently.
 func ParseRDATAInMessage(recordType uint16, msg []byte, rdataStart, rdlength int) (interface{}, error) {
 	if rdataStart < 0 || rdlength < 0 || rdataStart+rdlength > len(msg) {
 		return nil, &errors.WireFormatError{
@@ -325,6 +328,18 @@ func ParseRDATAInMessage(recordType uint16, msg []byte, rdataStart, rdlength int
 			}
 		}
 		return net.IPv4(rdata[0], rdata[1], rdata[2], rdata[3]), nil
+
+	case 28: // AAAA record: IPv6 address (16 bytes) per RFC 3596
+		if len(rdata) != 16 {
+			return nil, &errors.WireFormatError{
+				Operation: "parse AAAA record",
+				Offset:    rdataStart,
+				Message:   fmt.Sprintf("invalid AAAA record length: %d bytes, expected 16", len(rdata)),
+			}
+		}
+		ip := make(net.IP, 16)
+		copy(ip, rdata)
+		return ip, nil
 
 	case 12: // PTR record: Domain name (may be compressed against msg)
 		name, _, err := ParseName(msg, rdataStart)

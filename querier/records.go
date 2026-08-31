@@ -40,6 +40,11 @@ const (
 	// Used to get service hostname and port.
 	// Example: Query("webserver._http._tcp.local", RecordTypeSRV) → {Priority:0, Weight:0, Port:8080, Target:"server.local"}
 	RecordTypeSRV RecordType = RecordType(protocol.RecordTypeSRV)
+
+	// RecordTypeAAAA queries for IPv6 address records (type 28) per RFC 3596.
+	//
+	// Example: Query("printer.local", RecordTypeAAAA) → fe80::1
+	RecordTypeAAAA RecordType = RecordType(protocol.RecordTypeAAAA)
 )
 
 // String returns a human-readable name for the record type.
@@ -118,6 +123,26 @@ type SRVData struct {
 
 	// Port is the TCP or UDP port where the service is available.
 	Port uint16
+}
+
+// AsAAAA returns the IPv6 address for an AAAA record, or nil if not an AAAA record.
+//
+// Example:
+//
+//	for _, record := range response.Records {
+//	    if ip := record.AsAAAA(); ip != nil {
+//	        fmt.Printf("Found IPv6: %s\n", ip)
+//	    }
+//	}
+func (r *ResourceRecord) AsAAAA() net.IP {
+	if r.Type != RecordTypeAAAA {
+		return nil
+	}
+	ip, ok := r.Data.(net.IP)
+	if !ok {
+		return nil
+	}
+	return ip
 }
 
 // AsA returns the IPv4 address for an A record, or nil if not an A record.
@@ -239,7 +264,7 @@ func ParseTXT(txt []string) map[string]string {
 // ServiceInstance represents a fully resolved mDNS service discovered via DNS-SD.
 //
 // This is returned by [Querier.DiscoverServices] after performing the full
-// PTR → SRV → TXT → A query sequence.
+// PTR → SRV → TXT → A/AAAA query sequence.
 type ServiceInstance struct {
 	// InstanceName is the human-readable service name (e.g., "My Printer").
 	InstanceName string
@@ -255,6 +280,10 @@ type ServiceInstance struct {
 
 	// AddrIPv4 is the IPv4 address from the A record, or nil if unresolved.
 	AddrIPv4 net.IP
+
+	// AddrIPv6 is the IPv6 address from the AAAA record, or nil if unresolved.
+	// Populated only when the Querier is configured with WithIPv6().
+	AddrIPv6 net.IP
 
 	// TXT contains parsed key-value metadata from the TXT record.
 	TXT map[string]string
