@@ -22,6 +22,7 @@ type UDPv6Transport struct {
 	ipv6Conn         *ipv6.PacketConn
 	joinedInterfaces []int
 	writeTo          func([]byte, *ipv6.ControlMessage, net.Addr) (int, error)
+	readFrom         func([]byte) (int, *ipv6.ControlMessage, net.Addr, error)
 }
 
 // NewUDPv6Transport creates a UDP IPv6 multicast transport per RFC 6762 §11.
@@ -110,6 +111,7 @@ func NewUDPv6Transport() (*UDPv6Transport, error) {
 		ipv6Conn:         ipv6Conn,
 		joinedInterfaces: joinedInterfaces,
 		writeTo:          ipv6Conn.WriteTo,
+		readFrom:         ipv6Conn.ReadFrom,
 	}, nil
 }
 
@@ -207,7 +209,7 @@ func (t *UDPv6Transport) Receive(ctx context.Context) ([]byte, net.Addr, int, er
 	defer PutBuffer(bufPtr)
 	buffer := *bufPtr
 
-	n, cm, srcAddr, err := t.ipv6Conn.ReadFrom(buffer)
+	n, cm, srcAddr, err := t.readFrom(buffer)
 	if err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			return nil, nil, 0, &errors.NetworkError{
