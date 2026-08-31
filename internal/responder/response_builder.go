@@ -211,8 +211,10 @@ func (rb *ResponseBuilder) finalizeCounts(response *message.DNSMessage) error {
 	}
 
 	// Update counts
-	response.Header.ANCount = uint16(len(response.Answers))     //nolint:gosec // G115: bounds checked above
-	response.Header.ARCount = uint16(len(response.Additionals)) //nolint:gosec // G115: bounds checked above
+	// #nosec G115 -- both section lengths are bounds checked above.
+	response.Header.ANCount = uint16(len(response.Answers)) //nolint:gosec
+	// #nosec G115 -- both section lengths are bounds checked above.
+	response.Header.ARCount = uint16(len(response.Additionals)) //nolint:gosec
 
 	return nil
 }
@@ -229,7 +231,8 @@ func (rb *ResponseBuilder) applyPacketSizeTruncation(response *message.DNSMessag
 		response.Additionals = rb.truncateAdditionals(response, estimatedSize)
 		// truncateAdditionals only removes entries, so len(response.Additionals)
 		// stays within the bound already checked in finalizeCounts.
-		response.Header.ARCount = uint16(len(response.Additionals)) //nolint:gosec // G115: bounds checked above, truncation only shrinks the slice
+		// #nosec G115 -- bounds checked above; truncation only shrinks the slice.
+		response.Header.ARCount = uint16(len(response.Additionals)) //nolint:gosec
 
 		// RFC 6762 §6.5: Set TC bit when truncated
 		// Bit 9 (TC=1): 0x0200
@@ -318,7 +321,8 @@ func (rb *ResponseBuilder) recordToAnswer(rr *message.ResourceRecord) message.An
 		TTL:   rr.TTL,
 		// G115: length validated by validateRecordLengths in BuildResponse before
 		// any record reaches this conversion.
-		RDLENGTH: uint16(len(rr.Data)), //nolint:gosec // G115: bounds checked in BuildResponse
+		// #nosec G115 -- bounds checked in BuildResponse.
+		RDLENGTH: uint16(len(rr.Data)), //nolint:gosec
 		RDATA:    rr.Data,
 	}
 }

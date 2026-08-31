@@ -226,7 +226,8 @@ func buildResponseHeader(answerCount int) []byte {
 	// ANCOUNT: Number of answer records
 	// G115: answerCount is validated <= 65535 by BuildResponse, the only caller,
 	// before this function is invoked.
-	binary.BigEndian.PutUint16(header[6:8], uint16(answerCount)) //nolint:gosec // G115: bounds checked in BuildResponse
+	// #nosec G115 -- bounds checked in BuildResponse.
+	binary.BigEndian.PutUint16(header[6:8], uint16(answerCount)) //nolint:gosec
 
 	// NSCOUNT: 0 authority records
 	binary.BigEndian.PutUint16(header[8:10], 0)
@@ -338,7 +339,8 @@ func SerializeResourceRecord(rr *ResourceRecord) ([]byte, error) {
 	// RDLENGTH (2 bytes)
 	// G115: len(rr.Data) validated <= 65535 above.
 	rdlengthBytes := make([]byte, 2)
-	binary.BigEndian.PutUint16(rdlengthBytes, uint16(len(rr.Data))) //nolint:gosec // G115: bounds checked above
+	// #nosec G115 -- bounds checked above.
+	binary.BigEndian.PutUint16(rdlengthBytes, uint16(len(rr.Data))) //nolint:gosec
 	record = append(record, rdlengthBytes...)
 
 	// RDATA

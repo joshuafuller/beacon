@@ -95,10 +95,14 @@ func SerializeMessage(msg *DNSMessage) ([]byte, error) {
 	// Fill in header with actual counts
 	binary.BigEndian.PutUint16(buf[0:2], msg.Header.ID)
 	binary.BigEndian.PutUint16(buf[2:4], msg.Header.Flags)
-	binary.BigEndian.PutUint16(buf[4:6], uint16(len(msg.Questions)))     //nolint:gosec // G115: bounds checked above
-	binary.BigEndian.PutUint16(buf[6:8], uint16(len(msg.Answers)))       //nolint:gosec // G115: bounds checked above
-	binary.BigEndian.PutUint16(buf[8:10], uint16(len(msg.Authorities)))  //nolint:gosec // G115: bounds checked above
-	binary.BigEndian.PutUint16(buf[10:12], uint16(len(msg.Additionals))) //nolint:gosec // G115: bounds checked above
+	// #nosec G115 -- all four section lengths are bounds checked above.
+	binary.BigEndian.PutUint16(buf[4:6], uint16(len(msg.Questions))) //nolint:gosec
+	// #nosec G115 -- all four section lengths are bounds checked above.
+	binary.BigEndian.PutUint16(buf[6:8], uint16(len(msg.Answers))) //nolint:gosec
+	// #nosec G115 -- all four section lengths are bounds checked above.
+	binary.BigEndian.PutUint16(buf[8:10], uint16(len(msg.Authorities))) //nolint:gosec
+	// #nosec G115 -- all four section lengths are bounds checked above.
+	binary.BigEndian.PutUint16(buf[10:12], uint16(len(msg.Additionals))) //nolint:gosec
 
 	return buf, nil
 }
