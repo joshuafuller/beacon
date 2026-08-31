@@ -90,7 +90,7 @@ This document provides a section-by-section compliance matrix for RFC 6762 (Mult
 | §18.2 | Name compression | ✅ | Fully implemented (internal/message/name.go - ParseName handles compression pointers) |
 | §18.3 | Malformed packet handling | ✅ | Implemented (WireFormatError in internal/errors/errors.go, parser validation, fuzz tests) |
 | **19. Differences from Unicast DNS** | mDNS-specific behaviors | 📋 | Documented in BEACON_FOUNDATIONS |
-| **20. IPv6 Considerations** | IPv6 support | ⚠️ | Dual-stack queries/responses and AAAA records implemented; registration probing, announcements, updates, and goodbyes still use only the IPv4 lifecycle, so §20 registration is incomplete |
+| **20. IPv6 Considerations** | IPv6 support | ⚠️ | Dual-stack queries/responses and AAAA records implemented; probes, announcements, updates, and goodbyes are sent into both zones, but IPv6 lifecycle announcements still need per-interface AAAA projection and interoperability evidence |
 | **21. Security Considerations** | | ✅ | M1.1 Complete |
 | | Malformed packet protection | ✅ | Implemented (M1: WireFormatError, parser validation, fuzz tests - tests/fuzz/parser_fuzz_test.go) |
 | | Source IP validation | ✅ | Implemented (M1.1: internal/security/source_filter.go) - Linux ✅, macOS/Windows ⚠️ |

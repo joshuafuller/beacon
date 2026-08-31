@@ -1,12 +1,15 @@
 package responder
 
 import (
+	"context"
 	"fmt"
+	"net"
 
 	"github.com/joshuafuller/beacon/internal/message"
 	"github.com/joshuafuller/beacon/internal/protocol"
 	"github.com/joshuafuller/beacon/internal/records"
 	"github.com/joshuafuller/beacon/internal/state"
+	"github.com/joshuafuller/beacon/internal/transport"
 )
 
 // maxRenameAttempts is the maximum number of times to rename a service on conflict.
@@ -111,8 +114,9 @@ func (r *Responder) Register(service *Service) error {
 func (r *Responder) runProbeAndAnnounce(recordSet []*message.ResourceRecord, serviceName string) (state.State, error) {
 	machine := state.NewMachine()
 
-	// Wire transport so probes and announcements are sent on the wire
-	machine.SetTransport(r.transport)
+	// Wire transport so probes and announcements are sent in every configured
+	// .local zone (RFC 6762 §20).
+	machine.SetTransport(r.registrationTransport())
 
 	// Apply test hooks (if any)
 	if r.injectConflict {
@@ -146,6 +150,37 @@ func (r *Responder) runProbeAndAnnounce(recordSet []*message.ResourceRecord, ser
 	}
 
 	return machine.GetState(), nil
+}
+
+// registrationMulticastTransport mirrors state-machine lifecycle sends into
+// the independent IPv4 and IPv6 .local zones described by RFC 6762 §20. It
+// borrows the responder's transports and therefore never closes them.
+type registrationMulticastTransport struct {
+	ipv4 transport.Transport
+	ipv6 transport.Transport
+}
+
+func (t *registrationMulticastTransport) Send(ctx context.Context, packet []byte, destination net.Addr) error {
+	err := t.ipv4.Send(ctx, packet, destination)
+	if t.ipv6 != nil {
+		if ipv6Err := t.ipv6.Send(ctx, packet, protocol.MulticastGroupIPv6()); err == nil {
+			err = ipv6Err
+		}
+	}
+	return err
+}
+
+func (t *registrationMulticastTransport) Receive(ctx context.Context) ([]byte, net.Addr, int, error) {
+	return t.ipv4.Receive(ctx)
+}
+
+func (*registrationMulticastTransport) Close() error { return nil }
+
+func (r *Responder) registrationTransport() transport.Transport {
+	if r.transport6 == nil {
+		return r.transport
+	}
+	return &registrationMulticastTransport{ipv4: r.transport, ipv6: r.transport6}
 }
 
 // Unregister unregisters a service and sends goodbye packets per RFC 6762 §10.1.
@@ -191,7 +226,7 @@ func (r *Responder) Unregister(serviceID string) error {
 
 	// RFC 6762 §10.1: Goodbye is best-effort (SHOULD, not MUST).
 	// Ignore send errors; we still remove from the registry below.
-	_ = r.transport.Send(r.ctx, goodbyePacket, protocol.MulticastGroupIPv4()) // nosemgrep: beacon-error-swallowing
+	r.sendLifecycleMulticast(goodbyePacket)
 
 	// Remove from registry using instance name
 	if err := r.registry.Remove(svc.InstanceName); err != nil {
@@ -304,7 +339,17 @@ func (r *Responder) UpdateService(serviceID string, txtRecords map[string]string
 		return nil // Registry updated, announcement failed - best effort
 	}
 
-	_ = r.transport.Send(r.ctx, responseBytes, protocol.MulticastGroupIPv4()) // nosemgrep: beacon-error-swallowing
+	r.sendLifecycleMulticast(responseBytes)
 
 	return nil
+}
+
+// sendLifecycleMulticast publishes best-effort lifecycle traffic into each
+// configured .local zone. RFC 6762 §20 treats IPv4 and IPv6 as independent
+// zones, so a dual-stack responder sends updates and goodbyes to both.
+func (r *Responder) sendLifecycleMulticast(packet []byte) {
+	_ = r.transport.Send(r.ctx, packet, protocol.MulticastGroupIPv4()) // nosemgrep: beacon-error-swallowing
+	if r.transport6 != nil {
+		_ = r.transport6.Send(r.ctx, packet, protocol.MulticastGroupIPv6()) // nosemgrep: beacon-error-swallowing
+	}
 }
