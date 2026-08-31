@@ -1129,7 +1129,7 @@ func TestHandleQuery_SRVQuery(t *testing.T) {
 			return nil
 		},
 		receiveFunc: func(ctx context.Context) ([]byte, net.Addr, int, error) {
-			// Block until context cancelled
+			// Block until context canceled
 			<-ctx.Done()
 			return nil, nil, 0, ctx.Err()
 		},

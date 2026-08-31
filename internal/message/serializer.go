@@ -3,6 +3,7 @@ package message
 
 import (
 	"encoding/binary"
+	"math"
 
 	"github.com/joshuafuller/beacon/internal/errors"
 	"github.com/joshuafuller/beacon/internal/protocol"
@@ -31,6 +32,18 @@ func SerializeMessage(msg *DNSMessage) ([]byte, error) {
 			Field:   "DNSMessage",
 			Value:   nil,
 			Message: "cannot serialize nil message",
+		}
+	}
+
+	// RFC 1035 §4.1.1: QDCOUNT/ANCOUNT/NSCOUNT/ARCOUNT are wire-format uint16
+	// fields. Reject oversized sections before serializing them so invalid input
+	// cannot consume work and memory proportional to an unrepresentable message.
+	if len(msg.Questions) > math.MaxUint16 || len(msg.Answers) > math.MaxUint16 ||
+		len(msg.Authorities) > math.MaxUint16 || len(msg.Additionals) > math.MaxUint16 {
+		return nil, &errors.ValidationError{
+			Field:   "DNSMessage",
+			Value:   nil,
+			Message: "section count exceeds uint16 max (RFC 1035 §4.1.1)",
 		}
 	}
 
@@ -82,10 +95,14 @@ func SerializeMessage(msg *DNSMessage) ([]byte, error) {
 	// Fill in header with actual counts
 	binary.BigEndian.PutUint16(buf[0:2], msg.Header.ID)
 	binary.BigEndian.PutUint16(buf[2:4], msg.Header.Flags)
-	binary.BigEndian.PutUint16(buf[4:6], uint16(len(msg.Questions)))
-	binary.BigEndian.PutUint16(buf[6:8], uint16(len(msg.Answers)))
-	binary.BigEndian.PutUint16(buf[8:10], uint16(len(msg.Authorities)))
-	binary.BigEndian.PutUint16(buf[10:12], uint16(len(msg.Additionals)))
+	// #nosec G115 -- all four section lengths are bounds checked above.
+	binary.BigEndian.PutUint16(buf[4:6], uint16(len(msg.Questions))) //nolint:gosec
+	// #nosec G115 -- all four section lengths are bounds checked above.
+	binary.BigEndian.PutUint16(buf[6:8], uint16(len(msg.Answers))) //nolint:gosec
+	// #nosec G115 -- all four section lengths are bounds checked above.
+	binary.BigEndian.PutUint16(buf[8:10], uint16(len(msg.Authorities))) //nolint:gosec
+	// #nosec G115 -- all four section lengths are bounds checked above.
+	binary.BigEndian.PutUint16(buf[10:12], uint16(len(msg.Additionals))) //nolint:gosec
 
 	return buf, nil
 }

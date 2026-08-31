@@ -6,6 +6,7 @@ package fuzz
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	"github.com/joshuafuller/beacon/responder"
@@ -71,7 +72,7 @@ func FuzzServiceRegistration(f *testing.F) {
 		// Construct service from fuzz inputs
 		// Clamp port to uint16 range (fuzz input is int)
 		var portU16 uint16
-		if port > 0 && port <= 65535 {
+		if port > 0 && port <= math.MaxUint16 {
 			portU16 = uint16(port)
 		}
 		svc := &responder.Service{

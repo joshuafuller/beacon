@@ -62,7 +62,7 @@ func (m *MockTransport) Send(_ context.Context, packet []byte, dest net.Addr) er
 //   - Non-blocking (default): Returns immediately with nil data if queue is empty.
 //     This preserves backward compatibility for existing tests.
 //   - Blocking (enabled via EnableBlockingReceive or QueueReceive): Blocks until a
-//     response is available or the context is cancelled.
+//     response is available or the context is canceled.
 //
 // 007-interface-specific-addressing: Updated to return interfaceIndex (T012-T013)
 // Extended to support queued responses for prober conflict detection testing.

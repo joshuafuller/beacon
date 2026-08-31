@@ -88,7 +88,7 @@ func BadUnbufferedChannel() {
 	// SHOULD TRIGGER: beacon-unbuffered-result-channel
 	ch := make(chan string)
 	go func() {
-		ch <- "result" // Blocks forever if context cancelled before receive
+		ch <- "result" // Blocks forever if context canceled before receive
 	}()
 	result := <-ch
 	_ = result

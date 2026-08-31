@@ -2,14 +2,12 @@ package querier
 
 import (
 	"context"
-	goerrors "errors"
 	"fmt"
 	"net"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/joshuafuller/beacon/internal/errors"
 	"github.com/joshuafuller/beacon/internal/message"
 	"github.com/joshuafuller/beacon/internal/protocol"
 	"github.com/joshuafuller/beacon/internal/security"
@@ -48,13 +46,9 @@ import (
 // This reduces struct size from 144 → 120 bytes (16.7% memory savings).
 // Related fields are still documented together via comments.
 type Querier struct {
-	// transport is the IPv4 network transport (always present)
+	// transport is the network transport abstraction (UDP multicast for mDNS)
 	// T031: Migrated from socket net.PacketConn to transport.Transport interface
 	transport transport.Transport
-
-	// transport6 is the IPv6 network transport (nil unless WithIPv6() is used)
-	// RFC 6762 §11: IPv6 mDNS uses FF02::FB:5353
-	transport6 transport.Transport
 
 	// ctx is the lifecycle context for the Querier
 	ctx context.Context
@@ -77,7 +71,7 @@ type Querier struct {
 	// cancel cancels the lifecycle context
 	cancel context.CancelFunc
 
-	// responseChan receives incoming mDNS responses from both IPv4 and IPv6 receiver goroutines
+	// responseChan receives incoming mDNS responses from the receiver goroutine
 	responseChan chan []byte
 
 	// interfaceFilter is a custom interface selection function (if set)
@@ -97,10 +91,6 @@ type Querier struct {
 	// rateLimitEnabled indicates whether rate limiting is enabled (default: true)
 	// Per FR-033: Configurable via WithRateLimit()
 	rateLimitEnabled bool
-
-	// ipv6Enabled indicates whether dual-stack IPv6 operation is requested
-	// Set by WithIPv6(); actual IPv6 availability depends on transport6 != nil
-	ipv6Enabled bool
 }
 
 // New creates a new Querier with optional configuration.
@@ -166,21 +156,9 @@ func New(opts ...Option) (*Querier, error) {
 		go q.cleanupLoop()
 	}
 
-	// Start background IPv4 receiver goroutine per FR-006
+	// Start background receiver goroutine per FR-006
 	q.wg.Add(1)
-	go q.runReceiveLoop(q.transport)
-
-	// If IPv6 was requested, attempt to create the IPv6 transport.
-	// Failure is non-fatal: the querier continues in IPv4-only mode.
-	if q.ipv6Enabled {
-		tr6, err6 := transport.NewUDPv6Transport()
-		if err6 == nil {
-			q.transport6 = tr6
-			q.wg.Add(1)
-			go q.runReceiveLoop(q.transport6)
-		}
-		// If err6 != nil, IPv6 is silently unavailable (no IPv6 interface).
-	}
+	go q.receiveLoop()
 
 	return q, nil
 }
@@ -262,16 +240,10 @@ func (q *Querier) Query(ctx context.Context, name string, recordType RecordType)
 		return nil, err
 	}
 
-	// FR-005: Send query to the IPv4 mDNS multicast group (224.0.0.251:5353).
+	// FR-005: Send query to the mDNS multicast group (224.0.0.251:5353).
 	err = q.transport.Send(ctx, queryMsg, protocol.MulticastGroupIPv4())
 	if err != nil {
 		return nil, err // Already wrapped as NetworkError
-	}
-
-	// RFC 6762 §11: Also send on IPv6 (FF02::FB:5353) when dual-stack is active.
-	// Non-fatal: IPv4 query already sent; IPv6 is best-effort.
-	if q.transport6 != nil {
-		_ = q.transport6.Send(ctx, queryMsg, protocol.MulticastGroupIPv6())
 	}
 
 	// FR-008: Aggregate responses received within timeout window
@@ -308,15 +280,7 @@ func (q *Querier) Query(ctx context.Context, name string, recordType RecordType)
 //	}
 func (q *Querier) DiscoverServices(ctx context.Context, serviceType string) ([]ServiceInstance, error) {
 	// Phase 1: Browse for instances via PTR query.
-	// Allocate ~40% of the remaining time for browsing, rest for resolving details.
-	browseTimeout := 1 * time.Second // default if no deadline
-	if deadline, ok := ctx.Deadline(); ok {
-		remaining := time.Until(deadline)
-		browseTimeout = remaining * 2 / 5
-		if browseTimeout < 200*time.Millisecond {
-			browseTimeout = 200 * time.Millisecond
-		}
-	}
+	browseTimeout := computeBrowseTimeout(ctx)
 
 	browseCtx, browseCancel := context.WithTimeout(ctx, browseTimeout)
 	ptrResp, err := q.Query(browseCtx, serviceType, RecordTypePTR)
@@ -326,111 +290,148 @@ func (q *Querier) DiscoverServices(ctx context.Context, serviceType string) ([]S
 	}
 
 	// Phase 2: Resolve each discovered instance.
-	var services []ServiceInstance
-	resolveTimeout := 500 * time.Millisecond
+	const resolveTimeout = 500 * time.Millisecond
+	services := make([]ServiceInstance, 0, len(ptrResp.Records))
 
 	for _, record := range ptrResp.Records {
 		target := record.AsPTR()
 		if target == "" {
 			continue
 		}
-
-		svc := ServiceInstance{ServiceType: serviceType}
-
-		// Extract instance name: "My Printer._http._tcp.local" → "My Printer"
-		if strings.HasSuffix(target, "."+serviceType) {
-			svc.InstanceName = strings.TrimSuffix(target, "."+serviceType)
-		} else {
-			svc.InstanceName = target
-		}
-
-		// RFC 6763 §12: prefer SRV/TXT/A bundled in the browse response's
-		// additional section; fall back to explicit queries only for what is
-		// missing (issue #4 — saves up to 3 round-trips per instance).
-		if rr := findInAdditionals(ptrResp.Additionals, target, RecordTypeSRV); rr != nil {
-			if srv := rr.AsSRV(); srv != nil {
-				svc.Hostname = srv.Target
-				svc.Port = srv.Port
-			}
-		}
-		if rr := findInAdditionals(ptrResp.Additionals, target, RecordTypeTXT); rr != nil {
-			if txt := rr.AsTXT(); txt != nil {
-				svc.TXT = ParseTXT(txt)
-			}
-		}
-		if svc.Hostname != "" {
-			if rr := findInAdditionals(ptrResp.Additionals, svc.Hostname, RecordTypeA); rr != nil {
-				if ip := rr.AsA(); ip != nil {
-					svc.AddrIPv4 = ip
-				}
-			}
-		}
-
-		// Fallback: SRV query for hostname + port if not bundled as an additional.
-		if svc.Hostname == "" {
-			srvCtx, srvCancel := context.WithTimeout(ctx, resolveTimeout)
-			srvResp, srvErr := q.Query(srvCtx, target, RecordTypeSRV)
-			srvCancel()
-			if srvErr == nil {
-				for _, r := range srvResp.Records {
-					if srv := r.AsSRV(); srv != nil {
-						svc.Hostname = srv.Target
-						svc.Port = srv.Port
-						break
-					}
-				}
-			}
-		}
-
-		// Fallback: TXT query for metadata if not bundled as an additional.
-		if svc.TXT == nil {
-			txtCtx, txtCancel := context.WithTimeout(ctx, resolveTimeout)
-			txtResp, txtErr := q.Query(txtCtx, target, RecordTypeTXT)
-			txtCancel()
-			if txtErr == nil {
-				for _, r := range txtResp.Records {
-					if txt := r.AsTXT(); txt != nil {
-						svc.TXT = ParseTXT(txt)
-						break
-					}
-				}
-			}
-		}
-
-		// Fallback: A query for IPv4 if we have a hostname but no address yet.
-		if svc.Hostname != "" && svc.AddrIPv4 == nil {
-			aCtx, aCancel := context.WithTimeout(ctx, resolveTimeout)
-			aResp, aErr := q.Query(aCtx, svc.Hostname, RecordTypeA)
-			aCancel()
-			if aErr == nil {
-				for _, r := range aResp.Records {
-					if ip := r.AsA(); ip != nil {
-						svc.AddrIPv4 = ip
-						break
-					}
-				}
-			}
-		}
-
-		// AAAA query for IPv6 address when dual-stack is active.
-		if q.transport6 != nil && svc.Hostname != "" && svc.AddrIPv6 == nil {
-			aaaaCtx, aaaaCancel := context.WithTimeout(ctx, resolveTimeout)
-			aaaaResp, aaaaErr := q.Query(aaaaCtx, svc.Hostname, RecordTypeAAAA)
-			aaaaCancel()
-			if aaaaErr == nil {
-				for _, r := range aaaaResp.Records {
-					if ip := r.AsAAAA(); ip != nil {
-						svc.AddrIPv6 = ip
-						break
-					}
-				}
-			}
-		}
-
-		services = append(services, svc)
+		services = append(services, q.resolveInstance(ctx, serviceType, target, ptrResp.Additionals, resolveTimeout))
 	}
 
 	return services, nil
+}
+
+// computeBrowseTimeout allocates ~40% of ctx's remaining deadline (floor
+// 200ms) to the PTR browse phase, leaving the rest for per-instance
+// resolution. Returns 1 second if ctx carries no deadline.
+func computeBrowseTimeout(ctx context.Context) time.Duration {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return 1 * time.Second
+	}
+	browseTimeout := time.Until(deadline) * 2 / 5
+	if browseTimeout < 200*time.Millisecond {
+		browseTimeout = 200 * time.Millisecond
+	}
+	return browseTimeout
+}
+
+// deriveInstanceName extracts the user-facing instance name from a PTR
+// target, e.g. "My Printer._http._tcp.local" → "My Printer".
+func deriveInstanceName(target, serviceType string) string {
+	if strings.HasSuffix(target, "."+serviceType) {
+		return strings.TrimSuffix(target, "."+serviceType)
+	}
+	return target
+}
+
+// applyBundledAdditionals fills svc's Hostname/Port/TXT/AddrIPv4 from the
+// browse response's Additional section, per RFC 6763 §12: DNS-SD responders
+// may bundle SRV/TXT/A alongside a PTR answer so one query resolves a whole
+// instance without follow-up round-trips (issue #4).
+func applyBundledAdditionals(svc *ServiceInstance, additionals []ResourceRecord, target string) {
+	if rr := findInAdditionals(additionals, target, RecordTypeSRV); rr != nil {
+		if srv := rr.AsSRV(); srv != nil {
+			svc.Hostname = srv.Target
+			svc.Port = srv.Port
+		}
+	}
+	if rr := findInAdditionals(additionals, target, RecordTypeTXT); rr != nil {
+		if txt := rr.AsTXT(); txt != nil {
+			svc.TXT = ParseTXT(txt)
+		}
+	}
+	if svc.Hostname != "" {
+		if rr := findInAdditionals(additionals, svc.Hostname, RecordTypeA); rr != nil {
+			if ip := rr.AsA(); ip != nil {
+				svc.AddrIPv4 = ip
+			}
+		}
+	}
+}
+
+// queryFallbackSRV issues an explicit SRV query for target's hostname and
+// port, used when the browse response didn't bundle it as an additional.
+func (q *Querier) queryFallbackSRV(ctx context.Context, target string, timeout time.Duration) (hostname string, port uint16, ok bool) {
+	srvCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	srvResp, err := q.Query(srvCtx, target, RecordTypeSRV)
+	if err != nil {
+		return "", 0, false
+	}
+	for _, r := range srvResp.Records {
+		if srv := r.AsSRV(); srv != nil {
+			return srv.Target, srv.Port, true
+		}
+	}
+	return "", 0, false
+}
+
+// queryFallbackTXT issues an explicit TXT query for target's metadata, used
+// when the browse response didn't bundle it as an additional.
+func (q *Querier) queryFallbackTXT(ctx context.Context, target string, timeout time.Duration) (txt map[string]string, ok bool) {
+	txtCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	txtResp, err := q.Query(txtCtx, target, RecordTypeTXT)
+	if err != nil {
+		return nil, false
+	}
+	for _, r := range txtResp.Records {
+		if t := r.AsTXT(); t != nil {
+			return ParseTXT(t), true
+		}
+	}
+	return nil, false
+}
+
+// queryFallbackA issues an explicit A query for hostname's IPv4 address, used
+// when the browse response didn't bundle it as an additional.
+func (q *Querier) queryFallbackA(ctx context.Context, hostname string, timeout time.Duration) (ip net.IP, ok bool) {
+	aCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	aResp, err := q.Query(aCtx, hostname, RecordTypeA)
+	if err != nil {
+		return nil, false
+	}
+	for _, r := range aResp.Records {
+		if addr := r.AsA(); addr != nil {
+			return addr, true
+		}
+	}
+	return nil, false
+}
+
+// resolveInstance resolves a single PTR-discovered target into a fully
+// populated ServiceInstance: it prefers additionals bundled in the browse
+// response (RFC 6763 §12) and falls back to explicit SRV/TXT/A queries only
+// for whichever fields are still missing (issue #4 — saves round-trips).
+func (q *Querier) resolveInstance(ctx context.Context, serviceType, target string, additionals []ResourceRecord, resolveTimeout time.Duration) ServiceInstance {
+	svc := ServiceInstance{ServiceType: serviceType, InstanceName: deriveInstanceName(target, serviceType)}
+	applyBundledAdditionals(&svc, additionals, target)
+
+	if svc.Hostname == "" {
+		if hostname, port, ok := q.queryFallbackSRV(ctx, target, resolveTimeout); ok {
+			svc.Hostname = hostname
+			svc.Port = port
+		}
+	}
+
+	if svc.TXT == nil {
+		if txt, ok := q.queryFallbackTXT(ctx, target, resolveTimeout); ok {
+			svc.TXT = txt
+		}
+	}
+
+	if svc.Hostname != "" && svc.AddrIPv4 == nil {
+		if ip, ok := q.queryFallbackA(ctx, svc.Hostname, resolveTimeout); ok {
+			svc.AddrIPv4 = ip
+		}
+	}
+
+	return svc
 }
 
 // toRecordData normalizes parsed RDATA into the querier's public types.
@@ -566,103 +567,79 @@ func (q *Querier) collectResponses(ctx context.Context, _ string, queryType Reco
 	}
 }
 
-// runReceiveLoop is the shared receive goroutine for both IPv4 and IPv6 transports.
-//
-// The transport type itself determines which source-IP validation rules apply:
-//   - *transport.UDPv6Transport → accept fe80::/10 IPv6 link-local addresses
-//   - anything else (IPv4)      → accept 169.254.x.x and RFC-1918 private ranges
+// receiveLoop runs in a background goroutine to continuously receive mDNS responses.
 //
 // FR-006: System MUST receive responses with configurable timeout
 // FR-017: System MUST close socket after query completion
-//
-// nolint:gocyclo // Complexity justified: network packet handling with rate limiting, context management, source IP validation, and error recovery
-func (q *Querier) runReceiveLoop(tr transport.Transport) {
+func (q *Querier) receiveLoop() {
 	defer q.wg.Done()
-
-	_, isIPv6Transport := tr.(*transport.UDPv6Transport)
 
 	for {
 		select {
 		case <-q.ctx.Done():
+			// Querier closed - exit loop
 			return
 
 		default:
+			// FR-006: Receive with short timeout to check context periodically
+			// T034: Migrated from network.ReceiveResponse to transport.Receive()
 			ctx, cancel := context.WithTimeout(q.ctx, 100*time.Millisecond)
-			responseMsg, srcAddr, _, err := tr.Receive(ctx)
+			responseMsg, srcAddr, _, err := q.transport.Receive(ctx) // interfaceIndex not used by querier
 			cancel()
 
 			if err != nil {
-				var netErr *errors.NetworkError
-				if goerrors.As(err, &netErr) {
-					continue // timeout is expected
-				}
+				// Timeout or network error - continue listening.
+				// TODO T063: Distinguish/log real network errors in production
 				continue
 			}
 
-			// T077: Packet size validation per RFC 6762 §17 (FR-034)
-			const maxMDNSPacketSize = 9000
-			if len(responseMsg) > maxMDNSPacketSize {
+			// T077/T075/FR-029: Packet size (RFC 6762 §17), source-IP (RFC 6762 §2),
+			// and rate-limit filtering - see shouldDrop for details.
+			if q.shouldDrop(responseMsg, srcAddr) {
 				continue
 			}
 
-			// Extract source IP for validation and rate limiting
-			var srcIP net.IP
-			var srcIPStr string
-			if udpAddr, ok := srcAddr.(*net.UDPAddr); ok {
-				srcIP = udpAddr.IP
-				srcIPStr = udpAddr.IP.String()
-			}
-
-			// RFC 6762 §2: mDNS is link-local scope — validate source IP accordingly.
-			if srcIP != nil {
-				if !isAcceptableSourceIP(srcIP, isIPv6Transport) {
-					continue
-				}
-			}
-
-			// FR-029: Rate limiting — drop packets from flooding sources.
-			if q.rateLimitEnabled && q.rateLimiter != nil && srcIPStr != "" {
-				if !q.rateLimiter.Allow(srcIPStr) {
-					continue
-				}
-			}
-
+			// Send response to channel (non-blocking)
 			select {
 			case q.responseChan <- responseMsg:
+				// Sent successfully
 			default:
-				// Channel full — drop packet.
+				// Channel full - drop packet (M1 behavior)
+				// Production might want to expand buffer or log
 			}
 		}
 	}
 }
 
-// isAcceptableSourceIP returns true when the source IP is within the link-local
-// scope expected for mDNS traffic per RFC 6762 §2.
-//
-// For IPv4: accept 169.254.0.0/16 (link-local) and RFC-1918 private ranges.
-// For IPv6: accept fe80::/10 (link-local); reject all other addresses.
-func isAcceptableSourceIP(ip net.IP, isIPv6Transport bool) bool {
-	if isIPv6Transport {
-		// fe80::/10 is the only link-local scope for IPv6 per RFC 4291 §2.5.6.
-		if len(ip) == 16 && ip[0] == 0xfe && ip[1]&0xc0 == 0x80 {
-			return true
-		}
-		// IPv4-mapped IPv6 addresses — apply IPv4 rules.
-		if ip4 := ip.To4(); ip4 != nil {
-			return isAcceptableSourceIP(ip4, false)
-		}
-		return false
-	}
-
-	ip4 := ip.To4()
+// isValidSourceIP reports whether srcIP is link-local scope per RFC 6762 §2.
+func isValidSourceIP(srcIP net.IP) bool {
+	ip4 := srcIP.To4()
 	if ip4 == nil {
-		return false
+		return true // non-IPv4 not covered by this check
 	}
-	// 169.254.0.0/16 — RFC 3927 IPv4 link-local
-	if ip4[0] == 169 && ip4[1] == 254 {
+	isLinkLocal := ip4[0] == 169 && ip4[1] == 254
+	return isLinkLocal || security.IsPrivate(srcIP)
+}
+
+// shouldDrop applies size, source-IP, and rate-limit filtering to a received
+// packet. srcIPStr is returned for logging/future use even when accepted.
+func (q *Querier) shouldDrop(responseMsg []byte, srcAddr net.Addr) bool {
+	const maxMDNSPacketSize = 9000 // RFC 6762 §17
+	if len(responseMsg) > maxMDNSPacketSize {
 		return true
 	}
-	return security.IsPrivate(ip)
+	udpAddr, ok := srcAddr.(*net.UDPAddr)
+	if !ok {
+		return false
+	}
+	srcIP := udpAddr.IP
+	if srcIP != nil && !isValidSourceIP(srcIP) {
+		return true
+	}
+	if q.rateLimitEnabled && q.rateLimiter != nil && !q.rateLimiter.Allow(srcIP.String()) {
+		return true
+	}
+	return false
 }
 
 // cleanupLoop periodically cleans up stale rate limiter entries.
@@ -710,25 +687,16 @@ func (q *Querier) Close() error {
 	// Wait for receiver goroutine to exit
 	q.wg.Wait()
 
-	// Close IPv4 transport per FR-017
+	// Close transport per FR-017
 	// T035: Migrated from network.CloseSocket to transport.Close()
 	// FR-004 FIX: Now properly propagates errors (CloseSocket was swallowing them)
 	err := q.transport.Close()
-
-	// Close IPv6 transport if active; preserve the first error.
-	if q.transport6 != nil {
-		if err6 := q.transport6.Close(); err6 != nil && err == nil {
-			err = err6
-		}
-	}
-
-	// Only close the response channel when all transports closed successfully.
-	// If a transport returned an error the caller may retry Close(); closing
-	// the channel on a partial-failure would panic on the retry.
 	if err != nil {
 		return err
 	}
 
+	// Close response channel
 	close(q.responseChan)
+
 	return nil
 }
