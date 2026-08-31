@@ -8,6 +8,7 @@ import (
 
 	"github.com/joshuafuller/beacon/internal/message"
 	"github.com/joshuafuller/beacon/internal/protocol"
+	"github.com/joshuafuller/beacon/internal/transport"
 )
 
 // =============================================================================
@@ -33,7 +34,7 @@ import (
 // FR-008: Timeout is NOT an error - return aggregated responses
 // Coverage: collectResponses line 268-270 (context done path)
 func TestCollectResponses_ContextTimeout(t *testing.T) {
-	q, err := New()
+	q, err := New(WithTransport(transport.NewMockTransport()))
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
@@ -67,7 +68,7 @@ func TestCollectResponses_ContextTimeout(t *testing.T) {
 // FR-016: Continue collecting after discarding malformed packets
 // Coverage: collectResponses line 274-278 (parse error path)
 func TestCollectResponses_MalformedMessage(t *testing.T) {
-	q, err := New()
+	q, err := New(WithTransport(transport.NewMockTransport()))
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
@@ -112,7 +113,7 @@ func TestCollectResponses_MalformedMessage(t *testing.T) {
 // FR-022: Ignore RCODE≠0
 // Coverage: collectResponses line 282-286 (validate response path)
 func TestCollectResponses_InvalidResponseFlags(t *testing.T) {
-	q, err := New()
+	q, err := New(WithTransport(transport.NewMockTransport()))
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
@@ -150,7 +151,7 @@ func TestCollectResponses_InvalidResponseFlags(t *testing.T) {
 //
 // Coverage: collectResponses line 291-295 (type filtering)
 func TestCollectResponses_TypeFiltering(t *testing.T) {
-	q, err := New()
+	q, err := New(WithTransport(transport.NewMockTransport()))
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
@@ -196,7 +197,7 @@ func TestCollectResponses_TypeFiltering(t *testing.T) {
 // FR-007: Deduplicate identical responses
 // Coverage: collectResponses line 304-310 (deduplication logic)
 func TestCollectResponses_Deduplication(t *testing.T) {
-	q, err := New()
+	q, err := New(WithTransport(transport.NewMockTransport()))
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
@@ -240,7 +241,7 @@ func TestCollectResponses_Deduplication(t *testing.T) {
 // FR-008: Aggregate responses received within timeout window
 // Coverage: collectResponses line 272-322 (full happy path)
 func TestCollectResponses_NormalAggregation(t *testing.T) {
-	q, err := New()
+	q, err := New(WithTransport(transport.NewMockTransport()))
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
@@ -396,7 +397,7 @@ func buildBundledPTRResponse(serviceType, instance, host string, port uint16, ip
 // processed only the Answer section, discarding the SRV/TXT/A additionals that
 // let one PTR query resolve a whole instance.
 func TestCollectResponses_RetainsAdditionals(t *testing.T) {
-	q, err := New()
+	q, err := New(WithTransport(transport.NewMockTransport()))
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
@@ -445,7 +446,7 @@ func TestCollectResponses_RetainsAdditionals(t *testing.T) {
 // additionals were not consumed, the fallback SRV/TXT/A queries would find
 // nothing and the instance would be unresolved.
 func TestDiscoverServices_UsesAdditionals_SingleRoundTrip(t *testing.T) {
-	q, err := New()
+	q, err := New(WithTransport(transport.NewMockTransport()))
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
@@ -570,7 +571,7 @@ func feedResponseUntilStopped(q *Querier, packet []byte) (stop func()) {
 // TXT/A), DiscoverServices falls back to an explicit SRV query to resolve
 // hostname and port (querier.go's queryFallbackSRV path).
 func TestDiscoverServices_FallbackSRV_WhenNotBundled(t *testing.T) {
-	q, err := New()
+	q, err := New(WithTransport(transport.NewMockTransport()))
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
@@ -632,7 +633,7 @@ func findServiceByInstance(services []ServiceInstance, instanceName string) *Ser
 // SRV/A), DiscoverServices falls back to an explicit TXT query to resolve
 // metadata (querier.go's queryFallbackTXT path).
 func TestDiscoverServices_FallbackTXT_WhenNotBundled(t *testing.T) {
-	q, err := New()
+	q, err := New(WithTransport(transport.NewMockTransport()))
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
@@ -673,7 +674,7 @@ func TestDiscoverServices_FallbackTXT_WhenNotBundled(t *testing.T) {
 // SRV/TXT), DiscoverServices falls back to an explicit A query to resolve
 // the IPv4 address (querier.go's queryFallbackA path).
 func TestDiscoverServices_FallbackA_WhenNotBundled(t *testing.T) {
-	q, err := New()
+	q, err := New(WithTransport(transport.NewMockTransport()))
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
