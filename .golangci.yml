@@ -3,7 +3,7 @@
 # Governance: Aligned with Beacon Constitution v1.0.0 Principle VII (Excellence)
 # Configuration version: v2
 
-version: 2
+version: "2"
 
 run:
   timeout: 5m
