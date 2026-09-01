@@ -80,7 +80,7 @@ rules:
       - pattern: import "$PKG"
       - metavariable-regex:
           metavariable: $PKG
-          regex: ^(?!(context|fmt|log|net|os|regexp|sync|time|testing|encoding|bytes|strconv|strings|errors|io|math|sort|runtime|unsafe|syscall)(/.*)?$|golang\.org/x/(sys|net)(/|$)|github\.com/joshuafuller/beacon(/|$)|beacon/).*$
+          regex: ^(?!(golang\.org/x/(sys|net)(/|$)|github\.com/joshuafuller/beacon(/|$)|beacon/))[^/]*\.[^/]+(?:/.*)?$
     message: |
       External dependency detected. Constitution Principle V allows:
       1. Standard library (preferred)
