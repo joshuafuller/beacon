@@ -5,6 +5,8 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"github.com/joshuafuller/beacon/internal/transport"
 )
 
 // BenchmarkQuery measures the query processing overhead per NFR-001.
@@ -247,47 +249,44 @@ func TestParseTXT(t *testing.T) {
 }
 
 // ==============================================================================
-// M1-Refactoring Integration Tests (TDD - RED Phase)
+// M1-Refactoring Integration Tests
 // ==============================================================================
-// These tests are written FIRST to guide the Transport interface refactoring.
-// Expected: FAIL until querier is refactored to use Transport interface (T031-T037)
+// These tests validate the Transport interface abstraction (T031-T037).
 
 // NOTE: Original TDD RED tests removed (T027, T028):
 // - TestQuerier_UsesTransportInterface: Obsolete, T031 is complete
 //   (Querier HAS transport field at querier.go:46-47, used throughout)
-// - TestQuerier_WorksWithMockTransport: Deferred to future milestone
-//   (WithTransport() option not implemented - all tests work without it)
+// - TestQuerier_WorksWithMockTransport: Superseded by
+//   TestQuerier_WithTransport_UsesMockTransport below now that WithTransport()
+//   exists (T100).
 //
 // Transport interface abstraction is validated via:
 // - M1-Refactoring completion (see archive/m1-refactoring/)
 // - internal/transport/transport_test.go (interface contract tests)
-// - querier/querier.go:112 (New() creates UDPv4Transport)
-//
-// TODO M2 (T100): Add test for WithTransport() option
-// After implementing WithTransport() option (see querier/options.go TODO), add:
-//
-//   func TestQuerier_WithTransport_UsesMockTransport(t *testing.T) {
-//       mock := transport.NewMockTransport()
-//       q, err := New(WithTransport(mock))
-//       if err != nil {
-//           t.Fatalf("New(WithTransport) failed: %v", err)
-//       }
-//       defer func() { _ = q.Close() }()
-//
-//       ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-//       defer cancel()
-//
-//       _, _ = q.Query(ctx, "test.local", RecordTypeA)
-//
-//       // Verify mock recorded the Send() call
-//       calls := mock.SendCalls()
-//       if len(calls) != 1 {
-//           t.Errorf("Expected 1 Send() call, got %d", len(calls))
-//       }
-//   }
-//
-// This enables testing without real network, mocking failures, simulating responses.
-// See: specs/004-m1-1-architectural-hardening/tasks.md Phase 8, T100
+// - querier/querier.go New() (creates UDPv4Transport unless WithTransport overrides it)
+
+// TestQuerier_WithTransport_UsesMockTransport verifies WithTransport() (T100)
+// routes Query()'s Send() through the injected transport instead of opening
+// a real UDP socket.
+func TestQuerier_WithTransport_UsesMockTransport(t *testing.T) {
+	mock := transport.NewMockTransport()
+	mock.EnableBlockingReceive()
+	q, err := New(WithTransport(mock))
+	if err != nil {
+		t.Fatalf("New(WithTransport) failed: %v", err)
+	}
+	defer func() { _ = q.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_, _ = q.Query(ctx, "test.local", RecordTypeA)
+
+	calls := mock.SendCalls()
+	if len(calls) != 1 {
+		t.Errorf("Expected 1 Send() call, got %d", len(calls))
+	}
+}
 
 // ==============================================================================
 // Phase 3: Error Propagation Validation (T064) - FR-004
@@ -513,5 +512,116 @@ func TestWithIPv6_OptionSetsFlag(t *testing.T) {
 
 	if !q.ipv6Enabled {
 		t.Error("WithIPv6() did not set ipv6Enabled = true")
+	}
+}
+
+func TestNew_WithIPv6_UsesDefaultIPv6SetupPath(t *testing.T) {
+	mockV4 := transport.NewMockTransport()
+	mockV4.EnableBlockingReceive()
+
+	q, err := New(WithTransport(mockV4), WithIPv6())
+	if err != nil {
+		t.Fatalf("New(WithIPv6()) failed: %v", err)
+	}
+	defer func() { _ = q.Close() }()
+
+	if !q.ipv6Enabled {
+		t.Fatal("New(WithIPv6()) did not enable IPv6")
+	}
+	t.Logf("default IPv6 transport initialized: %t", q.transport6 != nil)
+}
+
+// TestWithIPv6Transport_UsesGivenTransportForBothStacks verifies that
+// WithIPv6Transport (T100 companion) implies ipv6Enabled and that New()
+// dispatches Query() sends to the injected v4 and v6 mocks instead of
+// opening real UDP sockets.
+func TestWithIPv6Transport_UsesGivenTransportForBothStacks(t *testing.T) {
+	mockV4 := transport.NewMockTransport()
+	mockV6 := transport.NewMockTransport()
+	mockV4.EnableBlockingReceive()
+	mockV6.EnableBlockingReceive()
+
+	q, err := New(WithTransport(mockV4), WithIPv6Transport(mockV6))
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	defer func() { _ = q.Close() }()
+
+	if !q.ipv6Enabled {
+		t.Error("WithIPv6Transport() did not set ipv6Enabled = true")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, _ = q.Query(ctx, "test.local", RecordTypeA)
+
+	if len(mockV4.SendCalls()) != 1 {
+		t.Errorf("mockV4 SendCalls = %d, want 1", len(mockV4.SendCalls()))
+	}
+	if len(mockV6.SendCalls()) != 1 {
+		t.Errorf("mockV6 SendCalls = %d, want 1", len(mockV6.SendCalls()))
+	}
+}
+
+type closeTrackingTransport struct {
+	closeCalls int
+}
+
+func (t *closeTrackingTransport) Send(context.Context, []byte, net.Addr) error {
+	return nil
+}
+
+func (t *closeTrackingTransport) Receive(context.Context) ([]byte, net.Addr, int, error) {
+	return nil, nil, 0, context.Canceled
+}
+
+func (t *closeTrackingTransport) Close() error {
+	t.closeCalls++
+	return nil
+}
+
+func TestNew_ClosesInjectedIPv6TransportWhenIPv4SetupFails(t *testing.T) {
+	previous := newUDPv4Transport
+	newUDPv4Transport = func() (*transport.UDPv4Transport, error) {
+		return nil, context.Canceled
+	}
+	t.Cleanup(func() { newUDPv4Transport = previous })
+
+	mockV6 := &closeTrackingTransport{}
+	q, err := New(WithIPv6Transport(mockV6))
+	if err != context.Canceled {
+		t.Fatalf("New() error = %v, want %v", err, context.Canceled)
+	}
+	if q != nil {
+		t.Fatalf("New() returned non-nil Querier alongside error: %+v", q)
+	}
+	if mockV6.closeCalls != 1 {
+		t.Errorf("injected IPv6 transport close calls = %d, want 1", mockV6.closeCalls)
+	}
+}
+
+// TestNew_OptionError_ClosesAlreadyInjectedTransports verifies that when an
+// Option fails after WithTransport/WithIPv6Transport already injected
+// transports, New()'s cleanup path closes both before returning the
+// original option error (rather than leaking them or masking the error
+// with a close failure).
+func TestNew_OptionError_ClosesAlreadyInjectedTransports(t *testing.T) {
+	mockV4 := &closeTrackingTransport{}
+	mockV6 := &closeTrackingTransport{}
+
+	q, err := New(
+		WithTransport(mockV4),
+		WithIPv6Transport(mockV6),
+		WithRateLimitThreshold(-1), // fails after transports are already injected
+	)
+	if err == nil {
+		t.Fatal("New() with invalid WithRateLimitThreshold returned nil error")
+	}
+	if q != nil {
+		t.Errorf("New() returned non-nil Querier alongside error: %+v", q)
+	}
+	if mockV4.closeCalls != 1 || mockV6.closeCalls != 1 {
+		t.Errorf("injected transport close calls = (%d, %d), want (1, 1)",
+			mockV4.closeCalls, mockV6.closeCalls)
 	}
 }

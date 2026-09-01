@@ -98,6 +98,8 @@ type Querier struct {
 	ipv6Enabled bool
 }
 
+var newUDPv4Transport = transport.NewUDPv4Transport
+
 // New creates a new Querier with optional configuration.
 //
 // New initializes the UDP multicast socket and starts a background receiver
@@ -118,18 +120,13 @@ type Querier struct {
 //
 //	q, err := querier.New(querier.WithTimeout(2 * time.Second))
 func New(opts ...Option) (*Querier, error) {
-	// T032: Create UDP multicast transport (migrated from network.CreateSocket)
-	tr, err := transport.NewUDPv4Transport()
-	if err != nil {
-		return nil, err // Already wrapped as NetworkError
-	}
-
 	// Create lifecycle context
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Create querier with defaults
+	// Create querier with defaults. transport is left nil here (set below,
+	// after options) so WithTransport (T100) can supply a MockTransport
+	// without New() first opening a real UDP socket that's immediately discarded.
 	q := &Querier{
-		transport:          tr,
 		defaultTimeout:     1 * time.Second,        // SC-002: discover devices within 1 second
 		responseChan:       make(chan []byte, 100), // Buffer for incoming responses
 		ctx:                ctx,
@@ -142,10 +139,29 @@ func New(opts ...Option) (*Querier, error) {
 	// Apply options
 	for _, opt := range opts {
 		if err := opt(q); err != nil {
-			cancel()       // Clean up context before returning error
-			_ = tr.Close() // Ignore error, already returning primary error
+			cancel() // Clean up context before returning error
+			if q.transport != nil {
+				_ = q.transport.Close() // Ignore error, already returning primary error
+			}
+			if q.transport6 != nil {
+				_ = q.transport6.Close() // Ignore error, already returning primary error
+			}
 			return nil, err
 		}
+	}
+
+	// T032: Create UDP multicast transport (migrated from network.CreateSocket)
+	// unless WithTransport (T100) already supplied one.
+	if q.transport == nil {
+		tr, err := newUDPv4Transport()
+		if err != nil {
+			cancel()
+			if q.transport6 != nil {
+				_ = q.transport6.Close()
+			}
+			return nil, err // Already wrapped as NetworkError
+		}
+		q.transport = tr
 	}
 
 	// Initialize rate limiter if enabled (after options applied)
@@ -161,7 +177,8 @@ func New(opts ...Option) (*Querier, error) {
 		go q.cleanupLoop()
 	}
 
-	if q.ipv6Enabled {
+	// Create the real IPv6 transport unless WithIPv6Transport already supplied one.
+	if q.ipv6Enabled && q.transport6 == nil {
 		if tr6, err6 := transport.NewUDPv6Transport(); err6 == nil {
 			q.transport6 = tr6
 		}

@@ -1,16 +1,16 @@
 # M1.1 Incomplete Tasks Analysis
 
-**Date**: 2025-11-02
-**Status**: 3 tasks incomplete out of 103 total
+**Date**: 2025-11-02 (T100 resolved 2026-08-31, see note below)
+**Status**: 2 tasks incomplete out of 103 total
 **Context**: Post-merge validation per user request
 
 ---
 
 ## Summary
 
-M1.1 has **3 unchecked tasks** (T083, T084, T100):
+M1.1 originally had **3 unchecked tasks** (T083, T084, T100); **T100 is now implemented** (2026-08-31), leaving 2:
 - **2 tasks blocked** by platform availability (T083, T084)
-- **1 task deferred** by design to M2 (T100)
+- ~~1 task deferred by design to M2 (T100)~~ - implemented, see below
 
 **Impact on Success Criteria**:
 - ✅ **6 of 7 success criteria fully met** (SC-001 through SC-007, SC-009)
@@ -82,30 +82,21 @@ M1.1 has **3 unchecked tasks** (T083, T084, T100):
 
 ---
 
-### T100: WithTransport() Option (DEFERRED BY DESIGN)
+### T100: WithTransport() Option (✅ IMPLEMENTED 2026-08-31)
 
-**Status**: ✅ Deferred to M2 (intentional)
-**Task**: "Add WithTransport() option to enable MockTransport injection (deferred to M2)"
+**Status**: ✅ Done - `WithTransport()` and `WithIPv6Transport()` exist in `querier/options.go`
+**Task**: "Add WithTransport() option to enable MockTransport injection"
 **Maps to**: Enhancement (not part of M1.1 success criteria)
 
 **What it enables**:
-- Inject `MockTransport` into querier for unit testing
+- Inject `MockTransport` into querier for unit testing (now used throughout `querier/collectresponses_test.go` and `tests/contract/rfc_test.go`)
 - Test edge cases without real network
 - Faster test execution
-- Better test isolation
+- Better test isolation - eliminated real-network false positives/failures caused by `New()` racing a real socket's receiver goroutine against fixture-injected test packets
 
-**Why deferred**:
-- Not required for M1.1 success criteria
-- Current integration test coverage adequate
-- M2 will need this for responder testing
-- TODO comments added to code (querier/options.go:176, querier_test.go:209)
+**Why it was deferred at M1.1 time**: Not required for M1.1 success criteria; current integration test coverage was adequate then. It ended up being implemented for the querier package directly (not "when building responder" as originally planned - the responder package already had its own separate `WithTransport()` option by that point).
 
-**Next steps**:
-1. Implement in **M2** when building responder functionality
-2. Follow implementation example in TODO comments
-3. Estimated effort: 1-2 hours
-
-**Recommendation**: Keep deferred to M2, no action needed for M1.1
+**Resolution**: See `specs/004-m1-1-architectural-hardening/tasks.md` T100 and commit history (`git log --grep T100`).
 
 ---
 
@@ -169,7 +160,6 @@ M1.1 has **3 unchecked tasks** (T083, T084, T100):
 2. Run full test suite on all 3 platforms
 3. Complete T083, T084
 4. Achieve full SC-010 compliance
-5. Implement T100 (WithTransport) when building responder
 
 **Estimated effort**: 4-6 hours for CI/CD setup
 
@@ -189,8 +179,7 @@ M1.1 has **3 unchecked tasks** (T083, T084, T100):
 
 3. **specs/004-m1-1-architectural-hardening/tasks.md**:
    - Already documents T083, T084 as requiring platform access ✅
-   - Already marks T100 as [FUTURE] ✅
-   - No changes needed
+   - T100 now marked [x] (implemented 2026-08-31) ✅
 
 4. **specs/004-m1-1-architectural-hardening/spec.md**:
    - Update SC-010 status to "Partially met (Linux only)"

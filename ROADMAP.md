@@ -232,7 +232,7 @@ Beacon follows a milestone-based development approach (M1-M6), delivering workin
 ### Documentation
 
 - [Spec: 004-m1-1-architectural-hardening](specs/004-m1-1-architectural-hardening/spec.md)
-- [Tasks: 100/103 complete](specs/004-m1-1-architectural-hardening/tasks.md) (3 deferred: T083, T084, T100)
+- [Tasks: 101/103 complete](specs/004-m1-1-architectural-hardening/tasks.md) (2 deferred, require non-Linux platforms: T083, T084)
 - [Incomplete Tasks Analysis](specs/004-m1-1-architectural-hardening/INCOMPLETE_TASKS_ANALYSIS.md)
 - [F-9: Transport Layer & Socket Configuration](.specify/specs/F-9-transport-layer-socket-configuration.md)
 - [F-10: Network Interface Management](.specify/specs/F-10-network-interface-management.md)
