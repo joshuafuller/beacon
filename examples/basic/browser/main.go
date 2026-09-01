@@ -12,7 +12,7 @@ import (
 
 func main() {
 	fmt.Println("=== Service Browser Example ===")
-	fmt.Println("Discovering mDNS services on the local network...\n")
+	fmt.Println("Discovering mDNS services on the local network...")
 
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

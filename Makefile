@@ -2,7 +2,7 @@
 # Updated: 2025-11-03
 # Governance: Aligned with Beacon Constitution v1.0.0
 
-.PHONY: help test test-race test-coverage test-coverage-report test-integration test-contract test-fuzz test-benchmark lint fmt fmt-check vet vet-staticcheck build clean verify ci-fast ci-full all
+.PHONY: help test test-race test-coverage test-coverage-report test-examples test-integration test-contract test-fuzz test-benchmark lint fmt fmt-check vet vet-staticcheck build clean verify ci-fast ci-full all
 
 # Default target
 .DEFAULT_GOAL := help
@@ -13,6 +13,7 @@ GOLANGCI_LINT := golangci-lint
 COVERAGE_FILE := coverage.out
 COVERAGE_HTML := coverage.html
 MIN_COVERAGE := 80
+COVERAGE_PACKAGES = $(shell go list ./... | grep -vE '/examples/|/tests/|/specs/')
 
 ## help: Display this help message
 help:
@@ -23,6 +24,7 @@ help:
 	@echo "  make test-race             - Run tests with race detector (FR-019, REQ-F8-5)"
 	@echo "  make test-coverage         - Run tests with coverage report (≥80% required, REQ-F8-2)"
 	@echo "  make test-coverage-report  - Detailed coverage report by package (pretty output)"
+	@echo "  make test-examples         - Compile and vet all nested example modules"
 	@echo "  make test-integration      - Run integration tests"
 	@echo "  make test-contract         - Run API contract tests (RFC compliance, REQ-F8-6)"
 	@echo "  make test-fuzz             - Run fuzz tests (NFR-003: 10,000 iterations)"
@@ -70,10 +72,10 @@ test-race:
 	@echo "Running tests with race detector (FR-019, REQ-F8-5, excludes fuzz tests)..."
 	$(GO) test -race -v $$(go list ./... | grep -v /tests/fuzz)
 
-## test-coverage: Run tests with coverage report (SC-010, REQ-F8-2: ≥80% required)
+## test-coverage: Run production-package tests with coverage (SC-010, REQ-F8-2: ≥80% required)
 test-coverage:
-	@echo "Running tests with coverage (REQ-F8-2: ≥80% required, excludes fuzz tests)..."
-	$(GO) test -coverprofile=$(COVERAGE_FILE) -covermode=atomic $$(go list ./... | grep -v /tests/fuzz)
+	@echo "Running production-package tests with coverage (REQ-F8-2: ≥80% required)..."
+	$(GO) test -coverprofile=$(COVERAGE_FILE) -covermode=atomic $(COVERAGE_PACKAGES)
 	@echo ""
 	@echo "Coverage Report:"
 	$(GO) tool cover -func=$(COVERAGE_FILE)
@@ -93,8 +95,8 @@ test-coverage:
 
 ## test-coverage-report: Generate detailed coverage report by package
 test-coverage-report:
-	@echo "Generating detailed coverage report by package (excludes fuzz tests)..."
-	@$(GO) test -coverprofile=$(COVERAGE_FILE) -covermode=atomic $$(go list ./... | grep -v /tests/fuzz) || true
+	@echo "Generating detailed production-package coverage report..."
+	@$(GO) test -coverprofile=$(COVERAGE_FILE) -covermode=atomic $(COVERAGE_PACKAGES)
 	@if [ ! -f $(COVERAGE_FILE) ]; then \
 		echo "❌ Failed to generate coverage report (tests may have failed)"; \
 		exit 1; \
@@ -121,6 +123,16 @@ test-coverage-report:
 	fi
 	@echo ""
 
+## test-examples: Compile and vet all nested example modules
+test-examples:
+	@echo "Testing nested example modules..."
+	@set -e; \
+	for mod in $$(find examples docs/deployment -name go.mod -print); do \
+		dir=$$(dirname "$$mod"); \
+		echo "  $$dir"; \
+		(cd "$$dir" && $(GO) test ./...); \
+	done
+
 ## test-integration: Run integration tests
 test-integration:
 	@echo "Running integration tests..."
@@ -145,7 +157,7 @@ test-fuzz-ci:
 ## test-benchmark: Run benchmark tests (F-8 Testing Strategy)
 test-benchmark:
 	@echo "Running benchmark tests (F-8 Testing Strategy)..."
-	$(GO) test -bench=. -benchmem -count=5 ./...
+	$(GO) test -run '^$$' -bench=. -benchmem -count=5 $$(go list ./... | grep -v /tests/fuzz)
 
 ## lint: Run golangci-lint
 lint:
@@ -268,7 +280,7 @@ ci-fast: fmt-check vet lint-warn semgrep-check test-race test-coverage
 ## ci-full: Full CI validation (comprehensive checks for PRs/releases)
 ## Includes all tests: unit, integration, contract, fuzz, benchmarks
 ## NOTE: Using lint-warn temporarily during technical debt cleanup (see GitHub Issues)
-ci-full: fmt-check vet-staticcheck lint-warn semgrep-check test-race test-coverage test-contract test-integration test-fuzz-ci test-benchmark
+ci-full: fmt-check vet-staticcheck lint-warn semgrep-check test-race test-coverage test-examples test-contract test-integration test-fuzz-ci test-benchmark
 	@echo ""
 	@echo "✅ Full CI validation passed!"
 	@echo "   - Code properly formatted (gofmt check)"

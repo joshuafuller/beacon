@@ -37,7 +37,7 @@ This file provides context for Claude AI when working on the Beacon project.
 ## Technology Stack
 
 ### Language & Runtime
-- **Go 1.21+** (required)
+- **Go 1.24+** (required)
 - Core packages: `net`, `context`, `time`, `sync`, `encoding/binary`
 - External (std-adjacent) deps: `golang.org/x/net` (multicast helpers), `golang.org/x/sys` (socket options)
 
@@ -286,7 +286,7 @@ make test
 
 ### Testing Standards
 - **TDD**: Write tests FIRST (RED phase)
-- **Coverage**: Maintain ≥85% (current: 84.8%)
+- **Coverage**: Maintain ≥80% of production packages
 - **Stability**: Zero flaky tests (achieved in M1-Refactoring)
 - **Naming**: Test functions describe behavior (`TestQuery_Timeout_ReturnsEmptyResponse`)
 
@@ -655,7 +655,7 @@ gofmt -l . | grep . && echo "Files need formatting"
 - When removing a test, justify the decision and note compensating coverage if needed.
 
 ## Active Technologies
-- Go 1.21+ + Standard library + `golang.org/x/sys` (platform-specific socket options from M1.1), `golang.org/x/net` (multicast group management from M1.1, interface index extraction via `ipv4.PacketConn` from 007-interface-specific-addressing)
+- Go 1.24+ + Standard library + `golang.org/x/sys` (platform-specific socket options from M1.1), `golang.org/x/net` (multicast group management from M1.1, interface index extraction via `ipv4.PacketConn` from 007-interface-specific-addressing)
 - In-memory (registered services, resource record sets with TTLs) (006-mdns-responder)
-- Go 1.21+ (matches Beacon minimum version), Markdown (GitHub Flavored), Hugo 0.120+ (static site) (008-documentation-production-polish)
+- Go 1.24+ (matches Beacon minimum version), Markdown (GitHub Flavored), Hugo 0.120+ (static site) (008-documentation-production-polish)
 - Static files (markdown, examples, site content) in Git repository, no database required (008-documentation-production-polish)

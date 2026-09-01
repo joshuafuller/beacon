@@ -54,7 +54,7 @@ func (b *Bridge) Start(ctx context.Context) error {
 
 	fmt.Println("NOTE: This is an educational example.")
 	fmt.Println("Production bridging requires platform-specific interface binding.")
-	fmt.Println("See F-10 Network Interface Management spec for implementation details.\n")
+	fmt.Println("See F-10 Network Interface Management spec for implementation details.")
 
 	return nil
 }

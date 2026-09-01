@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	fmt.Println("=== Beacon Error Handling Examples ===\n")
+	fmt.Println("=== Beacon Error Handling Examples ===")
 
 	// Scenario 1: Validation Error - Empty Instance Name
 	scenario1_ValidationError()
@@ -54,7 +54,7 @@ func scenario1_ValidationError() {
 		fmt.Printf("✓ Caught validation error: %v\n", err)
 		fmt.Printf("  Fix: Set InstanceName to a non-empty value (1-63 characters)\n\n")
 	} else {
-		fmt.Println("✗ Expected error but registration succeeded\n")
+		fmt.Println("✗ Expected error but registration succeeded")
 	}
 }
 
@@ -83,7 +83,7 @@ func scenario2_InvalidPort() {
 		fmt.Printf("✓ Caught validation error: %v\n", err)
 		fmt.Printf("  Fix: Set Port to a value between 1 and 65535\n\n")
 	} else {
-		fmt.Println("✗ Expected error but registration succeeded\n")
+		fmt.Println("✗ Expected error but registration succeeded")
 	}
 }
 
@@ -104,7 +104,7 @@ func scenario3_ContextCancellation() {
 		fmt.Printf("✓ Caught context cancellation: %v\n", err)
 		fmt.Printf("  This is expected when context is canceled\n\n")
 	} else {
-		fmt.Println("✗ Expected context error but operation succeeded\n")
+		fmt.Println("✗ Expected context error but operation succeeded")
 	}
 }
 

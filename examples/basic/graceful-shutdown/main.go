@@ -16,7 +16,7 @@ import (
 func main() {
 	fmt.Println("=== Graceful Shutdown Example ===")
 	fmt.Println("This example demonstrates proper service lifecycle management.")
-	fmt.Println("Press Ctrl+C to trigger graceful shutdown with goodbye packets.\n")
+	fmt.Println("Press Ctrl+C to trigger graceful shutdown with goodbye packets.")
 
 	// Create context
 	ctx, cancel := context.WithCancel(context.Background())
@@ -42,7 +42,7 @@ func main() {
 
 	fmt.Printf("✓ Service registered: %s.%s\n", svc.InstanceName, svc.ServiceType)
 	fmt.Println("  Service is now visible on the network")
-	fmt.Println("  Waiting for shutdown signal...\n")
+	fmt.Println("  Waiting for shutdown signal...")
 
 	// Set up signal handling
 	sigChan := make(chan os.Signal, 1)

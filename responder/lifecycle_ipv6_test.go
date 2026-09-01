@@ -3,9 +3,11 @@ package responder
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net"
 	"testing"
 
+	internalerrors "github.com/joshuafuller/beacon/internal/errors"
 	"github.com/joshuafuller/beacon/internal/message"
 	"github.com/joshuafuller/beacon/internal/protocol"
 	internalresponder "github.com/joshuafuller/beacon/internal/responder"
@@ -223,6 +225,35 @@ func TestBuildIPv6AnnouncementProjections(t *testing.T) {
 		if !bytes.Equal(gotAAAA, wantAAAA) {
 			t.Fatalf("interface %d AAAA record = %v, want %v", ifIndex, gotAAAA, wantAAAA)
 		}
+	}
+}
+
+func TestLookupLifecycleAddresses_AllowsIPv6OnlyInterface(t *testing.T) {
+	ipv4, ipv6, err := lookupLifecycleAddressesWith(
+		7,
+		func(int) ([]net.IP, error) { return []net.IP{net.ParseIP("fe80::7")}, nil },
+		func(int) ([]byte, error) {
+			return nil, &internalerrors.ValidationError{Field: "interface", Message: "no IPv4 address"}
+		},
+	)
+	if err != nil {
+		t.Fatalf("lookupLifecycleAddressesWith() error = %v, want nil for IPv6-only interface", err)
+	}
+	if ipv4 != nil || len(ipv6) != 1 {
+		t.Fatalf("lookupLifecycleAddressesWith() = (%v, %v), want (nil, one IPv6 address)", ipv4, ipv6)
+	}
+}
+
+func TestLookupLifecycleAddresses_PropagatesNetworkError(t *testing.T) {
+	wantErr := &internalerrors.NetworkError{Operation: "get interface addresses"}
+	_, _, err := lookupLifecycleAddressesWith(
+		7,
+		func(int) ([]net.IP, error) { return []net.IP{net.ParseIP("fe80::7")}, nil },
+		func(int) ([]byte, error) { return nil, wantErr },
+	)
+	var gotErr *internalerrors.NetworkError
+	if !errors.As(err, &gotErr) {
+		t.Fatalf("lookupLifecycleAddressesWith() error = %v, want NetworkError", err)
 	}
 }
 

@@ -24,7 +24,7 @@ const (
 
 func main() {
 	fmt.Println("=== mDNS Multi-Interface Bridge ===")
-	fmt.Println("This example demonstrates RFC 6762 §15 multi-interface operations.\n")
+	fmt.Println("This example demonstrates RFC 6762 §15 multi-interface operations.")
 
 	// Load configuration
 	config, err := LoadConfig("config.yaml")
@@ -72,7 +72,7 @@ func main() {
 
 	fmt.Printf("✓ Bridge started: %s ↔ %s\n", config.Interfaces[0], config.Interfaces[1])
 	fmt.Printf("  Forwarding queries for: %v\n", config.AllowedServices)
-	fmt.Println("\nPress Ctrl+C to stop\n")
+	fmt.Println("\nPress Ctrl+C to stop")
 
 	// Setup signal handling
 	sigChan := make(chan os.Signal, 1)

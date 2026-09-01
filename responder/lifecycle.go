@@ -2,9 +2,11 @@ package responder
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"net"
 
+	beaconerrors "github.com/joshuafuller/beacon/internal/errors"
 	"github.com/joshuafuller/beacon/internal/message"
 	"github.com/joshuafuller/beacon/internal/protocol"
 	"github.com/joshuafuller/beacon/internal/records"
@@ -288,11 +290,28 @@ func buildIPv6AnnouncementProjections(recordSet []*message.ResourceRecord, inter
 }
 
 func lookupLifecycleAddresses(ifIndex int) ([]byte, []net.IP, error) {
-	ipv6Addresses, err := getIPv6ForInterface(ifIndex)
+	return lookupLifecycleAddressesWith(ifIndex, getIPv6ForInterface, getIPv4ForInterface)
+}
+
+func lookupLifecycleAddressesWith(
+	ifIndex int,
+	lookupIPv6 func(int) ([]net.IP, error),
+	lookupIPv4 func(int) ([]byte, error),
+) ([]byte, []net.IP, error) {
+	ipv6Addresses, err := lookupIPv6(ifIndex)
 	if err != nil {
 		return nil, nil, err
 	}
-	ipv4, _ := getIPv4ForInterface(ifIndex)
+	ipv4, err := lookupIPv4(ifIndex)
+	if err != nil {
+		// IPv4 is optional when the interface is IPv6-only, represented by a
+		// ValidationError. Network and other lookup failures must propagate.
+		var validationErr *beaconerrors.ValidationError
+		if !stderrors.As(err, &validationErr) {
+			return nil, nil, err
+		}
+		return nil, ipv6Addresses, nil
+	}
 	return ipv4, ipv6Addresses, nil
 }
 
