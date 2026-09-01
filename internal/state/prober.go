@@ -267,10 +267,17 @@ func (p *Prober) listenForConflictDuringInterval(ctx context.Context) (result Pr
 		// Skip nil/empty packets (e.g., mock transport returning immediately)
 		if len(packet) == 0 {
 			// Yield briefly to avoid busy-spinning on non-blocking mocks
+			timer := time.NewTimer(time.Millisecond)
 			select {
 			case <-ctx.Done():
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
 				return ProbeResult{Error: ctx.Err()}, true
-			case <-time.After(time.Millisecond):
+			case <-timer.C:
 			}
 			continue
 		}
