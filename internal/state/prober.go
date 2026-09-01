@@ -270,15 +270,11 @@ func (p *Prober) listenForConflictDuringInterval(ctx context.Context) (result Pr
 			timer := time.NewTimer(time.Millisecond)
 			select {
 			case <-ctx.Done():
-				if !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
-					}
-				}
+				timer.Stop()
 				return ProbeResult{Error: ctx.Err()}, true
 			case <-timer.C:
 			}
+			timer.Stop()
 			continue
 		}
 
