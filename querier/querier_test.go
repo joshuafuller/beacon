@@ -515,6 +515,22 @@ func TestWithIPv6_OptionSetsFlag(t *testing.T) {
 	}
 }
 
+func TestNew_WithIPv6_UsesDefaultIPv6SetupPath(t *testing.T) {
+	mockV4 := transport.NewMockTransport()
+	mockV4.EnableBlockingReceive()
+
+	q, err := New(WithTransport(mockV4), WithIPv6())
+	if err != nil {
+		t.Fatalf("New(WithIPv6()) failed: %v", err)
+	}
+	defer func() { _ = q.Close() }()
+
+	if !q.ipv6Enabled {
+		t.Fatal("New(WithIPv6()) did not enable IPv6")
+	}
+	t.Logf("default IPv6 transport initialized: %t", q.transport6 != nil)
+}
+
 // TestWithIPv6Transport_UsesGivenTransportForBothStacks verifies that
 // WithIPv6Transport (T100 companion) implies ipv6Enabled and that New()
 // dispatches Query() sends to the injected v4 and v6 mocks instead of
@@ -562,6 +578,26 @@ func (t *closeTrackingTransport) Receive(context.Context) ([]byte, net.Addr, int
 func (t *closeTrackingTransport) Close() error {
 	t.closeCalls++
 	return nil
+}
+
+func TestNew_ClosesInjectedIPv6TransportWhenIPv4SetupFails(t *testing.T) {
+	previous := newUDPv4Transport
+	newUDPv4Transport = func() (*transport.UDPv4Transport, error) {
+		return nil, context.Canceled
+	}
+	t.Cleanup(func() { newUDPv4Transport = previous })
+
+	mockV6 := &closeTrackingTransport{}
+	q, err := New(WithIPv6Transport(mockV6))
+	if err != context.Canceled {
+		t.Fatalf("New() error = %v, want %v", err, context.Canceled)
+	}
+	if q != nil {
+		t.Fatalf("New() returned non-nil Querier alongside error: %+v", q)
+	}
+	if mockV6.closeCalls != 1 {
+		t.Errorf("injected IPv6 transport close calls = %d, want 1", mockV6.closeCalls)
+	}
 }
 
 // TestNew_OptionError_ClosesAlreadyInjectedTransports verifies that when an

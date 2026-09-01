@@ -98,6 +98,8 @@ type Querier struct {
 	ipv6Enabled bool
 }
 
+var newUDPv4Transport = transport.NewUDPv4Transport
+
 // New creates a new Querier with optional configuration.
 //
 // New initializes the UDP multicast socket and starts a background receiver
@@ -151,7 +153,7 @@ func New(opts ...Option) (*Querier, error) {
 	// T032: Create UDP multicast transport (migrated from network.CreateSocket)
 	// unless WithTransport (T100) already supplied one.
 	if q.transport == nil {
-		tr, err := transport.NewUDPv4Transport()
+		tr, err := newUDPv4Transport()
 		if err != nil {
 			cancel()
 			if q.transport6 != nil {
