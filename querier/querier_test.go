@@ -270,6 +270,7 @@ func TestParseTXT(t *testing.T) {
 // a real UDP socket.
 func TestQuerier_WithTransport_UsesMockTransport(t *testing.T) {
 	mock := transport.NewMockTransport()
+	mock.EnableBlockingReceive()
 	q, err := New(WithTransport(mock))
 	if err != nil {
 		t.Fatalf("New(WithTransport) failed: %v", err)
@@ -521,6 +522,8 @@ func TestWithIPv6_OptionSetsFlag(t *testing.T) {
 func TestWithIPv6Transport_UsesGivenTransportForBothStacks(t *testing.T) {
 	mockV4 := transport.NewMockTransport()
 	mockV6 := transport.NewMockTransport()
+	mockV4.EnableBlockingReceive()
+	mockV6.EnableBlockingReceive()
 
 	q, err := New(WithTransport(mockV4), WithIPv6Transport(mockV6))
 	if err != nil {
