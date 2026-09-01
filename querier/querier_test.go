@@ -249,47 +249,43 @@ func TestParseTXT(t *testing.T) {
 }
 
 // ==============================================================================
-// M1-Refactoring Integration Tests (TDD - RED Phase)
+// M1-Refactoring Integration Tests
 // ==============================================================================
-// These tests are written FIRST to guide the Transport interface refactoring.
-// Expected: FAIL until querier is refactored to use Transport interface (T031-T037)
+// These tests validate the Transport interface abstraction (T031-T037).
 
 // NOTE: Original TDD RED tests removed (T027, T028):
 // - TestQuerier_UsesTransportInterface: Obsolete, T031 is complete
 //   (Querier HAS transport field at querier.go:46-47, used throughout)
-// - TestQuerier_WorksWithMockTransport: Deferred to future milestone
-//   (WithTransport() option not implemented - all tests work without it)
+// - TestQuerier_WorksWithMockTransport: Superseded by
+//   TestQuerier_WithTransport_UsesMockTransport below now that WithTransport()
+//   exists (T100).
 //
 // Transport interface abstraction is validated via:
 // - M1-Refactoring completion (see archive/m1-refactoring/)
 // - internal/transport/transport_test.go (interface contract tests)
-// - querier/querier.go:112 (New() creates UDPv4Transport)
-//
-// TODO M2 (T100): Add test for WithTransport() option
-// After implementing WithTransport() option (see querier/options.go TODO), add:
-//
-//   func TestQuerier_WithTransport_UsesMockTransport(t *testing.T) {
-//       mock := transport.NewMockTransport()
-//       q, err := New(WithTransport(mock))
-//       if err != nil {
-//           t.Fatalf("New(WithTransport) failed: %v", err)
-//       }
-//       defer func() { _ = q.Close() }()
-//
-//       ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-//       defer cancel()
-//
-//       _, _ = q.Query(ctx, "test.local", RecordTypeA)
-//
-//       // Verify mock recorded the Send() call
-//       calls := mock.SendCalls()
-//       if len(calls) != 1 {
-//           t.Errorf("Expected 1 Send() call, got %d", len(calls))
-//       }
-//   }
-//
-// This enables testing without real network, mocking failures, simulating responses.
-// See: specs/004-m1-1-architectural-hardening/tasks.md Phase 8, T100
+// - querier/querier.go New() (creates UDPv4Transport unless WithTransport overrides it)
+
+// TestQuerier_WithTransport_UsesMockTransport verifies WithTransport() (T100)
+// routes Query()'s Send() through the injected transport instead of opening
+// a real UDP socket.
+func TestQuerier_WithTransport_UsesMockTransport(t *testing.T) {
+	mock := transport.NewMockTransport()
+	q, err := New(WithTransport(mock))
+	if err != nil {
+		t.Fatalf("New(WithTransport) failed: %v", err)
+	}
+	defer func() { _ = q.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_, _ = q.Query(ctx, "test.local", RecordTypeA)
+
+	calls := mock.SendCalls()
+	if len(calls) != 1 {
+		t.Errorf("Expected 1 Send() call, got %d", len(calls))
+	}
+}
 
 // ==============================================================================
 // Phase 3: Error Propagation Validation (T064) - FR-004

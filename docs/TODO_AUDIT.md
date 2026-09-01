@@ -9,8 +9,9 @@
 
 **Total TODOs Found**: 26
 **Resolved**: 26 (100%)
-- **Deferred to Future Milestones**: 24
+- **Deferred to Future Milestones**: 22
 - **Documented Limitations**: 2
+- **Implemented since audit**: 2 (T100, see Category 2 - 2026-08-31)
 
 **Status**: ✅ **ALL TODOs ACCOUNTED FOR - PRODUCTION READY**
 
@@ -41,10 +42,10 @@ These TODOs await M2 milestone (dual-stack IPv4/IPv6 support).
 | File | Line | TODO | Justification |
 |------|------|------|---------------|
 | `internal/transport/ipv6_stub.go` | 23 | Implement full IPv6 multicast support | M2 milestone |
-| `querier/options.go` | 176 | Add WithTransport() option | M2 milestone (T100) |
-| `querier/querier_test.go` | 209-210 | Add test for WithTransport() | M2 milestone (T100) |
 
 **Resolution**: IPv6 support is explicitly scoped to M2 per CLAUDE.md. Current IPv4-only implementation is production-ready for typical use cases.
+
+**T100 (WithTransport()/WithIPv6Transport()) - Implemented 2026-08-31**: The two TODOs originally listed here (`querier/options.go`, `querier/querier_test.go`) are resolved. `WithTransport()` and `WithIPv6Transport()` now exist in `querier/options.go`, and `New()` skips opening real UDP sockets when they're supplied. See `specs/004-m1-1-architectural-hardening/tasks.md` T100 and `git log --grep T100`.
 
 ---
 
