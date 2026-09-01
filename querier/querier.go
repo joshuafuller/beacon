@@ -154,6 +154,9 @@ func New(opts ...Option) (*Querier, error) {
 		tr, err := transport.NewUDPv4Transport()
 		if err != nil {
 			cancel()
+			if q.transport6 != nil {
+				_ = q.transport6.Close()
+			}
 			return nil, err // Already wrapped as NetworkError
 		}
 		q.transport = tr

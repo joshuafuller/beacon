@@ -544,14 +544,31 @@ func TestWithIPv6Transport_UsesGivenTransportForBothStacks(t *testing.T) {
 	}
 }
 
+type closeTrackingTransport struct {
+	closeCalls int
+}
+
+func (t *closeTrackingTransport) Send(context.Context, []byte, net.Addr) error {
+	return nil
+}
+
+func (t *closeTrackingTransport) Receive(context.Context) ([]byte, net.Addr, int, error) {
+	return nil, nil, 0, context.Canceled
+}
+
+func (t *closeTrackingTransport) Close() error {
+	t.closeCalls++
+	return nil
+}
+
 // TestNew_OptionError_ClosesAlreadyInjectedTransports verifies that when an
 // Option fails after WithTransport/WithIPv6Transport already injected
 // transports, New()'s cleanup path closes both before returning the
 // original option error (rather than leaking them or masking the error
 // with a close failure).
 func TestNew_OptionError_ClosesAlreadyInjectedTransports(t *testing.T) {
-	mockV4 := transport.NewMockTransport()
-	mockV6 := transport.NewMockTransport()
+	mockV4 := &closeTrackingTransport{}
+	mockV6 := &closeTrackingTransport{}
 
 	q, err := New(
 		WithTransport(mockV4),
@@ -563,5 +580,9 @@ func TestNew_OptionError_ClosesAlreadyInjectedTransports(t *testing.T) {
 	}
 	if q != nil {
 		t.Errorf("New() returned non-nil Querier alongside error: %+v", q)
+	}
+	if mockV4.closeCalls != 1 || mockV6.closeCalls != 1 {
+		t.Errorf("injected transport close calls = (%d, %d), want (1, 1)",
+			mockV4.closeCalls, mockV6.closeCalls)
 	}
 }
