@@ -23,7 +23,7 @@ Beacon is a lightweight, high-performance mDNS (Multicast DNS) library for Go, i
 
 - **10,000x faster** - 4.8μs response latency vs ~50ms in alternatives
 - **100% RFC compliance (MUST requirements)** - 97.9% RFC 6762, 96.9% RFC 6763 overall
-- **Zero external dependencies** - Standard library only
+- **Minimal dependencies** - Standard library plus Go-maintained `golang.org/x/net` and `golang.org/x/sys`
 - **Production-tested** - 68.6% test coverage, 109,471 fuzz executions, 0 data races
 - **Automatic conflict resolution** - RFC 6762 §8.2 compliant
 - **SO_REUSEPORT** - Coexists with Avahi/Bonjour system services
@@ -185,7 +185,7 @@ Beacon is built on proven engineering principles:
 ## Requirements
 
 - **Go 1.24 or later**
-- **Standard library only** (zero external dependencies)
+- **Standard library plus Go-maintained networking packages** (`golang.org/x/net`, `golang.org/x/sys`)
 
 ---
 

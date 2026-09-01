@@ -77,16 +77,18 @@ func (m *MockTransport) Receive(ctx context.Context) ([]byte, net.Addr, int, err
 		return nil, nil, 0, nil
 	}
 
-	// Blocking mode: wait for a response or context cancellation
-	select {
-	case <-ctx.Done():
-		return nil, nil, 0, ctx.Err()
-	case <-m.receiveNotifyCh:
-		if resp, ok := m.dequeueResponse(); ok {
-			return resp.Packet, resp.Addr, resp.IfIdx, nil
+	// Blocking mode: wait for a response or context cancellation. A queued
+	// notification can be consumed after another receiver drains the queue, so
+	// keep waiting when the wakeup does not correspond to a response.
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, nil, 0, ctx.Err()
+		case <-m.receiveNotifyCh:
+			if resp, ok := m.dequeueResponse(); ok {
+				return resp.Packet, resp.Addr, resp.IfIdx, nil
+			}
 		}
-		// Spurious wake; treat as timeout
-		return nil, nil, 0, ctx.Err()
 	}
 }
 

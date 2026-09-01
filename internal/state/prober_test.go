@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"net"
 	"strings"
 	"testing"
@@ -670,5 +671,19 @@ func TestProber_NoConflictWhenResponseDoesntMatch(t *testing.T) {
 
 	if result.Error != nil {
 		t.Errorf("Probe() error = %v, want nil", result.Error)
+	}
+}
+
+func TestProber_EmptyPacketWaitHonorsContextCancellation(t *testing.T) {
+	mock := transport.NewMockTransport()
+	prober := NewProber()
+	prober.SetTransport(mock)
+	prober.EnableListenForResponses()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	prober.SetOnSendQuery(cancel)
+	result := prober.Probe(ctx, testServiceName)
+	if !errors.Is(result.Error, context.Canceled) {
+		t.Fatalf("Probe() error = %v, want context cancellation", result.Error)
 	}
 }

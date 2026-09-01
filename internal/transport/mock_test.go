@@ -2,8 +2,10 @@ package transport_test
 
 import (
 	"context"
+	"errors"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/joshuafuller/beacon/internal/transport"
 )
@@ -96,5 +98,22 @@ func TestMockTransport_Receive_RespectsContextCancellation(t *testing.T) {
 	_, _, _, err := mock.Receive(ctx)
 	if err == nil {
 		t.Fatal("Receive() returned nil error for canceled context")
+	}
+}
+
+func TestMockTransport_Receive_BlockingSpuriousWakeContinuesWaiting(t *testing.T) {
+	mock := transport.NewMockTransport()
+	defer func() { _ = mock.Close() }()
+
+	mock.QueueReceive([]byte{0x01}, nil, 0)
+	if _, _, _, err := mock.Receive(context.Background()); err != nil {
+		t.Fatalf("Receive() failed while consuming queued response: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, _, _, err := mock.Receive(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Receive() error = %v, want context deadline after spurious wake", err)
 	}
 }
