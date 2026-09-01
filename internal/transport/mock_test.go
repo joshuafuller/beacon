@@ -64,3 +64,37 @@ func TestMockTransport_Send_RecordsCalls(t *testing.T) {
 		t.Errorf("Second call addr mismatch: got %v, want %v", calls[1].Dest, addr2)
 	}
 }
+
+func TestMockTransport_Receive_QueuedResponse(t *testing.T) {
+	mock := transport.NewMockTransport()
+	defer func() { _ = mock.Close() }()
+
+	packet := []byte{0x01, 0x02}
+	addr := &net.UDPAddr{IP: net.IPv4(192, 0, 2, 1), Port: 5353}
+	mock.QueueReceive(packet, addr, 7)
+	packet[0] = 0xff
+
+	gotPacket, gotAddr, gotIfIndex, err := mock.Receive(context.Background())
+	if err != nil {
+		t.Fatalf("Receive() failed: %v", err)
+	}
+	if gotPacket[0] != 0x01 || gotPacket[1] != 0x02 {
+		t.Fatalf("Receive() packet = %v, want [1 2]", gotPacket)
+	}
+	if gotAddr.String() != addr.String() || gotIfIndex != 7 {
+		t.Fatalf("Receive() address/index = %v/%d, want %v/7", gotAddr, gotIfIndex, addr)
+	}
+}
+
+func TestMockTransport_Receive_RespectsContextCancellation(t *testing.T) {
+	mock := transport.NewMockTransport()
+	defer func() { _ = mock.Close() }()
+	mock.EnableBlockingReceive()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, _, err := mock.Receive(ctx)
+	if err == nil {
+		t.Fatal("Receive() returned nil error for canceled context")
+	}
+}

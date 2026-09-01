@@ -79,7 +79,7 @@ There are many ways to contribute to Beacon:
 
 ### Prerequisites
 
-- **Go 1.21 or later**
+- **Go 1.24 or later**
 - **Git**
 - **make** (optional but recommended)
 - **Linux, macOS, or Windows** (Linux is best-tested)
@@ -385,14 +385,14 @@ func (s *StateMachine) Probe() error {
 
 ### Test Coverage
 
-**Minimum coverage**: 80% (enforced by CI)
+**Minimum coverage**: 80% of production packages (enforced by CI)
 
 **Check coverage**:
 ```bash
 make test-coverage-report
 ```
 
-**Current coverage**: 81.3%
+**Current coverage**: 81.2% of production packages
 
 ### Types of Tests
 

@@ -292,7 +292,11 @@ func lookupLifecycleAddresses(ifIndex int) ([]byte, []net.IP, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	ipv4, _ := getIPv4ForInterface(ifIndex)
+	ipv4, err := getIPv4ForInterface(ifIndex)
+	if err != nil {
+		// IPv4 is optional when the interface is IPv6-only.
+		return nil, ipv6Addresses, nil
+	}
 	return ipv4, ipv6Addresses, nil
 }
 

@@ -184,7 +184,7 @@ Beacon is built on proven engineering principles:
 
 ## Requirements
 
-- **Go 1.21 or later**
+- **Go 1.24 or later**
 - **Standard library only** (zero external dependencies)
 
 ---

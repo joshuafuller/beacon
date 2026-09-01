@@ -93,6 +93,7 @@ rules:
     paths:
       exclude:
         - "**/examples/**"
+        - "**/docs/deployment/docker-example/**"
     metadata:
       constitution: Principle V (Dependencies)
       category: supply-chain

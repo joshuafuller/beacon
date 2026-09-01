@@ -128,7 +128,10 @@ func detectHardware() HardwareCapabilities {
 		caps.ModelName = strings.TrimRight(caps.ModelName, "\x00")
 	} else {
 		// Fallback to hostname if model not available
-		hostname, _ := os.Hostname()
+		hostname, err := os.Hostname()
+		if err != nil {
+			hostname = "unknown device"
+		}
 		caps.ModelName = hostname
 	}
 

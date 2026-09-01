@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"math"
 	"net/http"
 	"os"
 	"os/signal"
@@ -89,10 +88,9 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-func parsePort(portStr string) int {
-	var port int
-	fmt.Sscanf(portStr, "%d", &port)
-	if port < 1 || port > math.MaxUint16 {
+func parsePort(portStr string) uint16 {
+	var port uint16
+	if _, err := fmt.Sscanf(portStr, "%d", &port); err != nil || port == 0 {
 		return 8080
 	}
 	return port

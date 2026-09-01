@@ -26,7 +26,7 @@ const (
 
 func main() {
 	fmt.Println("=== Dynamic Service Updates Example ===")
-	fmt.Println("This example demonstrates RFC 6762 §10.3 dynamic TXT record updates.\n")
+	fmt.Println("This example demonstrates RFC 6762 §10.3 dynamic TXT record updates.")
 
 	// Seed random number generator
 	rand.Seed(time.Now().UnixNano())
@@ -62,7 +62,7 @@ func main() {
 	fmt.Printf("✓ Service registered: %s.%s\n", svc.InstanceName, svc.ServiceType)
 	fmt.Printf("  Initial TXT: status=healthy, load=%d, features=v1,v2\n\n", initialLoad)
 	fmt.Printf("Updating TXT records every %v...\n", updateInterval)
-	fmt.Println("Watch updates with: dns-sd -L \"Load Monitor\" _http._tcp\n")
+	fmt.Println("Watch updates with: dns-sd -L \"Load Monitor\" _http._tcp")
 
 	// Create ticker for periodic updates
 	ticker := time.NewTicker(updateInterval)

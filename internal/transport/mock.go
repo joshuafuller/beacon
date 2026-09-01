@@ -68,18 +68,12 @@ func (m *MockTransport) Send(_ context.Context, packet []byte, dest net.Addr) er
 // Extended to support queued responses for prober conflict detection testing.
 func (m *MockTransport) Receive(ctx context.Context) ([]byte, net.Addr, int, error) {
 	// Fast path: check if a response is already queued
-	m.mu.Lock()
-	if len(m.receiveQueue) > 0 {
-		resp := m.receiveQueue[0]
-		m.receiveQueue = m.receiveQueue[1:]
-		m.mu.Unlock()
+	if resp, ok := m.dequeueResponse(); ok {
 		return resp.Packet, resp.Addr, resp.IfIdx, nil
 	}
-	blocking := m.blockOnReceive
-	m.mu.Unlock()
 
 	// Non-blocking mode (backward compatible): return immediately
-	if !blocking {
+	if !m.isBlockingReceive() {
 		return nil, nil, 0, nil
 	}
 
@@ -88,17 +82,30 @@ func (m *MockTransport) Receive(ctx context.Context) ([]byte, net.Addr, int, err
 	case <-ctx.Done():
 		return nil, nil, 0, ctx.Err()
 	case <-m.receiveNotifyCh:
-		m.mu.Lock()
-		if len(m.receiveQueue) > 0 {
-			resp := m.receiveQueue[0]
-			m.receiveQueue = m.receiveQueue[1:]
-			m.mu.Unlock()
+		if resp, ok := m.dequeueResponse(); ok {
 			return resp.Packet, resp.Addr, resp.IfIdx, nil
 		}
-		m.mu.Unlock()
 		// Spurious wake; treat as timeout
 		return nil, nil, 0, ctx.Err()
 	}
+}
+
+func (m *MockTransport) dequeueResponse() (mockReceiveResponse, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if len(m.receiveQueue) == 0 {
+		return mockReceiveResponse{}, false
+	}
+	resp := m.receiveQueue[0]
+	m.receiveQueue = m.receiveQueue[1:]
+	return resp, true
+}
+
+func (m *MockTransport) isBlockingReceive() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.blockOnReceive
 }
 
 // Close marks the transport as closed.
@@ -123,13 +130,13 @@ func (m *MockTransport) EnableBlockingReceive() {
 // returning nil immediately.
 func (m *MockTransport) QueueReceive(packet []byte, addr net.Addr, ifIdx int) {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.blockOnReceive = true
 	m.receiveQueue = append(m.receiveQueue, mockReceiveResponse{
 		Packet: append([]byte(nil), packet...), // Copy to avoid aliasing
 		Addr:   addr,
 		IfIdx:  ifIdx,
 	})
-	m.mu.Unlock()
 	// Notify any blocked Receive() call
 	select {
 	case m.receiveNotifyCh <- struct{}{}:

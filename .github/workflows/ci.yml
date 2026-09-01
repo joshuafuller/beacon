@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION: '1.23'  # Use recent stable version for fast feedback; build matrix tests 1.21-1.25
+  GO_VERSION: '1.24'  # Matches the go.mod minimum version
   GOLANGCI_LINT_VERSION: 'v2.5.0'
   STATICCHECK_VERSION: 'latest'
 
@@ -46,14 +46,13 @@ jobs:
 
     - name: Install golangci-lint
       run: |
-        curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin ${{ env.GOLANGCI_LINT_VERSION }}
-        echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+        curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b "$(go env GOPATH)/bin" "${{ env.GOLANGCI_LINT_VERSION }}"
+        echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
     - name: Install staticcheck
       run: go install honnef.co/go/tools/cmd/staticcheck@${{ env.STATICCHECK_VERSION }}
 
-    - name: Install Semgrep (optional)
-      continue-on-error: true
+    - name: Install Semgrep
       run: |
         pip install --upgrade pip
         pip install semgrep
@@ -73,34 +72,16 @@ jobs:
       run: golangci-lint run --config .golangci.yml ./...
       continue-on-error: true  # Temporarily allow warnings during technical debt cleanup
 
-    - name: Run Semgrep (optional)
-      continue-on-error: true
-      run: |
-        if command -v semgrep &> /dev/null; then
-          semgrep --config=.semgrep.yml --error . --exclude .semgrep-tests || echo "⚠️ Semgrep found issues"
-        else
-          echo "⚠️ Semgrep not installed, skipping"
-        fi
+    - name: Run Semgrep
+      run: semgrep --config=.semgrep.yml --error . --exclude .semgrep-tests
 
     - name: Run tests with race detector (excludes fuzz for speed)
-      run: go test -race -v $(go list ./... | grep -v /tests/fuzz)
-
-    - name: Run tests with coverage (excludes fuzz for speed)
       run: |
-        go test -coverprofile=coverage.out -covermode=atomic $(go list ./... | grep -v /tests/fuzz)
-        go tool cover -func=coverage.out
+        mapfile -t packages < <(go list ./... | grep -v /tests/fuzz)
+        go test -race -v "${packages[@]}"
 
-    - name: Check minimum coverage
-      continue-on-error: true  # Temporarily allow coverage below 80% (current: ~72%)
-      run: |
-        COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
-        echo "Total coverage: $COVERAGE%"
-        if (( $(echo "$COVERAGE < 80" | bc -l) )); then
-          echo "⚠️  Coverage $COVERAGE% is below minimum 80% (will be enforced after coverage improvements)"
-          exit 1
-        else
-          echo "✅ Coverage $COVERAGE% meets minimum 80%"
-        fi
+    - name: Run tests with production coverage
+      run: make test-coverage
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v5
@@ -150,11 +131,10 @@ jobs:
 
     - name: Install golangci-lint
       run: |
-        curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin ${{ env.GOLANGCI_LINT_VERSION }}
-        echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+        curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b "$(go env GOPATH)/bin" "${{ env.GOLANGCI_LINT_VERSION }}"
+        echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
-    - name: Install Semgrep (optional)
-      continue-on-error: true
+    - name: Install Semgrep
       run: |
         pip install --upgrade pip
         pip install semgrep
@@ -171,26 +151,37 @@ jobs:
       run: golangci-lint run --config .golangci.yml ./...
       continue-on-error: true  # Temporarily allow warnings during technical debt cleanup
 
-    - name: Run Semgrep (optional)
-      continue-on-error: true
-      run: |
-        if command -v semgrep &> /dev/null; then
-          semgrep --config=.semgrep.yml --error . --exclude .semgrep-tests || echo "⚠️ Semgrep found issues"
-        else
-          echo "⚠️ Semgrep not installed, skipping"
-        fi
+    - name: Run Semgrep
+      run: semgrep --config=.semgrep.yml --error . --exclude .semgrep-tests
 
-    - name: Run tests with race detector and coverage (combined for speed)
-      run: go test -race -coverprofile=coverage.out -covermode=atomic $(go list ./... | grep -v /tests/fuzz | grep -v /tests/integration)
+    - name: Run production tests with race detector and coverage
+      run: |
+        mapfile -t packages < <(go list ./... | grep -vE '/examples/|/tests/|/specs/')
+        go test -race -coverprofile=coverage.out -covermode=atomic "${packages[@]}"
+
+    - name: Check minimum production coverage
+      run: |
+        COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+        echo "Production coverage: $COVERAGE%"
+        if (( $(echo "$COVERAGE < 80" | bc -l) )); then
+          echo "❌ Production coverage $COVERAGE% is below minimum 80%"
+          exit 1
+        fi
+        echo "✅ Production coverage $COVERAGE% meets minimum 80%"
 
     - name: Run integration tests (separate due to test isolation)
       run: go test -v ./tests/integration/...
+
+    - name: Test nested example modules
+      run: make test-examples
 
     - name: Run fuzz tests (CI mode - 10s, quick validation)
       run: go test -fuzz=FuzzMessageParser -fuzztime=10s ./tests/fuzz/...
 
     - name: Run benchmarks (1 iteration for regression detection only)
-      run: go test -bench=. -benchmem -count=1 $(go list ./... | grep -v /tests/fuzz)
+      run: |
+        mapfile -t packages < <(go list ./... | grep -v /tests/fuzz)
+        go test -run '^$' -bench=. -benchmem -count=1 "${packages[@]}"
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v5
@@ -218,21 +209,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Test all Go versions on Linux, minimum version (1.21) on Windows
+        # Test supported Go versions on Linux and the minimum on Windows
         # macOS disabled due to test failures (see issue #19)
         include:
-          - os: ubuntu-latest
-            go-version: '1.21'
-          - os: ubuntu-latest
-            go-version: '1.22'
-          - os: ubuntu-latest
-            go-version: '1.23'
           - os: ubuntu-latest
             go-version: '1.24'
           - os: ubuntu-latest
             go-version: '1.25'
           - os: windows-latest
-            go-version: '1.21'
+            go-version: '1.24'
 
     steps:
     - name: Checkout code
@@ -249,11 +234,17 @@ jobs:
       run: go build ./...
 
     - name: Run unit tests (short mode, excludes fuzz for speed)
-      run: go test -short -v $(go list ./... | grep -v /tests/fuzz)
+      shell: bash
+      run: |
+        mapfile -t packages < <(go list ./... | grep -v /tests/fuzz)
+        go test -short -v "${packages[@]}"
 
     - name: Run race detector (Linux/macOS only, excludes fuzz for speed)
       if: runner.os != 'Windows'
-      run: go test -race -short $(go list ./... | grep -v /tests/fuzz)
+      shell: bash
+      run: |
+        mapfile -t packages < <(go list ./... | grep -v /tests/fuzz)
+        go test -race -short "${packages[@]}"
 
   # Security scanning
   security:

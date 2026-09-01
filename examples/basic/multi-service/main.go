@@ -13,7 +13,7 @@ import (
 )
 
 func main() {
-	fmt.Println("=== Multi-Service Registration Example ===\n")
+	fmt.Println("=== Multi-Service Registration Example ===")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -54,7 +54,7 @@ func main() {
 	}
 
 	fmt.Printf("\n✓ All %d services registered successfully\n", len(services))
-	fmt.Println("Press Ctrl+C to exit\n")
+	fmt.Println("Press Ctrl+C to exit")
 
 	// Wait for interrupt
 	sigChan := make(chan os.Signal, 1)
