@@ -543,3 +543,25 @@ func TestWithIPv6Transport_UsesGivenTransportForBothStacks(t *testing.T) {
 		t.Errorf("mockV6 SendCalls = %d, want 1", len(mockV6.SendCalls()))
 	}
 }
+
+// TestNew_OptionError_ClosesAlreadyInjectedTransports verifies that when an
+// Option fails after WithTransport/WithIPv6Transport already injected
+// transports, New()'s cleanup path closes both before returning the
+// original option error (rather than leaking them or masking the error
+// with a close failure).
+func TestNew_OptionError_ClosesAlreadyInjectedTransports(t *testing.T) {
+	mockV4 := transport.NewMockTransport()
+	mockV6 := transport.NewMockTransport()
+
+	q, err := New(
+		WithTransport(mockV4),
+		WithIPv6Transport(mockV6),
+		WithRateLimitThreshold(-1), // fails after transports are already injected
+	)
+	if err == nil {
+		t.Fatal("New() with invalid WithRateLimitThreshold returned nil error")
+	}
+	if q != nil {
+		t.Errorf("New() returned non-nil Querier alongside error: %+v", q)
+	}
+}
