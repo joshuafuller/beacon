@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -19,7 +20,7 @@ func main() {
 
 	// Read environment variables
 	serviceName := getEnv("SERVICE_NAME", "Docker Service")
-	servicePort := getEnv("SERVICE_PORT", "8080")
+	servicePort := parsePort(getEnv("SERVICE_PORT", "8080"))
 
 	// Create responder
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -36,7 +37,7 @@ func main() {
 	svc := &responder.Service{
 		InstanceName: serviceName,
 		ServiceType:  "_http._tcp.local",
-		Port:         parsePort(servicePort),
+		Port:         servicePort,
 		TXTRecords: map[string]string{
 			"version": "1.0",
 			"env":     "docker",
@@ -65,7 +66,7 @@ func main() {
 	})
 
 	go func() {
-		addr := ":" + servicePort
+		addr := ":" + strconv.Itoa(int(servicePort))
 		logger.Info("starting HTTP server", "addr", addr)
 		if err := http.ListenAndServe(addr, nil); err != nil {
 			logger.Error("HTTP server failed", "error", err)
