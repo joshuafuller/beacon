@@ -55,8 +55,8 @@ The Beacon CI pipeline is designed to provide fast feedback while ensuring compr
 
 **Test Matrix**:
 - **Operating Systems**: Ubuntu, Windows (macOS currently disabled - see issue #19)
-- **Go Versions**: 1.21, 1.22, 1.23, 1.24, 1.25
-- **Total**: 10 combinations (2 OS × 5 versions)
+- **Go Versions**: 1.25
+- **Total**: 2 combinations (2 OS × 1 version)
 
 **What it does**:
 - ✅ Build verification (`go build ./...`)

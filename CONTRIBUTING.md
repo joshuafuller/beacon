@@ -79,7 +79,7 @@ There are many ways to contribute to Beacon:
 
 ### Prerequisites
 
-- **Go 1.24 or later**
+- **Go 1.25 or later**
 - **Git**
 - **make** (optional but recommended)
 - **Linux, macOS, or Windows** (Linux is best-tested)
