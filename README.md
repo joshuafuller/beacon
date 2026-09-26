@@ -184,7 +184,7 @@ Beacon is built on proven engineering principles:
 
 ## Requirements
 
-- **Go 1.24 or later**
+- **Go 1.25 or later**
 - **Standard library plus Go-maintained networking packages** (`golang.org/x/net`, `golang.org/x/sys`)
 
 ---

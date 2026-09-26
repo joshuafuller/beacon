@@ -274,9 +274,22 @@ func TestService_Validate_TXTRecords(t *testing.T) {
 			wantErr:    false,
 		},
 		{
+			name: "invalid - individual TXT string exceeds 255 bytes",
+			txtRecords: map[string]string{
+				"large": string(make([]byte, 251)), // "large=" + value = 257 bytes
+			},
+			wantErr:     true,
+			errContains: "TXT record exceeds 255 bytes",
+		},
+		{
 			name: "invalid - TXT records exceed 1300 bytes",
 			txtRecords: map[string]string{
-				"large": string(make([]byte, 1400)), // 1400 bytes > 1300 limit
+				"one":   string(make([]byte, 220)),
+				"two":   string(make([]byte, 220)),
+				"three": string(make([]byte, 220)),
+				"four":  string(make([]byte, 220)),
+				"five":  string(make([]byte, 220)),
+				"six":   string(make([]byte, 220)),
 			},
 			wantErr:     true,
 			errContains: "TXT records exceed 1300 bytes",

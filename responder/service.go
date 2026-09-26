@@ -258,6 +258,9 @@ func validateTXTRecordsSize(txtRecords map[string]string) error {
 	// Calculate total size: length byte + key=value for each pair
 	totalSize := 0
 	for key, value := range txtRecords {
+		if len(key)+1+len(value) > 255 {
+			return fmt.Errorf("TXT record exceeds 255 bytes for key %q", key)
+		}
 		// Each entry: length byte + "key=value"
 		entrySize := 1 + len(key) + 1 + len(value) // 1 for '=', 1 for length prefix
 		totalSize += entrySize

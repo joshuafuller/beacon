@@ -623,6 +623,30 @@ func TestResponder_UpdateOneService(t *testing.T) {
 	}
 }
 
+func TestResponder_UpdateServiceRejectsOversizedTXTString(t *testing.T) {
+	ctx := context.Background()
+	r, err := New(ctx)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	svc := &Service{
+		InstanceName: "Service",
+		ServiceType:  "_http._tcp.local",
+		Port:         8080,
+	}
+	if err := r.Register(svc); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	err = r.UpdateService(svc.InstanceName+"."+svc.ServiceType,
+		map[string]string{"large": string(make([]byte, 251))})
+	if err == nil || !contains(err.Error(), "TXT record exceeds 255 bytes") {
+		t.Fatalf("UpdateService() error = %v, want oversized TXT error", err)
+	}
+}
+
 // ==============================================================================
 // 007-interface-specific-addressing: Unit Tests for getIPv4ForInterface
 // ==============================================================================

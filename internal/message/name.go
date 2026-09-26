@@ -208,7 +208,7 @@ func EncodeServiceInstanceName(instanceName, serviceType string) ([]byte, error)
 
 	// Encode instance name as a single label (allow spaces and UTF-8)
 	encoded := make([]byte, 0, 256)
-	encoded = append(encoded, byte(len(instanceName))) // Length prefix
+	encoded = append(encoded, byte(len(instanceName))) // #nosec G115 -- length is validated against MaxLabelLength above
 	encoded = append(encoded, []byte(instanceName)...) // Raw bytes (UTF-8)
 
 	// Encode service type normally (strict DNS validation)
@@ -250,7 +250,7 @@ func EncodeName(name string) ([]byte, error) {
 		if err := validateLabel(label, name); err != nil {
 			return nil, err
 		}
-		encoded = append(encoded, byte(len(label)))
+		encoded = append(encoded, byte(len(label))) // #nosec G115 -- validateLabel enforces MaxLabelLength
 		encoded = append(encoded, label...)
 	}
 

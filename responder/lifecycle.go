@@ -424,6 +424,10 @@ func (r *Responder) GetService(serviceID string) (*Service, bool) {
 //
 // T106: Implement UpdateService without re-probing (US5 GREEN)
 func (r *Responder) UpdateService(serviceID string, txtRecords map[string]string) error {
+	if err := validateTXTRecordsSize(txtRecords); err != nil {
+		return err
+	}
+
 	// Lookup service
 	svc, found := r.GetService(serviceID)
 	if !found {

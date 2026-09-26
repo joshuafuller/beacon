@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION: '1.24'  # Matches the go.mod minimum version
+  GO_VERSION: '1.25'  # Matches the go.mod minimum version
   GOLANGCI_LINT_VERSION: 'v2.5.0'
   STATICCHECK_VERSION: 'latest'
 
@@ -209,15 +209,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Test supported Go versions on Linux and the minimum on Windows
+        # Test the supported Go version on Linux and Windows
         # macOS disabled due to test failures (see issue #19)
         include:
           - os: ubuntu-latest
-            go-version: '1.24'
-          - os: ubuntu-latest
             go-version: '1.25'
           - os: windows-latest
-            go-version: '1.24'
+            go-version: '1.25'
 
     steps:
     - name: Checkout code
