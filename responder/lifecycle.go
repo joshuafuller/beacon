@@ -436,13 +436,9 @@ func (r *Responder) UpdateService(serviceID string, txtRecords map[string]string
 
 	// Update TXT records in registry
 	// The registry stores internal/responder.Service, so we need to update it there
-	internalSvc, found := r.registry.Get(svc.InstanceName)
-	if !found {
+	if !r.registry.UpdateTXT(svc.InstanceName, txtRecords) {
 		return fmt.Errorf("internal error: service %q in GetService but not in registry", svc.InstanceName)
 	}
-
-	// Update TXT records
-	internalSvc.TXT = txtRecords
 
 	// Announce updated records per RFC 6762 §8.4.
 	// The registry is already updated above; the multicast announcement below is
