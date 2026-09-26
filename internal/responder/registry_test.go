@@ -5,6 +5,33 @@ import (
 	"testing"
 )
 
+func TestRegistryTXTRecordsAreIsolated(t *testing.T) {
+	registry := NewRegistry()
+	original := map[string]string{"version": "1"}
+	if err := registry.Register(&Service{InstanceName: "svc", TXT: original}); err != nil {
+		t.Fatal(err)
+	}
+
+	original["version"] = "mutated"
+	got, _ := registry.Get("svc")
+	got.TXT["version"] = "also mutated"
+
+	stored, _ := registry.Get("svc")
+	if stored.TXT["version"] != "1" {
+		t.Fatalf("stored TXT record was mutated through an external map: %q", stored.TXT["version"])
+	}
+
+	replacement := map[string]string{"version": "2"}
+	if !registry.UpdateTXT("svc", replacement) {
+		t.Fatal("UpdateTXT() did not find registered service")
+	}
+	replacement["version"] = "mutated"
+	stored, _ = registry.Get("svc")
+	if stored.TXT["version"] != "2" {
+		t.Fatalf("updated TXT record was mutated through the caller's map: %q", stored.TXT["version"])
+	}
+}
+
 // TestRegistry_Register_RED tests service registration.
 //
 // TDD Phase: RED - These tests will FAIL until we implement Registry

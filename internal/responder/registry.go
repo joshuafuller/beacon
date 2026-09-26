@@ -3,6 +3,7 @@ package responder
 
 import (
 	"fmt"
+	"maps"
 	"sync"
 )
 
@@ -58,7 +59,7 @@ func (r *Registry) Register(service *Service) error {
 		return fmt.Errorf("service with InstanceName %q already registered", service.InstanceName)
 	}
 
-	r.services[service.InstanceName] = service
+	r.services[service.InstanceName] = cloneService(service)
 	return nil
 }
 
@@ -79,7 +80,29 @@ func (r *Registry) Get(instanceName string) (*Service, bool) {
 	defer r.mu.RUnlock()
 
 	service, exists := r.services[instanceName]
-	return service, exists
+	return cloneService(service), exists
+}
+
+// UpdateTXT atomically replaces a service's TXT records.
+func (r *Registry) UpdateTXT(instanceName string, txt map[string]string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	service, exists := r.services[instanceName]
+	if !exists {
+		return false
+	}
+	service.TXT = maps.Clone(txt)
+	return true
+}
+
+func cloneService(service *Service) *Service {
+	if service == nil {
+		return nil
+	}
+	clone := *service
+	clone.TXT = maps.Clone(service.TXT)
+	return &clone
 }
 
 // Remove removes a service from the registry.
