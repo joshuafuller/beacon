@@ -197,7 +197,7 @@ func buildTXTRecord(txtRecords map[string]string) []byte {
 		entry := key + "=" + value
 
 		// Length byte + entry string
-		entryLen := byte(len(entry))
+		entryLen := byte(len(entry)) // #nosec G115 -- public service and update paths enforce the RFC 6763 255-byte limit
 		data = append(data, entryLen)
 		data = append(data, []byte(entry)...)
 	}
