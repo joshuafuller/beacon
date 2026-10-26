@@ -173,6 +173,8 @@ func (r *Responder) handleQueryOnTransport(tr transport.Transport, ipv6Network b
 		return nil
 	}
 
+	normalizeKnownAnswers(packet, msg)
+
 	// Answer every question with every matching service in one response
 	// (RFC 6762 §6; RFC 6763 §4.1: a browse lists all instances of a type).
 	var matched []matchedQuestion
@@ -195,6 +197,39 @@ func (r *Responder) handleQueryOnTransport(tr transport.Transport, ipv6Network b
 
 	r.respondToQuery(tr, ipv6Network, msg, matched, srcAddr, interfaceIndex)
 	return nil
+}
+
+// normalizeKnownAnswers rewrites the RDATA of PTR and SRV known answers in
+// msg without name compression. Queriers compress names inside RDATA, and
+// RFC 6762 §7.1 compares records by their decompressed data, so our
+// uncompressed records must be compared against decompressed known answers.
+func normalizeKnownAnswers(packet []byte, msg *message.DNSMessage) {
+	for i := range msg.Answers {
+		a := &msg.Answers[i]
+		switch a.TYPE {
+		case uint16(protocol.RecordTypePTR):
+			data, err := message.ParseRDATAInMessage(a.TYPE, packet, a.RDATAOffset, int(a.RDLENGTH))
+			if err != nil {
+				continue
+			}
+			if enc, err := message.EncodeDomainName(data.(string)); err == nil {
+				a.RDATA = enc
+			}
+		case uint16(protocol.RecordTypeSRV):
+			data, err := message.ParseRDATAInMessage(a.TYPE, packet, a.RDATAOffset, int(a.RDLENGTH))
+			if err != nil {
+				continue
+			}
+			srv := data.(message.SRVData)
+			target, err := message.EncodeName(srv.Target)
+			if err != nil {
+				continue
+			}
+			rdata := make([]byte, 6, 6+len(target))
+			copy(rdata, a.RDATA[:6])
+			a.RDATA = append(rdata, target...)
+		}
+	}
 }
 
 // matchedQuestion pairs a query question with the registered services that
