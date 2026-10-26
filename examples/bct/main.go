@@ -8,10 +8,10 @@
 //
 // Usage:
 //
-//	sudo go run ./examples/bct -host beacon-bct -name "Beacon BCT" -type _http._tcp.local -port 8080
+//	go run ./examples/bct -host beacon-bct -name "Beacon BCT" -type _http._tcp.local -port 8080
 //
-// Every rename that BCT forces (RFC 6762 §9) is printed, so the log can be
-// matched against the BCT results file.
+// Probes, announcements and a rename forced during registration (RFC 6762
+// §9) are printed, so the log can be matched against the BCT results file.
 package main
 
 import (
@@ -37,14 +37,16 @@ func main() {
 		log.Fatalf("invalid -port %d", *port)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// The responder gets its own context: if it shared the signal context,
+	// Ctrl-C would cancel it before Close sends the goodbye packets.
+	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	opts := []responder.Option{responder.WithHostname(*host + ".local")}
 	if *ipv6 {
 		opts = append(opts, responder.WithIPv6())
 	}
-	r, err := responder.New(ctx, opts...)
+	r, err := responder.New(context.Background(), opts...)
 	if err != nil {
 		log.Fatalf("start responder: %v", err)
 	}
@@ -72,6 +74,6 @@ func main() {
 	log.Printf("registered %q (%s) on %s.local port %d; Ctrl-C to stop",
 		svc.InstanceName, svc.ServiceType, *host, *port)
 
-	<-ctx.Done()
+	<-sigCtx.Done()
 	log.Printf("stopping: sending goodbye packets")
 }
