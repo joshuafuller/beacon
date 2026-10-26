@@ -1,6 +1,7 @@
 package responder
 
 import (
+	"encoding/binary"
 	"testing"
 )
 
@@ -35,5 +36,28 @@ func TestHandleQuery_ANY_AnswersAllRecordsOfName(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// BCT II.9: known answers whose RDATA uses name compression still suppress
+// our answer (RFC 6762 §7.1; RDATA is compared after decompression).
+func TestHandleQuery_CompressedKnownAnswer_Suppresses(t *testing.T) {
+	r, mt := newConformanceResponder(t, "Alpha")
+	q := buildTestQuery(t, 0, testQuestion{"_http._tcp.local", 12})
+	q[7] = 1 // ANCOUNT = 1
+	// Owner: pointer to the question name at offset 12.
+	q = append(q, 0xC0, 12)
+	q = binary.BigEndian.AppendUint16(q, 12)
+	q = binary.BigEndian.AppendUint16(q, 1)
+	q = binary.BigEndian.AppendUint32(q, 120)
+	// RDATA: "Alpha" label + pointer to "_http._tcp.local" at offset 12.
+	rdata := append([]byte{5}, "Alpha"...)
+	rdata = append(rdata, 0xC0, 12)
+	q = binary.BigEndian.AppendUint16(q, uint16(len(rdata)))
+	q = append(q, rdata...)
+
+	_ = r.handleQuery(mt, q, mdnsSource, 0)
+	if n := len(mt.SendCalls()); n != 0 {
+		t.Errorf("sent %d packets although the compressed known answer covers it, want 0", n)
 	}
 }
