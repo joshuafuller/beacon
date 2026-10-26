@@ -195,12 +195,70 @@ func (r *Responder) handleQueryOnTransport(tr transport.Transport, ipv6Network b
 			matched = append(matched, matchedQuestion{question: question, services: services})
 		}
 	}
+	truncated := msg.Header.Flags&0x0200 != 0
 	if len(matched) == 0 {
+		// RFC 6762 §7.2: a known-answer-only packet continues an earlier
+		// truncated query from the same host.
+		if len(msg.Answers) > 0 {
+			r.scheduler.addKnownAnswers(tr, srcAddr, msg.Answers, truncated)
+		}
 		return nil
 	}
 
-	r.respondToQuery(tr, ipv6Network, msg, matched, srcAddr, interfaceIndex)
+	r.dispatchResponse(tr, ipv6Network, msg, matched, srcAddr, interfaceIndex, truncated)
 	return nil
+}
+
+// dispatchResponse sends the response at once or schedules it, per RFC 6762:
+//   - legacy unicast (§6.7) and all-QU (§5.4) queries: answer at once;
+//   - TC set (§7.2): wait 400-500 ms for more known answers;
+//   - any shared answer (§6): wait 20-120 ms, merging back-to-back queries;
+//   - only unique answers: answer at once (§6), unless a delayed response
+//     to the same querier is pending, which then carries them too.
+func (r *Responder) dispatchResponse(tr transport.Transport, ipv6Network bool, msg *message.DNSMessage,
+	matched []matchedQuestion, srcAddr net.Addr, interfaceIndex int, truncated bool) {
+	allQU := true
+	shared := false
+	for _, m := range matched {
+		if m.question.QCLASS&0x8000 == 0 {
+			allQU = false
+		}
+		if isSharedQuestion(m.question) {
+			shared = true
+		}
+	}
+
+	if isLegacyQuery(srcAddr) || allQU {
+		r.respondToQuery(tr, ipv6Network, msg, matched, srcAddr, interfaceIndex)
+		return
+	}
+
+	switch {
+	case truncated:
+		delay := randomDelay(truncatedDelayMin, truncatedDelayMax)
+		if r.scheduler.schedule(r, tr, ipv6Network, srcAddr, interfaceIndex, matched, msg.Answers, delay, true) {
+			return
+		}
+	case shared:
+		delay := randomDelay(sharedDelayMin, sharedDelayMax)
+		if r.scheduler.schedule(r, tr, ipv6Network, srcAddr, interfaceIndex, matched, msg.Answers, delay, false) {
+			return
+		}
+	default:
+		if r.scheduler.addToPending(tr, srcAddr, matched, msg.Answers) {
+			return
+		}
+	}
+	r.respondToQuery(tr, ipv6Network, msg, matched, srcAddr, interfaceIndex)
+}
+
+// isSharedQuestion reports whether question asks for shared records (a PTR
+// record set many hosts may answer, RFC 6762 §6), directly or via ANY.
+func isSharedQuestion(q message.Question) bool {
+	if q.QTYPE == uint16(protocol.RecordTypePTR) {
+		return true
+	}
+	return q.QTYPE == uint16(protocol.RecordTypeANY) && strings.HasPrefix(q.QNAME, "_")
 }
 
 // normalizeKnownAnswers rewrites the RDATA of PTR and SRV known answers in

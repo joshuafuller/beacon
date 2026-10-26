@@ -51,6 +51,7 @@ type Responder struct {
 	recordSet        *records.RecordSet         // Per-record rate limiting tracker
 	rateLimiter      *security.RateLimiter      // Per-source-IP rate limiting (FR-026)
 	queryHandlerDone chan struct{}              // Signal query handler shutdown
+	scheduler        responseScheduler          // Delayed/aggregated multicast responses (RFC 6762 §6, §7.2)
 
 	// Test-only state. These fields exist solely to support black-box contract
 	// tests (see testhooks.go); they are not part of the responder's runtime
@@ -122,8 +123,9 @@ func New(ctx context.Context, opts ...Option) (*Responder, error) {
 // T043: Implement Close()
 // T080: Stop query handler
 func (r *Responder) Close() error {
-	// Stop query handler goroutine (T080)
+	// Stop query handler goroutine (T080) and drop delayed responses
 	close(r.queryHandlerDone)
+	r.scheduler.close()
 
 	// Unregister all services (sends goodbye packets)
 	services := r.registry.List()
