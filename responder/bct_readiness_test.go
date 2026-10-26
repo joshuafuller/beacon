@@ -2,6 +2,7 @@ package responder
 
 import (
 	"encoding/binary"
+	"net"
 	"testing"
 	"time"
 
@@ -178,5 +179,74 @@ func flushResponses(r *Responder) {
 	for k, p := range pending {
 		p.timer.Stop()
 		r.scheduler.fire(r, k, p)
+	}
+}
+
+// Security review of the scheduler: follow-up known answers are accepted only
+// for a pending response started by a TC query, a service removed before the
+// delay ends is not answered, and a querier cannot grow a pending response or
+// hold it past maxPendingDelay.
+func TestScheduler_FollowUpKnownAnswersNeedTCQuery(t *testing.T) {
+	r, mt := newConformanceResponder(t, "Alpha")
+	_ = r.handleQuery(mt, buildTestQuery(t, 0, testQuestion{"_http._tcp.local", 12}), mdnsSource, 0) // no TC
+	ka := make([]byte, 12)
+	ka[7] = 1
+	owner, _ := message.EncodeName("_http._tcp.local")
+	target, _ := message.EncodeDomainName("Alpha._http._tcp.local")
+	ka = append(ka, owner...)
+	ka = binary.BigEndian.AppendUint16(ka, 12)
+	ka = binary.BigEndian.AppendUint16(ka, 1)
+	ka = binary.BigEndian.AppendUint32(ka, 120)
+	ka = binary.BigEndian.AppendUint16(ka, uint16(len(target)))
+	ka = append(ka, target...)
+	_ = r.handleQuery(mt, ka, mdnsSource, 0) // spoofed follow-up
+	if waitForSends(mt, 1, 300*time.Millisecond) != 1 {
+		t.Error("a follow-up known-answer packet suppressed a non-TC query's answer")
+	}
+}
+
+func TestScheduler_RemovedServiceNotAnswered(t *testing.T) {
+	r, mt := newConformanceResponder(t, "Alpha")
+	_ = r.handleQuery(mt, buildTestQuery(t, 0, testQuestion{"_http._tcp.local", 12}), mdnsSource, 0)
+	if err := r.registry.Remove("Alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if n := waitForSends(mt, 1, 300*time.Millisecond); n != 0 {
+		t.Errorf("sent %d packets for a service removed during the delay", n)
+	}
+}
+
+func TestScheduler_TCExtensionCapped(t *testing.T) {
+	r, mt := newConformanceResponder(t, "Alpha")
+	q := buildTestQuery(t, 0, testQuestion{"_http._tcp.local", 12})
+	q[2] |= 0x02
+	start := time.Now()
+	_ = r.handleQuery(mt, q, mdnsSource, 0)
+	// Keep sending TC known-answer packets that do not cover our answer.
+	tcKA := make([]byte, 12)
+	tcKA[2] = 0x02
+	for time.Since(start) < 1500*time.Millisecond && len(mt.SendCalls()) == 0 {
+		_ = r.handleQuery(mt, tcKA, mdnsSource, 0)
+		time.Sleep(100 * time.Millisecond)
+	}
+	if waitForSends(mt, 1, 200*time.Millisecond) != 1 {
+		t.Fatal("never answered while TC packets kept arriving")
+	}
+	if d := time.Since(start); d > maxPendingDelay+150*time.Millisecond {
+		t.Errorf("answer after %v, want <= %v", d, maxPendingDelay)
+	}
+}
+
+func TestScheduler_PendingBounded(t *testing.T) {
+	r, mt := newConformanceResponder(t, "Alpha")
+	for i := 0; i < maxPendingResponses+50; i++ {
+		src := &net.UDPAddr{IP: net.IPv4(10, byte(i>>16), byte(i>>8), byte(i)), Port: 5353}
+		_ = r.handleQuery(mt, buildTestQuery(t, 0, testQuestion{"_http._tcp.local", 12}), src, 0)
+	}
+	r.scheduler.mu.Lock()
+	n := len(r.scheduler.pending)
+	r.scheduler.mu.Unlock()
+	if n > maxPendingResponses {
+		t.Errorf("%d pending responses, want <= %d", n, maxPendingResponses)
 	}
 }

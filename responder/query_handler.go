@@ -200,7 +200,7 @@ func (r *Responder) handleQueryOnTransport(tr transport.Transport, ipv6Network b
 		// RFC 6762 §7.2: a known-answer-only packet continues an earlier
 		// truncated query from the same host.
 		if len(msg.Answers) > 0 {
-			r.scheduler.addKnownAnswers(tr, srcAddr, msg.Answers, truncated)
+			r.scheduler.addKnownAnswers(tr, srcAddr, interfaceIndex, msg.Answers, truncated)
 		}
 		return nil
 	}
@@ -245,7 +245,7 @@ func (r *Responder) dispatchResponse(tr transport.Transport, ipv6Network bool, m
 			return
 		}
 	default:
-		if r.scheduler.addToPending(tr, srcAddr, matched, msg.Answers) {
+		if r.scheduler.addToPending(tr, srcAddr, interfaceIndex, matched, msg.Answers) {
 			return
 		}
 	}
