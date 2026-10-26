@@ -41,6 +41,7 @@ func TestReview_MergedBrowseSizeAndTC(t *testing.T) {
 		}
 		r, mt := newConformanceResponder(t, names...)
 		_ = r.handleQuery(mt, buildTestQuery(t, 0, testQuestion{"_http._tcp.local", 12}), mdnsSource, 0)
+		flushResponses(r)
 		calls := mt.SendCalls()
 		ptrs := 0
 		for _, c := range calls {
@@ -80,6 +81,7 @@ func TestReview_KnownAnswerLeavesSuppressedInstanceAdditionals(t *testing.T) {
 	target, _ := message.EncodeDomainName("Alpha._http._tcp.local")
 	q = appendKnownPTR(q, 12, target)
 	_ = r.handleQuery(mt, q, mdnsSource, 0)
+	flushResponses(r)
 	msgs, _ := sentMessages(t, mt)
 	for _, m := range msgs {
 		for _, a := range m.Answers {
@@ -101,6 +103,7 @@ func TestReview_KnownAnswerCompressedTargetNotMatched(t *testing.T) {
 	rdata := append([]byte{5, 'A', 'l', 'p', 'h', 'a'}, 0xC0, 12) // Alpha + pointer to _http._tcp.local
 	q = appendKnownPTR(q, 12, rdata)
 	_ = r.handleQuery(mt, q, mdnsSource, 0)
+	flushResponses(r)
 	if n := len(mt.SendCalls()); n != 0 {
 		t.Errorf("sent %d packets although the PTR is a known answer (compressed RDATA not compared as a name)", n)
 	}
@@ -134,6 +137,7 @@ func TestReview_LegacyEchoUnencodableQuestion(t *testing.T) {
 func TestReview_MergeDuplicatesAnswerInAdditional(t *testing.T) {
 	r, mt := newConformanceResponder(t, "Alpha")
 	_ = r.handleQuery(mt, buildTestQuery(t, 0, testQuestion{"_http._tcp.local", 12}, testQuestion{"Alpha._http._tcp.local", 33}), mdnsSource, 0)
+	flushResponses(r)
 	msgs, _ := sentMessages(t, mt)
 	inAN := false
 	for _, a := range msgs[0].Answers {
@@ -154,6 +158,7 @@ func TestReview_UnderscoreInstance(t *testing.T) {
 	for _, inst := range []string{"_My Printer", "Printer._v2"} {
 		r, mt := newConformanceResponder(t, inst)
 		_ = r.handleQuery(mt, buildTestQuery(t, 0, testQuestion{"_http._tcp.local", 12}), mdnsSource, 0)
+		flushResponses(r)
 		msgs, _ := sentMessages(t, mt)
 		if len(msgs) != 1 || msgs[0].Header.ANCount == 0 {
 			t.Fatalf("%q: no PTR answer", inst)
@@ -178,6 +183,7 @@ func TestReview_BadHostFlag(t *testing.T) {
 		return
 	}
 	_ = r.handleQuery(mt, buildTestQuery(t, 0, testQuestion{"_http._tcp.local", 12}), mdnsSource, 0)
+	flushResponses(r)
 	for _, c := range mt.SendCalls() {
 		m, _ := message.ParseMessage(c.Packet)
 		t.Logf("len=%d an=%d", len(c.Packet), m.Header.ANCount)
