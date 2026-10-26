@@ -111,7 +111,11 @@ func SerializeMessage(msg *DNSMessage) ([]byte, error) {
 func serializeQuestion(q *Question) ([]byte, error) {
 	encodedName, err := EncodeDomainName(q.QNAME) // echoed questions may name an instance
 	if err != nil {
-		return nil, err
+		// RFC 6762 §6.7: a legacy reply MUST repeat the question as asked, even
+		// when the name is not one we could have generated ("bad name.local").
+		if encodedName, err = encodeLabelsAsIs(q.QNAME); err != nil {
+			return nil, err
+		}
 	}
 
 	buf := make([]byte, 0, len(encodedName)+4)

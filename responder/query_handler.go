@@ -180,7 +180,7 @@ func (r *Responder) handleQueryOnTransport(tr transport.Transport, ipv6Network b
 		// RFC 6763 §9: Service Type Enumeration
 		// A PTR query for "_services._dns-sd._udp.local" returns all unique service types.
 		if question.QTYPE == uint16(protocol.RecordTypePTR) && namesEqual(question.QNAME, serviceEnumerationName) {
-			r.handleServiceEnumerationQuery(tr, ipv6Network, question, srcAddr)
+			r.handleServiceEnumerationQuery(tr, ipv6Network, msg, question, srcAddr)
 			continue
 		}
 
@@ -222,7 +222,7 @@ const serviceEnumerationName = "_services._dns-sd._udp.local"
 
 // handleServiceEnumerationQuery responds to a DNS-SD Service Type Enumeration
 // query (RFC 6763 §9) with a PTR record for each unique registered service type.
-func (r *Responder) handleServiceEnumerationQuery(tr transport.Transport, ipv6Network bool, question message.Question, srcAddr net.Addr) {
+func (r *Responder) handleServiceEnumerationQuery(tr transport.Transport, ipv6Network bool, query *message.DNSMessage, question message.Question, srcAddr net.Addr) {
 	serviceTypes := r.registry.ListServiceTypes()
 	if len(serviceTypes) == 0 {
 		return // No services registered, no response needed
@@ -253,6 +253,20 @@ func (r *Responder) handleServiceEnumerationQuery(tr transport.Transport, ipv6Ne
 	// Build DNS response message
 	responseMsg, buildErr := message.BuildResponse(ptrRecords)
 	if buildErr != nil {
+		return
+	}
+
+	// RFC 6762 §6.7: a legacy querier gets a conventional unicast reply that
+	// repeats its ID and questions, without cache-flush bits, TTL <= 10 s.
+	if isLegacyQuery(srcAddr) {
+		parsed, err := message.ParseMessage(responseMsg)
+		if err != nil {
+			return
+		}
+		makeLegacyUnicastResponse(parsed, query)
+		if packet, err := message.SerializeMessage(parsed); err == nil {
+			_ = tr.Send(r.ctx, packet, srcAddr)
+		}
 		return
 	}
 
@@ -392,9 +406,71 @@ func (r *Responder) respondToQuery(tr transport.Transport, ipv6Network bool, msg
 		dest = nil // nil = multicast to 224.0.0.251:5353
 	}
 
-	// Send response
-	responsePacket := buildResponsePacket(response)
-	_ = tr.Send(r.ctx, responsePacket, dest)
+	// Send response. Legacy unicast is one conventional DNS reply (TC keeps its
+	// unicast meaning there). Multicast replies MUST have TC clear (§18.5) and
+	// are split so each packet fits the MTU (§17, §7.2).
+	if legacy {
+		if packet, err := message.SerializeMessage(response); err == nil {
+			_ = tr.Send(r.ctx, packet, dest)
+		}
+		return
+	}
+	response.Header.Flags &^= 0x0200
+	for _, part := range splitResponse(response, maxMulticastPayload) {
+		if packet, err := message.SerializeMessage(part); err == nil {
+			_ = tr.Send(r.ctx, packet, dest)
+		}
+	}
+}
+
+// maxMulticastPayload keeps an mDNS packet inside a 1500-byte Ethernet MTU
+// with IPv6 (40) and UDP (8) headers and some margin. RFC 6762 §17: a packet
+// larger than the MTU "MUST NOT contain more than one resource record".
+const maxMulticastPayload = 1440
+
+// recordWireSize is the uncompressed wire size of a resource record.
+func recordWireSize(a message.Answer) int {
+	name, err := message.EncodeDomainName(a.NAME)
+	if err != nil {
+		return 1 + len(a.NAME) + 1 + 10 + len(a.RDATA) // upper bound
+	}
+	return len(name) + 10 + len(a.RDATA)
+}
+
+// splitResponse splits msg into packets whose payload is at most limit bytes.
+// Answers are kept whole and in order; additionals fill the remaining space
+// and are dropped when they do not fit (they are optional, RFC 6762 §6). A
+// single answer larger than limit is sent alone.
+func splitResponse(msg *message.DNSMessage, limit int) []*message.DNSMessage {
+	const headerSize = 12
+	newPart := func() *message.DNSMessage {
+		return &message.DNSMessage{Header: message.DNSHeader{ID: msg.Header.ID, Flags: msg.Header.Flags}}
+	}
+	parts := []*message.DNSMessage{newPart()}
+	size := headerSize
+	for _, a := range msg.Answers {
+		n := recordWireSize(a)
+		cur := parts[len(parts)-1]
+		if len(cur.Answers) > 0 && size+n > limit {
+			cur = newPart()
+			parts = append(parts, cur)
+			size = headerSize
+		}
+		cur.Answers = append(cur.Answers, a)
+		size += n
+	}
+	cur := parts[len(parts)-1]
+	for _, a := range msg.Additionals {
+		if n := recordWireSize(a); size+n <= limit {
+			cur.Additionals = append(cur.Additionals, a)
+			size += n
+		}
+	}
+	for _, p := range parts {
+		// #nosec G115 -- each part holds a subset of msg's uint16-bounded sections.
+		p.Header.ANCount, p.Header.ARCount = uint16(len(p.Answers)), uint16(len(p.Additionals)) //nolint:gosec
+	}
+	return parts
 }
 
 // mergeResponse appends part's records to response, skipping records already
@@ -422,6 +498,18 @@ func mergeResponse(response, part *message.DNSMessage) {
 			response.Additionals = append(response.Additionals, a)
 		}
 	}
+	// A later question may have promoted an earlier additional to an answer.
+	inAnswers := make(map[string]bool, len(response.Answers))
+	for _, a := range response.Answers {
+		inAnswers[key(a)] = true
+	}
+	kept := response.Additionals[:0]
+	for _, a := range response.Additionals {
+		if !inAnswers[key(a)] {
+			kept = append(kept, a)
+		}
+	}
+	response.Additionals = kept
 }
 
 // legacyUnicastMaxTTL is the TTL cap for legacy unicast responses
@@ -459,25 +547,4 @@ func ipBytes(ips []net.IP) [][]byte {
 // parseMessage is a wrapper around message.ParseMessage for easier imports.
 func parseMessage(packet []byte) (*message.DNSMessage, error) {
 	return message.ParseMessage(packet)
-}
-
-// buildResponsePacket serializes a DNSMessage to wire format using message.SerializeMessage.
-//
-// RFC 1035 §4.1: Converts the complete DNSMessage struct (header, questions,
-// answers, authority, additional sections) into wire-format bytes.
-func buildResponsePacket(msg *message.DNSMessage) []byte {
-	data, err := message.SerializeMessage(msg)
-	if err != nil {
-		// Serialization failed - return minimal valid DNS response header
-		// so the responder doesn't crash on unexpected serialization errors
-		return []byte{
-			0x00, 0x00, // ID
-			0x84, 0x00, // Flags (QR=1, AA=1)
-			0x00, 0x00, // QDCount
-			0x00, 0x00, // ANCount
-			0x00, 0x00, // NSCount
-			0x00, 0x00, // ARCount
-		}
-	}
-	return data
 }

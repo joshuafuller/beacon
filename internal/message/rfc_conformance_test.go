@@ -63,3 +63,41 @@ func TestEncodeDomainName(t *testing.T) {
 		t.Error("host name with a space accepted")
 	}
 }
+
+// The instance label is found from the service type at the right, so
+// instance names with "_" or "._" keep one label (review of PR #51).
+func TestEncodeDomainName_InstanceLabelSplit(t *testing.T) {
+	tests := []struct{ name, instance, service string }{
+		{"My Printer._http._tcp.local", "My Printer", "_http._tcp.local"},
+		{"_My Printer._http._tcp.local", "_My Printer", "_http._tcp.local"},
+		{"Printer._v2._http._tcp.local", "Printer._v2", "_http._tcp.local"},
+		{"Cam._rtsp._udp.local", "Cam", "_rtsp._udp.local"},
+	}
+	for _, tc := range tests {
+		got, err := EncodeDomainName(tc.name)
+		if err != nil {
+			t.Errorf("%q: %v", tc.name, err)
+			continue
+		}
+		want, _ := EncodeServiceInstanceName(tc.instance, tc.service)
+		if !bytes.Equal(got, want) {
+			t.Errorf("%q: wrong label split", tc.name)
+		}
+	}
+	for _, strict := range []string{"_http._tcp.local", "_printer._sub._http._tcp.local", "host.local", "_services._dns-sd._udp.local"} {
+		got, err := EncodeDomainName(strict)
+		want, _ := EncodeName(strict)
+		if err != nil || !bytes.Equal(got, want) {
+			t.Errorf("%q: want strict encoding, got err=%v", strict, err)
+		}
+	}
+}
+
+// RFC 6763 §4.1.1: no control characters in instance names.
+func TestEncodeServiceInstanceName_RejectsControlChars(t *testing.T) {
+	for _, bad := range []string{"evil\x00", "a\x1bb", "del\x7f", "\xff\xfe"} {
+		if _, err := EncodeServiceInstanceName(bad, "_http._tcp.local"); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}

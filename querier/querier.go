@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/joshuafuller/beacon/internal/errors"
 	"github.com/joshuafuller/beacon/internal/message"
 	"github.com/joshuafuller/beacon/internal/protocol"
 	"github.com/joshuafuller/beacon/internal/security"
@@ -242,6 +243,11 @@ func (q *Querier) Query(ctx context.Context, name string, recordType RecordType)
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
+	}
+
+	// A closed Querier has no transport or receiver.
+	if q.ctx != nil && q.ctx.Err() != nil {
+		return nil, &errors.NetworkError{Operation: "query", Err: q.ctx.Err(), Details: "querier is closed"}
 	}
 
 	// Honor the configured default timeout when the caller's context carries no
@@ -560,7 +566,11 @@ func (q *Querier) collectResponses(ctx context.Context, name string, queryType R
 			// Timeout is NOT an error per FR-008 - return what we collected
 			return response, nil
 
-		case responseMsg := <-q.responseChan:
+		case responseMsg, ok := <-q.responseChan:
+			if !ok {
+				// Querier closed: no more responses can arrive.
+				return response, nil
+			}
 			// FR-009: Parse response message
 			parsedMsg, err := message.ParseMessage(responseMsg)
 			if err != nil {
@@ -694,7 +704,10 @@ func (q *Querier) runReceiveLoop(tr transport.Transport, ipv6Network bool) {
 func (q *Querier) drainResponses() {
 	for {
 		select {
-		case <-q.responseChan:
+		case _, ok := <-q.responseChan:
+			if !ok {
+				return // closed by Close
+			}
 		default:
 			return
 		}

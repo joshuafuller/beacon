@@ -214,10 +214,12 @@ func (rb *ResponseBuilder) populatePTRResponse(response *message.DNSMessage, all
 	for _, rr := range allRecords {
 		if rr.Type == protocol.RecordTypePTR {
 			// T095: Apply known-answer suppression per RFC 6762 §7.1
-			if rb.ApplyKnownAnswerSuppression(rr, knownAnswers) {
-				response.Answers = append(response.Answers, rb.recordToAnswer(rr))
+			if !rb.ApplyKnownAnswerSuppression(rr, knownAnswers) {
+				// The querier already knows this instance; its SRV/TXT/address
+				// additionals would only add traffic.
+				return
 			}
-			// T096: TODO - log suppressed record
+			response.Answers = append(response.Answers, rb.recordToAnswer(rr))
 			break
 		}
 	}

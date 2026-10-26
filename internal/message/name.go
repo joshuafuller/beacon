@@ -4,6 +4,7 @@ package message
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/joshuafuller/beacon/internal/errors"
 	"github.com/joshuafuller/beacon/internal/protocol"
@@ -206,6 +207,17 @@ func EncodeServiceInstanceName(instanceName, serviceType string) ([]byte, error)
 		}
 	}
 
+	// RFC 6763 §4.1.1: the instance name is UTF-8 and "MUST NOT contain ASCII
+	// control characters (byte values 0x00-0x1F and 0x7F)".
+	if !utf8.ValidString(instanceName) {
+		return nil, &errors.ValidationError{Field: "instanceName", Value: instanceName, Message: "instance name is not valid UTF-8 (RFC 6763 §4.1.1)"}
+	}
+	for i := 0; i < len(instanceName); i++ {
+		if c := instanceName[i]; c < 0x20 || c == 0x7F {
+			return nil, &errors.ValidationError{Field: "instanceName", Value: instanceName, Message: fmt.Sprintf("instance name contains control character 0x%02X (RFC 6763 §4.1.1)", c)}
+		}
+	}
+
 	// Encode instance name as a single label (allow spaces and UTF-8)
 	encoded := make([]byte, 0, 256)
 	encoded = append(encoded, byte(len(instanceName))) // #nosec G115 -- length is validated against MaxLabelLength above
@@ -241,19 +253,52 @@ func EncodeServiceInstanceName(instanceName, serviceType string) ([]byte, error)
 // EncodeDomainName encodes any name Beacon puts on the wire (record owner
 // names and question names).
 //
-// RFC 6763 §4.3: a service instance name ("My Printer._http._tcp.local") has a
-// first label that may contain spaces, dots and UTF-8. When name contains "._",
-// everything before the first "._" is encoded as that single instance label and
-// the rest as a strict service type. Other names (host names, service types)
-// use strict RFC 1035 encoding via EncodeName.
+// RFC 6763 §4.3: a service instance name ("My Printer._http._tcp.local") is
+// <Instance>.<Service>.<Domain>, where <Service> is "_name._tcp" or
+// "_name._udp" and <Instance> is ONE label that may contain spaces, dots,
+// underscores and UTF-8. The service type is found from the right (the label
+// before "._tcp." / "._udp."), so instance names such as "_My Printer" or
+// "Printer._v2" keep their own label. Names without an instance label (host
+// names, service types, "_sub" subtype names) use strict EncodeName.
 func EncodeDomainName(name string) ([]byte, error) {
-	parts := strings.SplitN(name, "._", 2)
-	if len(parts) != 2 || strings.HasPrefix(name, "_") {
-		// No instance label: plain host name or service type
-		// (e.g. "_http._tcp.local", "_services._dns-sd._udp.local").
+	proto := strings.LastIndex(name, "._tcp.")
+	if udp := strings.LastIndex(name, "._udp."); udp > proto {
+		proto = udp
+	}
+	if proto < 0 {
 		return EncodeName(name)
 	}
-	return EncodeServiceInstanceName(parts[0], "_"+parts[1])
+	svc := strings.LastIndex(name[:proto], "._") // "." before "_service"
+	if svc < 0 {
+		return EncodeName(name) // "_http._tcp.local": no instance label
+	}
+	instance := name[:svc]
+	if instance == "_sub" || strings.HasSuffix(instance, "._sub") {
+		return EncodeName(name) // subtype PTR name (RFC 6763 §7.1)
+	}
+	return EncodeServiceInstanceName(instance, name[svc+1:])
+}
+
+// encodeLabelsAsIs encodes name label by label without character checks. It
+// is used only to echo a received question back, so the bytes match what the
+// querier sent. Label and name length limits (RFC 1035 §3.1) still apply.
+func encodeLabelsAsIs(name string) ([]byte, error) {
+	name = strings.TrimSuffix(name, ".")
+	encoded := make([]byte, 0, len(name)+2)
+	if name != "" {
+		for _, label := range strings.Split(name, ".") {
+			if len(label) == 0 || len(label) > protocol.MaxLabelLength {
+				return nil, &errors.ValidationError{Field: "name", Value: name, Message: "label length out of range (RFC 1035 §3.1)"}
+			}
+			encoded = append(encoded, byte(len(label))) // #nosec G115 -- bounded by MaxLabelLength above
+			encoded = append(encoded, label...)
+		}
+	}
+	encoded = append(encoded, 0)
+	if len(encoded) > protocol.MaxNameLength {
+		return nil, &errors.ValidationError{Field: "name", Value: name, Message: "name exceeds 255 bytes (RFC 1035 §3.1)"}
+	}
+	return encoded, nil
 }
 
 // EncodeName encodes a DNS name per RFC 1035 §3.1.
