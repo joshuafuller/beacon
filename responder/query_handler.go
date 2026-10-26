@@ -349,6 +349,14 @@ func (r *Responder) findMatchingServices(question message.Question) []*responder
 			if namesEqual(service.InstanceName+"."+service.ServiceType, question.QNAME) {
 				matches = append(matches, service)
 			}
+		case uint16(protocol.RecordTypeANY):
+			// ANY (RFC 1035 §3.2.3): every record we own under the name. Probes
+			// use ANY too, so answering it also defends our names (RFC 6762 §8.1).
+			if namesEqual(service.ServiceType, question.QNAME) ||
+				namesEqual(service.InstanceName+"."+service.ServiceType, question.QNAME) ||
+				namesEqual(r.hostname, question.QNAME) {
+				matches = append(matches, service)
+			}
 		case uint16(protocol.RecordTypeA), uint16(protocol.RecordTypeAAAA):
 			// A/AAAA: the host records are the same for every service, so one
 			// match is enough (e.g., "myhost.local").

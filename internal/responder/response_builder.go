@@ -108,9 +108,12 @@ func (rb *ResponseBuilder) BuildResponseForQuestion(service *ServiceWithIP, quer
 	knownAnswers := rb.convertKnownAnswers(query)
 
 	// For PTR query, answer is PTR record, additional is SRV/TXT/A
-	if question.QTYPE == uint16(protocol.RecordTypePTR) {
+	switch question.QTYPE {
+	case uint16(protocol.RecordTypePTR):
 		rb.populatePTRResponse(response, allRecords, knownAnswers)
-	} else {
+	case uint16(protocol.RecordTypeANY):
+		rb.populateANYResponse(response, allRecords, knownAnswers, question.QNAME)
+	default:
 		rb.populateDirectResponse(response, allRecords, knownAnswers, protocol.RecordType(question.QTYPE))
 	}
 
@@ -232,6 +235,17 @@ func (rb *ResponseBuilder) populatePTRResponse(response *message.DNSMessage, all
 				response.Additionals = append(response.Additionals, rb.recordToAnswer(rr))
 			}
 			// T096: TODO - log suppressed record
+		}
+	}
+}
+
+// populateANYResponse answers a type ANY (255) question with every record
+// whose owner name matches name (case-insensitive, RFC 6762 §16).
+func (rb *ResponseBuilder) populateANYResponse(response *message.DNSMessage, allRecords, knownAnswers []*message.ResourceRecord, name string) {
+	for _, rr := range allRecords {
+		if strings.EqualFold(strings.TrimSuffix(rr.Name, "."), strings.TrimSuffix(name, ".")) &&
+			rb.ApplyKnownAnswerSuppression(rr, knownAnswers) {
+			response.Answers = append(response.Answers, rb.recordToAnswer(rr))
 		}
 	}
 }
