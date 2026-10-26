@@ -90,5 +90,14 @@ Tracked for the next release (see the PR/issue that adds BCT readiness):
 - Type ANY (255) queries are not answered (II.7, II.8).
 - mDNS packets use the OS default IP TTL, not 255 (III.3, warning).
 - No hot-plug handling (II.17): run with `-M h`.
-- Manual name change (II.16) needs a rename mechanism the harness does not
-  have yet.
+
+## Manual name change (II.16)
+
+When BCT asks the operator to rename the service, type into the harness:
+
+```
+rename <name BCT asks for>
+```
+
+The harness unregisters the old name (goodbye, PTR TTL=0) and registers the
+new one (probe + announce).

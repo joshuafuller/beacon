@@ -15,11 +15,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/joshuafuller/beacon/responder"
@@ -71,9 +73,39 @@ func main() {
 	if svc.InstanceName != *name {
 		log.Printf("renamed after conflict: %q -> %q", *name, svc.InstanceName)
 	}
-	log.Printf("registered %q (%s) on %s.local port %d; Ctrl-C to stop",
+	log.Printf("registered %q (%s) on %s.local port %d; type \"rename <new name>\" or Ctrl-C to stop",
 		svc.InstanceName, svc.ServiceType, *host, *port)
 
-	<-sigCtx.Done()
-	log.Printf("stopping: sending goodbye packets")
+	// BCT II.16 (manual name change): the operator renames the service to a
+	// name BCT chooses. Unregister sends the goodbye (PTR TTL=0) for the old
+	// name, then Register probes and announces the new one (RFC 6763 App. C).
+	lines := make(chan string)
+	go func() {
+		scanner := bufio.NewScanner(os.Stdin)
+		for scanner.Scan() {
+			lines <- scanner.Text()
+		}
+	}()
+	for {
+		select {
+		case <-sigCtx.Done():
+			log.Printf("stopping: sending goodbye packets")
+			return
+		case line := <-lines:
+			newName, ok := strings.CutPrefix(strings.TrimSpace(line), "rename ")
+			if !ok || newName == "" {
+				log.Printf("unknown command %q (want: rename <new name>)", line)
+				continue
+			}
+			if err := r.Unregister(svc.InstanceName); err != nil {
+				log.Printf("unregister %q: %v", svc.InstanceName, err)
+			}
+			svc = &responder.Service{InstanceName: newName, ServiceType: svc.ServiceType, Port: svc.Port, TXTRecords: svc.TXTRecords}
+			if err := r.Register(svc); err != nil {
+				log.Printf("register %q: %v", newName, err)
+				continue
+			}
+			log.Printf("renamed by operator: now %q", svc.InstanceName)
+		}
+	}
 }
