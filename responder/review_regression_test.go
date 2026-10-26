@@ -8,8 +8,10 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/joshuafuller/beacon/internal/message"
+	"github.com/joshuafuller/beacon/internal/security"
 )
 
 var legacySrc = &net.UDPAddr{IP: net.IPv4(192, 168, 1, 50), Port: 40000}
@@ -182,5 +184,28 @@ func TestReview_BadHostFlag(t *testing.T) {
 		if m.Header.ANCount == 0 {
 			t.Error("-host 'bad name' accepted; responder sends empty 12-byte headers")
 		}
+	}
+}
+
+// A packet repeating the enumeration question gets one reply, and the
+// per-source rate limit applies to enumeration replies too.
+func TestReview_EnumerationAnsweredOncePerPacketAndRateLimited(t *testing.T) {
+	r, mt := newConformanceResponder(t, "Alpha")
+	qs := make([]testQuestion, 5)
+	for i := range qs {
+		qs[i] = testQuestion{"_services._dns-sd._udp.local", 12}
+	}
+	_ = r.handleQuery(mt, buildTestQuery(t, 1, qs...), legacySrc, 0)
+	if n := len(mt.SendCalls()); n != 1 {
+		t.Errorf("5 enumeration questions produced %d replies, want 1", n)
+	}
+
+	r2, mt2 := newConformanceResponder(t, "Alpha")
+	r2.rateLimiter = security.NewRateLimiter(1, time.Minute, 10)
+	for i := 0; i < 5; i++ {
+		_ = r2.handleQuery(mt2, buildTestQuery(t, 1, testQuestion{"_services._dns-sd._udp.local", 12}), legacySrc, 0)
+	}
+	if n := len(mt2.SendCalls()); n > 1 {
+		t.Errorf("rate limit 1/s allowed %d enumeration replies, want <= 1", n)
 	}
 }

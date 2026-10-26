@@ -178,11 +178,15 @@ func (r *Responder) handleQueryOnTransport(tr transport.Transport, ipv6Network b
 	// Answer every question with every matching service in one response
 	// (RFC 6762 §6; RFC 6763 §4.1: a browse lists all instances of a type).
 	var matched []matchedQuestion
+	enumerationAnswered := false
 	for _, question := range msg.Questions {
 		// RFC 6763 §9: Service Type Enumeration
 		// A PTR query for "_services._dns-sd._udp.local" returns all unique service types.
 		if question.QTYPE == uint16(protocol.RecordTypePTR) && namesEqual(question.QNAME, serviceEnumerationName) {
-			r.handleServiceEnumerationQuery(tr, ipv6Network, msg, question, srcAddr)
+			if !enumerationAnswered { // one reply per packet, however often it asks
+				enumerationAnswered = true
+				r.handleServiceEnumerationQuery(tr, ipv6Network, msg, question, srcAddr)
+			}
 			continue
 		}
 
@@ -258,6 +262,11 @@ const serviceEnumerationName = "_services._dns-sd._udp.local"
 // handleServiceEnumerationQuery responds to a DNS-SD Service Type Enumeration
 // query (RFC 6763 §9) with a PTR record for each unique registered service type.
 func (r *Responder) handleServiceEnumerationQuery(tr transport.Transport, ipv6Network bool, query *message.DNSMessage, question message.Question, srcAddr net.Addr) {
+	// Per-source-IP rate limiting (FR-026), as for every other reply.
+	if !r.allowSource(srcAddr) {
+		return
+	}
+
 	serviceTypes := r.registry.ListServiceTypes()
 	if len(serviceTypes) == 0 {
 		return // No services registered, no response needed
@@ -419,14 +428,8 @@ func (r *Responder) respondToQuery(tr transport.Transport, ipv6Network bool, msg
 	}
 
 	// Per-source-IP rate limiting (FR-026, RFC 6762 §6.2)
-	if r.rateLimiter != nil && srcAddr != nil {
-		srcIP := srcAddr.String()
-		if udpAddr, ok := srcAddr.(*net.UDPAddr); ok {
-			srcIP = udpAddr.IP.String()
-		}
-		if !r.rateLimiter.Allow(srcIP) {
-			return // Rate-limited, skip response
-		}
+	if !r.allowSource(srcAddr) {
+		return // Rate-limited, skip response
 	}
 
 	var dest net.Addr
@@ -506,6 +509,19 @@ func splitResponse(msg *message.DNSMessage, limit int) []*message.DNSMessage {
 		p.Header.ANCount, p.Header.ARCount = uint16(len(p.Answers)), uint16(len(p.Additionals)) //nolint:gosec
 	}
 	return parts
+}
+
+// allowSource applies the per-source-IP rate limit (FR-026) to a reply for
+// srcAddr. It reports true when there is no limiter or no source.
+func (r *Responder) allowSource(srcAddr net.Addr) bool {
+	if r.rateLimiter == nil || srcAddr == nil {
+		return true
+	}
+	srcIP := srcAddr.String()
+	if udpAddr, ok := srcAddr.(*net.UDPAddr); ok {
+		srcIP = udpAddr.IP.String()
+	}
+	return r.rateLimiter.Allow(srcIP)
 }
 
 // mergeResponse appends part's records to response, skipping records already
