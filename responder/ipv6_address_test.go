@@ -60,7 +60,8 @@ func TestIPv6PTRResponseIncludesBothAddressFamilies(t *testing.T) {
 		QCLASS: uint16(protocol.ClassIN),
 	}
 
-	r.respondToQuery(tr, true, service, &message.DNSMessage{Questions: []message.Question{question}}, question, nil, interfaceIndex)
+	matched := []matchedQuestion{{question: question, services: []*internalresponder.Service{service}}}
+	r.respondToQuery(tr, true, &message.DNSMessage{Questions: []message.Question{question}}, matched, nil, interfaceIndex)
 	if sentPacket == nil {
 		t.Fatal("respondToQuery() did not send an IPv6 response")
 	}

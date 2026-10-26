@@ -109,7 +109,7 @@ func SerializeMessage(msg *DNSMessage) ([]byte, error) {
 
 // serializeQuestion serializes a DNS question to wire format per RFC 1035 §4.1.2.
 func serializeQuestion(q *Question) ([]byte, error) {
-	encodedName, err := EncodeName(q.QNAME)
+	encodedName, err := EncodeDomainName(q.QNAME) // echoed questions may name an instance
 	if err != nil {
 		return nil, err
 	}

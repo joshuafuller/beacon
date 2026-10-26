@@ -226,7 +226,34 @@ func EncodeServiceInstanceName(instanceName, serviceType string) ([]byte, error)
 	encoded = append(encoded, serviceTypeEncoded...)
 	encoded = append(encoded, 0) // Null terminator
 
+	// RFC 1035 §3.1: the whole wire-format name is at most 255 bytes.
+	if len(encoded) > protocol.MaxNameLength {
+		return nil, &errors.ValidationError{
+			Field:   "instanceName",
+			Value:   instanceName,
+			Message: fmt.Sprintf("encoded name length %d exceeds maximum %d bytes per RFC 1035 §3.1", len(encoded), protocol.MaxNameLength),
+		}
+	}
+
 	return encoded, nil
+}
+
+// EncodeDomainName encodes any name Beacon puts on the wire (record owner
+// names and question names).
+//
+// RFC 6763 §4.3: a service instance name ("My Printer._http._tcp.local") has a
+// first label that may contain spaces, dots and UTF-8. When name contains "._",
+// everything before the first "._" is encoded as that single instance label and
+// the rest as a strict service type. Other names (host names, service types)
+// use strict RFC 1035 encoding via EncodeName.
+func EncodeDomainName(name string) ([]byte, error) {
+	parts := strings.SplitN(name, "._", 2)
+	if len(parts) != 2 || strings.HasPrefix(name, "_") {
+		// No instance label: plain host name or service type
+		// (e.g. "_http._tcp.local", "_services._dns-sd._udp.local").
+		return EncodeName(name)
+	}
+	return EncodeServiceInstanceName(parts[0], "_"+parts[1])
 }
 
 // EncodeName encodes a DNS name per RFC 1035 §3.1.

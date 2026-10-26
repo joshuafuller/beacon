@@ -47,6 +47,19 @@ func ParseMessage(msg []byte) (*DNSMessage, error) {
 
 	offset := 12 // Header is always 12 bytes
 
+	// Reject section counts that cannot fit in the packet before allocating for
+	// them: a question is at least 5 bytes (root name + QTYPE + QCLASS) and a
+	// resource record at least 11 (root name + 10 fixed bytes). Without this a
+	// 12-byte header claiming 65535 records per section costs ~1.5 MB (#48).
+	minSize := int(header.QDCount)*5 + (int(header.ANCount)+int(header.NSCount)+int(header.ARCount))*11
+	if minSize > len(msg)-offset {
+		return nil, &errors.WireFormatError{
+			Operation: "parse message",
+			Offset:    offset,
+			Message:   fmt.Sprintf("section counts need at least %d bytes, only %d available", minSize, len(msg)-offset),
+		}
+	}
+
 	// Parse question section
 	questions := make([]Question, header.QDCount)
 	for i := uint16(0); i < header.QDCount; i++ {

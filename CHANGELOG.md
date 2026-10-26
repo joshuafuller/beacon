@@ -5,6 +5,32 @@ All notable changes to the Beacon mDNS library will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+RFC 6762 / RFC 6763 conformance fixes found by wire-level tests (#40–#49).
+Each fix has a test in `*/rfc_conformance_test.go` that fails on `4ea6102`.
+- **Browse lists every instance (#40).** A PTR query now answers with all
+  registered instances of the type, not only the first.
+- **Every question is answered; empty responses are not sent (#41).** Multi-
+  question queries are answered per question in one packet, and a response
+  whose answers are all known/suppressed is not sent.
+- **Querier accepts instance names with spaces (#42).** `Query` for SRV/TXT
+  and the `DiscoverServices` fallback now encode RFC 6763 §4.3 instance labels.
+- **Querier results match the question (#43).** Answers for other names are
+  ignored, and packets queued before a query are discarded.
+- **Multicast responses use ID 0 (#44),** per RFC 6762 §18.1.
+- **Names compare case-insensitively (#45)** in the responder and in
+  `DiscoverServices` additional-record lookup.
+- **Legacy unicast responses (#46).** Queries from a source port other than
+  5353 get a unicast reply to that port with the query ID and question echoed,
+  no cache-flush bit, and TTL ≤ 10 s (RFC 6762 §6.7).
+- **Querier ignores responses not from port 5353 (#47),** per RFC 6762 §6.
+- **Parser rejects impossible section counts before allocating (#48).** A
+  12-byte packet no longer costs ~1.5 MB of allocation.
+- **Querier accepts on-link non-private sources (#49)** such as CGNAT
+  (100.64.0.0/10) when the subnet is on a local interface.
+
 ## [1.3.1] - 2026-06-20
 
 ### Fixed
