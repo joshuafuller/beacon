@@ -237,6 +237,7 @@ LOG_LEVEL=debug LOG_FORMAT=json make run
 11. **[multi-interface-demo/](multi-interface-demo/)** - Multi-interface operations
 12. **[interface-specific/](interface-specific/)** - Interface-specific addressing (RFC 6762 §15)
 13. **[advanced/iot-device/](advanced/iot-device/)** - IoT device service registration
+14. **[bct/](bct/)** - Device-under-test for Apple's Bonjour Conformance Test
 
 ---
 

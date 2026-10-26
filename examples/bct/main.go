@@ -1,0 +1,77 @@
+// Package main is the device-under-test program for Apple's Bonjour
+// Conformance Test (BCT).
+//
+// BCT runs on a Mac and tests a separate device on the same network: it
+// probes, queries, injects name conflicts and checks the replies against
+// RFC 6762 / RFC 6763. This program runs on that device and keeps one service
+// registered with Beacon until it is stopped. See README.md for the runbook.
+//
+// Usage:
+//
+//	sudo go run ./examples/bct -host beacon-bct -name "Beacon BCT" -type _http._tcp.local -port 8080
+//
+// Every rename that BCT forces (RFC 6762 §9) is printed, so the log can be
+// matched against the BCT results file.
+package main
+
+import (
+	"context"
+	"flag"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/joshuafuller/beacon/responder"
+)
+
+func main() {
+	host := flag.String("host", "beacon-bct", "host name label (\".local\" is added)")
+	name := flag.String("name", "Beacon BCT", "service instance name")
+	svcType := flag.String("type", "_http._tcp.local", "service type")
+	port := flag.Uint("port", 8080, "service port")
+	ipv6 := flag.Bool("ipv6", false, "also answer on IPv6 (ff02::fb)")
+	flag.Parse()
+
+	if *port == 0 || *port > 65535 {
+		log.Fatalf("invalid -port %d", *port)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	opts := []responder.Option{responder.WithHostname(*host + ".local")}
+	if *ipv6 {
+		opts = append(opts, responder.WithIPv6())
+	}
+	r, err := responder.New(ctx, opts...)
+	if err != nil {
+		log.Fatalf("start responder: %v", err)
+	}
+	defer func() {
+		if err := r.Close(); err != nil {
+			log.Printf("close: %v", err)
+		}
+	}()
+
+	r.OnProbe(func() { log.Printf("probe sent") })
+	r.OnAnnounce(func() { log.Printf("announcement sent") })
+
+	svc := &responder.Service{
+		InstanceName: *name,
+		ServiceType:  *svcType,
+		Port:         uint16(*port), // #nosec G115 -- range checked above
+		TXTRecords:   map[string]string{"txtvers": "1"},
+	}
+	if err := r.Register(svc); err != nil {
+		log.Fatalf("register %q: %v", *name, err)
+	}
+	if svc.InstanceName != *name {
+		log.Printf("renamed after conflict: %q -> %q", *name, svc.InstanceName)
+	}
+	log.Printf("registered %q (%s) on %s.local port %d; Ctrl-C to stop",
+		svc.InstanceName, svc.ServiceType, *host, *port)
+
+	<-ctx.Done()
+	log.Printf("stopping: sending goodbye packets")
+}
