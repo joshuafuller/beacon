@@ -21,12 +21,13 @@ func newConformanceResponder(t *testing.T, instances ...string) (*Responder, *tr
 	t.Helper()
 	mt := transport.NewMockTransport()
 	r := &Responder{
-		ctx:             context.Background(),
-		transport:       mt,
-		registry:        iresp.NewRegistry(),
-		hostname:        "myhost.local",
-		responseBuilder: iresp.NewResponseBuilder(),
-		rateLimiter:     security.NewRateLimiter(100, 60*time.Second, 10000),
+		ctx:              context.Background(),
+		transport:        mt,
+		registry:         iresp.NewRegistry(),
+		hostname:         "myhost.local",
+		responseBuilder:  iresp.NewResponseBuilder(),
+		rateLimiter:      security.NewRateLimiter(100, 60*time.Second, 10000),
+		queryHandlerDone: make(chan struct{}),
 	}
 	for _, name := range instances {
 		svc := &Service{InstanceName: name, ServiceType: "_http._tcp.local", Port: 80}

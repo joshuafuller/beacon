@@ -97,7 +97,7 @@ func TestProbeAndAnnounceUsesBothIPVersions(t *testing.T) {
 		}},
 	}
 
-	if _, _, err := r.runProbeAndAnnounce(nil, "Example._http._tcp.local", nil); err != nil {
+	if _, _, err := r.runProbeAndAnnounce(r.runCtx(), nil, "Example._http._tcp.local", nil); err != nil {
 		t.Fatalf("runProbeAndAnnounce() failed: %v", err)
 	}
 	const lifecyclePackets = 5 // Three probes plus two announcements.

@@ -57,9 +57,15 @@ type Responder struct {
 	// Host name state. The host name can change after a conflict (RFC 6762
 	// §9), so it is read through hostName() under hostMu.
 	hostMu          sync.RWMutex
-	hostEstablished bool        // host name probed and announced (RFC 6762 §8.1)
-	conflictTimes   []time.Time // recent probe conflicts, for the 15-in-10s rate limit
-	reprobing       map[string]bool
+	hostEstablished bool                   // host name probed and announced (RFC 6762 §8.1)
+	conflictTimes   []time.Time            // recent probe conflicts, for the 15-in-10s rate limit
+	reprobing       map[string]*reprobeJob // running RFC 6762 §9 re-probes, by "svc:<instance>" or "host"
+	reprobeWg       sync.WaitGroup
+
+	// lifeCtx is cancelled by Close: probing, deferral waits and re-probes
+	// stop with it. Sends still use ctx so goodbyes go out during Close.
+	lifeCtx    context.Context
+	lifeCancel context.CancelFunc
 
 	// Test-only state. These fields exist solely to support black-box contract
 	// tests (see testhooks.go); they are not part of the responder's runtime
@@ -99,6 +105,7 @@ func New(ctx context.Context, opts ...Option) (*Responder, error) {
 		rateLimiter:      security.NewRateLimiter(100, 60*time.Second, 10000),
 		queryHandlerDone: make(chan struct{}),
 	}
+	r.lifeCtx, r.lifeCancel = context.WithCancel(ctx)
 
 	// Apply options
 	for _, opt := range opts {
@@ -134,6 +141,13 @@ func (r *Responder) Close() error {
 	// Stop query handler goroutine (T080) and drop delayed responses
 	close(r.queryHandlerDone)
 	r.scheduler.close()
+
+	// Stop probing and re-probes; nothing may probe or announce after the
+	// goodbyes below (#54).
+	if r.lifeCancel != nil {
+		r.lifeCancel()
+	}
+	r.cancelReprobes()
 
 	// Unregister all services (sends goodbye packets)
 	services := r.registry.List()
@@ -189,6 +203,14 @@ func buildServiceInfo(instanceName, serviceType, hostname string, port uint16, i
 		IPv4Address:  ipv4,
 		TXTRecords:   txt,
 	}
+}
+
+// runCtx is the context for probing and waits: cancelled by Close.
+func (r *Responder) runCtx() context.Context {
+	if r.lifeCtx != nil {
+		return r.lifeCtx
+	}
+	return r.ctx
 }
 
 // hostName returns the current host name (e.g. "myhost.local").

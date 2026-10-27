@@ -2,6 +2,7 @@ package responder
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net"
 	"regexp"
@@ -95,11 +96,11 @@ func (r *Responder) noteConflict() {
 
 // waitProbeRateLimit waits conflictCooldown before a probe attempt when
 // conflictBurst conflicts happened within conflictWindow (RFC 6762 §8.1).
-func (r *Responder) waitProbeRateLimit() error {
+func (r *Responder) waitProbeRateLimit(ctx context.Context) error {
 	if !r.overConflictLimit() {
 		return nil
 	}
-	return r.sleep(conflictCooldown)
+	return r.sleep(ctx, conflictCooldown)
 }
 
 func (r *Responder) overConflictLimit() bool {
@@ -116,13 +117,14 @@ func (r *Responder) overConflictLimit() bool {
 	return len(kept) >= conflictBurst
 }
 
-// sleep waits d, returning early with an error when the responder closes.
-func (r *Responder) sleep(d time.Duration) error {
+// sleep waits d, returning early with an error when ctx ends or the
+// responder closes.
+func (r *Responder) sleep(ctx context.Context, d time.Duration) error {
 	timer := time.NewTimer(d)
 	defer timer.Stop()
 	select {
-	case <-r.ctx.Done():
-		return r.ctx.Err()
+	case <-ctx.Done():
+		return ctx.Err()
 	case <-r.queryHandlerDone:
 		return fmt.Errorf("responder closed")
 	case <-timer.C:
@@ -190,64 +192,186 @@ func isOwnAddress(rdata []byte) bool {
 	return false
 }
 
-// startReprobe marks key as being re-probed; false if it already is.
-func (r *Responder) startReprobe(key string) bool {
+// reprobeJob is one running RFC 6762 §9 re-probe. Unregister and Close
+// cancel it and wait for done (#54).
+type reprobeJob struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+// startReprobe registers a re-probe job for key and runs fn in a tracked
+// goroutine with a context that Close and Unregister can cancel. It does
+// nothing if a re-probe for key is already running or the responder closed.
+func (r *Responder) startReprobe(key string, fn func(ctx context.Context)) bool {
 	r.hostMu.Lock()
 	defer r.hostMu.Unlock()
-	if r.reprobing == nil {
-		r.reprobing = make(map[string]bool)
-	}
-	if r.reprobing[key] {
+	if r.runCtx().Err() != nil {
 		return false
 	}
-	r.reprobing[key] = true
+	if r.reprobing == nil {
+		r.reprobing = make(map[string]*reprobeJob)
+	}
+	if _, running := r.reprobing[key]; running {
+		return false
+	}
+	ctx, cancel := context.WithCancel(r.runCtx())
+	job := &reprobeJob{cancel: cancel, done: make(chan struct{})}
+	r.reprobing[key] = job
+	r.reprobeWg.Add(1)
+	go func() {
+		defer r.reprobeWg.Done()
+		defer close(job.done)
+		defer r.endReprobe(key, job)
+		defer cancel()
+		fn(ctx)
+	}()
 	return true
 }
 
-func (r *Responder) endReprobe(key string) {
+func (r *Responder) endReprobe(key string, job *reprobeJob) {
 	r.hostMu.Lock()
 	defer r.hostMu.Unlock()
-	delete(r.reprobing, key)
+	if r.reprobing[key] == job {
+		delete(r.reprobing, key)
+	}
 }
 
-// reprobeService takes a conflicted instance back to probing (RFC 6762 §9).
-// Register probes the same name first and renames only if the conflict
-// persists (BCT II.6 warns when a device renames without re-probing).
-func (r *Responder) reprobeService(instance string) {
-	if !r.startReprobe("svc:" + instance) {
-		return
+// cancelReprobe stops the re-probe for key, if any, and waits for it. It
+// reports whether one was running.
+func (r *Responder) cancelReprobe(key string) bool {
+	r.hostMu.Lock()
+	job, ok := r.reprobing[key]
+	r.hostMu.Unlock()
+	if !ok {
+		return false
 	}
+	job.cancel()
+	<-job.done
+	return true
+}
+
+// cancelReprobes stops every re-probe and waits for them (Close).
+func (r *Responder) cancelReprobes() {
+	r.hostMu.Lock()
+	jobs := make([]*reprobeJob, 0, len(r.reprobing))
+	for _, job := range r.reprobing {
+		jobs = append(jobs, job)
+	}
+	r.hostMu.Unlock()
+	for _, job := range jobs {
+		job.cancel()
+	}
+	r.reprobeWg.Wait()
+}
+
+// reprobeService takes a conflicted instance back to probing (RFC 6762 §9):
+// it leaves the registry (its records are no longer verified unique) and is
+// registered again, same name first; Register renames it only if the
+// conflict persists (BCT II.6 warns when a device renames without
+// re-probing).
+func (r *Responder) reprobeService(instance string) {
 	svc, ok := r.registry.Get(instance)
 	if !ok {
-		r.endReprobe("svc:" + instance)
 		return
 	}
-	_ = r.registry.Remove(instance)
-	go func() {
-		defer r.endReprobe("svc:" + instance)
-		_ = r.Register(fromInternalService(svc))
-	}()
+	r.startReprobe("svc:"+instance, func(ctx context.Context) {
+		_ = r.registry.Remove(instance)
+		_ = r.register(ctx, fromInternalService(svc))
+	})
 }
 
-// reprobeHost takes the host name back to probing (RFC 6762 §9). Services
-// are removed and registered again; the first registration probes the host
-// name, renames it if the conflict persists, and the rest follow it.
+// reprobeHost takes only the host name back to probing (RFC 6762 §9).
+// Services stay registered and answered (#55). If the host must be renamed,
+// every service is announced again so its SRV record names the new host.
 func (r *Responder) reprobeHost() {
-	if !r.startReprobe("host") {
+	r.startReprobe("host", func(ctx context.Context) {
+		r.setHostEstablished(false)
+		renamed, err := r.probeHostName(ctx)
+		if err != nil || !renamed {
+			return
+		}
+		r.announceServices(ctx)
+	})
+}
+
+// probeHostName probes the current host name until it is unique, renaming
+// it on conflicts (with the same rate limit and caps as Register). It
+// reports whether the name changed.
+func (r *Responder) probeHostName(ctx context.Context) (bool, error) {
+	renamed := false
+	for attempts := 0; attempts < maxNetworkRenameAttempts; attempts++ {
+		if err := r.waitProbeRateLimit(ctx); err != nil {
+			return renamed, err
+		}
+		host := r.hostName()
+		hostRecords := hostAddressRecords(host)
+		session := r.probes.start(state.ProbeSet{Names: []string{host}, Authority: hostRecords})
+		finalState, result, err := r.runProbeAndAnnounce(ctx, hostRecords, host, session)
+		r.probes.stop(session)
+		if err != nil {
+			return renamed, err
+		}
+		if finalState != state.StateConflictDetected {
+			r.setHostEstablished(true)
+			return renamed, nil
+		}
+		r.noteConflict()
+		if result.Deferred {
+			if err := r.sleep(ctx, time.Second); err != nil {
+				return renamed, err
+			}
+			continue
+		}
+		r.renameHost(host)
+		renamed = true
+	}
+	return renamed, fmt.Errorf("max rename attempts (%d) exceeded for host name", maxNetworkRenameAttempts)
+}
+
+// hostAddressRecords returns the unique address records for host.
+func hostAddressRecords(host string) []*message.ResourceRecord {
+	ipv4, err := getLocalIPv4()
+	if err != nil {
+		return nil
+	}
+	info := buildServiceInfo("host", "_host._tcp.local", host, 0, ipv4, nil)
+	var out []*message.ResourceRecord
+	for _, rr := range records.BuildRecordSet(info) {
+		if rr.Type == protocol.RecordTypeA || rr.Type == protocol.RecordTypeAAAA {
+			out = append(out, rr)
+		}
+	}
+	return out
+}
+
+// announceServices announces every registered service again (RFC 6762
+// §8.3), e.g. after the host was renamed and SRV targets changed.
+func (r *Responder) announceServices(ctx context.Context) {
+	ipv4, err := getLocalIPv4()
+	if err != nil {
 		return
 	}
-	r.setHostEstablished(false)
-	var services []*Service
 	for _, instance := range r.registry.List() {
-		if svc, ok := r.registry.Get(instance); ok {
-			services = append(services, fromInternalService(svc))
-			_ = r.registry.Remove(instance)
+		svc, ok := r.registry.Get(instance)
+		if !ok {
+			continue
+		}
+		info := buildServiceInfo(svc.InstanceName, svc.ServiceType, r.hostName(), svc.Port, ipv4, svc.TXT)
+		if err := r.announce(ctx, records.BuildRecordSet(info)); err != nil {
+			return
 		}
 	}
-	go func() {
-		defer r.endReprobe("host")
-		for _, svc := range services {
-			_ = r.Register(svc)
-		}
-	}()
+}
+
+// announce sends RFC 6762 §8.3 announcements for recordSet without probing
+// (the names are already verified unique).
+func (r *Responder) announce(ctx context.Context, recordSet []*message.ResourceRecord) error {
+	tr, err := r.registrationTransport(recordSet)
+	if err != nil {
+		return err
+	}
+	announcer := state.NewAnnouncer()
+	announcer.SetTransport(tr)
+	announcer.SetRecords(recordSet)
+	return announcer.Announce(ctx, "", nil)
 }
