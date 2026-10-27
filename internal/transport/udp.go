@@ -131,6 +131,13 @@ func (t *UDPv4Transport) Send(ctx context.Context, packet []byte, dest net.Addr)
 	}
 
 	// Send query to destination
+	// nil dest means "multicast to the mDNS group" (the responder's convention
+	// for multicast replies). Without this WriteTo fails with EINVAL and no
+	// multicast reply to a query ever reached the network (found by BCT).
+	if dest == nil {
+		dest = protocol.MulticastGroupIPv4()
+	}
+
 	n, err := t.conn.WriteTo(packet, dest)
 	if err != nil {
 		return &errors.NetworkError{
