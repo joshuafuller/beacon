@@ -168,12 +168,24 @@ func (r *Responder) handleQueryOnTransport(tr transport.Transport, ipv6Network b
 		return err
 	}
 
-	// Ignore responses (QR=1)
+	// Compare record data without name compression (RFC 6762 §7.1, §8.2, §9).
+	normalizeRDATA(packet, msg.Answers)
+	normalizeRDATA(packet, msg.Authorities)
+	normalizeRDATA(packet, msg.Additionals)
+
+	// Responses are not answered, but they can conflict with names we are
+	// probing (§8.1) or already use (§9).
 	if msg.Header.IsResponse() {
+		r.probes.onResponse(msg)
+		r.checkEstablishedConflicts(msg)
 		return nil
 	}
 
-	normalizeKnownAnswers(packet, msg)
+	// A query with proposed records in its Authority section is another
+	// host's probe: tiebreak against ours (§8.2).
+	if len(msg.Authorities) > 0 {
+		r.probes.onProbe(msg)
+	}
 
 	// Answer every question with every matching service in one response
 	// (RFC 6762 §6; RFC 6763 §4.1: a browse lists all instances of a type).
@@ -261,13 +273,13 @@ func isSharedQuestion(q message.Question) bool {
 	return q.QTYPE == uint16(protocol.RecordTypeANY) && strings.HasPrefix(q.QNAME, "_")
 }
 
-// normalizeKnownAnswers rewrites the RDATA of PTR and SRV known answers in
-// msg without name compression. Queriers compress names inside RDATA, and
-// RFC 6762 §7.1 compares records by their decompressed data, so our
-// uncompressed records must be compared against decompressed known answers.
-func normalizeKnownAnswers(packet []byte, msg *message.DNSMessage) {
-	for i := range msg.Answers {
-		a := &msg.Answers[i]
+// normalizeRDATA rewrites the RDATA of PTR and SRV records in rrs without
+// name compression. Peers compress names inside RDATA, and RFC 6762 compares
+// records by their decompressed data (§7.1 known answers, §8.2 tiebreaking,
+// §9 conflicts), so they must be compared against our uncompressed records.
+func normalizeRDATA(packet []byte, rrs []message.Answer) {
+	for i := range rrs {
+		a := &rrs[i]
 		switch a.TYPE {
 		case uint16(protocol.RecordTypePTR):
 			data, err := message.ParseRDATAInMessage(a.TYPE, packet, a.RDATAOffset, int(a.RDLENGTH))
@@ -412,13 +424,13 @@ func (r *Responder) findMatchingServices(question message.Question) []*responder
 			// use ANY too, so answering it also defends our names (RFC 6762 §8.1).
 			if namesEqual(service.ServiceType, question.QNAME) ||
 				namesEqual(service.InstanceName+"."+service.ServiceType, question.QNAME) ||
-				namesEqual(r.hostname, question.QNAME) {
+				namesEqual(r.hostName(), question.QNAME) {
 				matches = append(matches, service)
 			}
 		case uint16(protocol.RecordTypeA), uint16(protocol.RecordTypeAAAA):
 			// A/AAAA: the host records are the same for every service, so one
 			// match is enough (e.g., "myhost.local").
-			if namesEqual(r.hostname, question.QNAME) {
+			if namesEqual(r.hostName(), question.QNAME) {
 				return []*responder.Service{service}
 			}
 		}
@@ -470,7 +482,7 @@ func (r *Responder) respondToQuery(tr transport.Transport, ipv6Network bool, msg
 				IPv4Address:   ipv4,
 				IPv6Addresses: ipv6Addresses,
 				TXTRecords:    svc.TXT, // internal.Service uses TXT field
-				Hostname:      r.hostname,
+				Hostname:      r.hostName(),
 			}
 			part, err := r.responseBuilder.BuildResponseForQuestion(serviceWithIP, msg, m.question)
 			if err != nil {

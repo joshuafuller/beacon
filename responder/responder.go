@@ -52,6 +52,14 @@ type Responder struct {
 	rateLimiter      *security.RateLimiter      // Per-source-IP rate limiting (FR-026)
 	queryHandlerDone chan struct{}              // Signal query handler shutdown
 	scheduler        responseScheduler          // Delayed/aggregated multicast responses (RFC 6762 §6, §7.2)
+	probes           probeTracker               // Running probes; fed by the query handler (RFC 6762 §8)
+
+	// Host name state. The host name can change after a conflict (RFC 6762
+	// §9), so it is read through hostName() under hostMu.
+	hostMu          sync.RWMutex
+	hostEstablished bool        // host name probed and announced (RFC 6762 §8.1)
+	conflictTimes   []time.Time // recent probe conflicts, for the 15-in-10s rate limit
+	reprobing       map[string]bool
 
 	// Test-only state. These fields exist solely to support black-box contract
 	// tests (see testhooks.go); they are not part of the responder's runtime
@@ -181,6 +189,13 @@ func buildServiceInfo(instanceName, serviceType, hostname string, port uint16, i
 		IPv4Address:  ipv4,
 		TXTRecords:   txt,
 	}
+}
+
+// hostName returns the current host name (e.g. "myhost.local").
+func (r *Responder) hostName() string {
+	r.hostMu.RLock()
+	defer r.hostMu.RUnlock()
+	return r.hostname
 }
 
 // toInternalService converts a public Service to the internal registry type.
