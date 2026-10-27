@@ -395,6 +395,7 @@ func (r *Responder) Unregister(serviceID string) error {
 	}
 	wasReprobing := r.beginUnregister(instance)
 	defer r.endUnregister(instance)
+	r.dropLinkPending(serviceID)
 	if wasReprobing {
 		if _, found := r.GetService(serviceID); !found {
 			return nil // it was out of the registry while re-probing

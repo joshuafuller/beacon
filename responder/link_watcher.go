@@ -75,28 +75,92 @@ func (r *Responder) runLinkWatcher() {
 	watchLinks(r.lifeCtx, linkPollInterval, func() {
 		// Probing while no link is up would only lose packets; the change
 		// that brings a link back up triggers the re-probe.
-		if strings.Contains(linkSnapshot(), " up ") {
+		if hasUsableLink(linkSnapshot()) {
 			r.onLinkChange()
 		}
 	})
 }
 
+// hasUsableLink reports whether a snapshot has an interface that is up and
+// has an IPv4 address. A link that is up without one (a link-local address
+// still being claimed, RFC 3927) cannot send mDNS yet.
+func hasUsableLink(snapshot string) bool {
+	for _, part := range strings.Split(snapshot, ";") {
+		fields := strings.Fields(part)
+		if len(fields) >= 3 && fields[1] == "up" {
+			return true
+		}
+	}
+	return false
+}
+
 // onLinkChange probes and announces again after a link change (RFC 6762
 // §8): the host name first (renamed only if now taken), then every service
 // under its current name. It runs as one tracked re-probe job, so Close
-// cancels it; a second change while it runs is covered by the running job.
+// cancels it. A newer change cancels a running job and starts again; the
+// services that job had not finished are carried over, never dropped.
 func (r *Responder) onLinkChange() {
+	r.cancelReprobe("link")
 	r.startReprobe("link", func(ctx context.Context) {
+		services := append(r.takeLinkPending(), r.Services()...)
 		r.setHostEstablished(false)
 		if _, err := r.probeHostName(ctx); err != nil {
+			r.addLinkPending(services)
 			return
 		}
-		for _, svc := range r.Services() {
+		for i, svc := range services {
 			if ctx.Err() != nil {
+				r.addLinkPending(services[i:])
 				return
 			}
 			_ = r.registry.Remove(svc.InstanceName)
-			_ = r.register(ctx, svc)
+			if err := r.register(ctx, svc); err != nil && ctx.Err() != nil {
+				r.addLinkPending(services[i:])
+				return
+			}
 		}
 	})
+}
+
+// addLinkPending keeps services a cancelled link job had not re-registered.
+func (r *Responder) addLinkPending(services []*Service) {
+	r.hostMu.Lock()
+	defer r.hostMu.Unlock()
+	r.linkPending = append(r.linkPending, services...)
+}
+
+// takeLinkPending returns and clears the carried-over services, dropping
+// any that are registered again meanwhile.
+func (r *Responder) takeLinkPending() []*Service {
+	pending := r.swapLinkPending()
+	out := pending[:0:0]
+	for _, svc := range pending {
+		if _, registered := r.registry.Get(svc.InstanceName); !registered {
+			out = append(out, svc)
+		}
+	}
+	return out
+}
+
+// dropLinkPending removes instance (or "<instance>.<type>") from the
+// carried-over list; Unregister calls it so the service stays gone.
+func (r *Responder) dropLinkPending(serviceID string) {
+	r.hostMu.Lock()
+	defer r.hostMu.Unlock()
+	kept := r.linkPending[:0]
+	for _, svc := range r.linkPending {
+		if !namesEqual(svc.InstanceName, serviceID) && !namesEqual(svc.InstanceName+"."+svc.ServiceType, serviceID) {
+			kept = append(kept, svc)
+		}
+	}
+	r.linkPending = kept
+}
+
+// swapLinkPending returns the carried-over list and clears it.
+func (r *Responder) swapLinkPending() []*Service {
+	r.hostMu.Lock()
+	defer r.hostMu.Unlock()
+	pending := r.linkPending
+	r.linkPending = nil
+	return pending
 }
