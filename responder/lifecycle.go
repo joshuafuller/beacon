@@ -384,11 +384,20 @@ func lookupLifecycleAddressesWith(
 //
 // T042: Implement Unregister() with goodbye packets
 func (r *Responder) Unregister(serviceID string) error {
-	// A service being re-probed after a conflict (RFC 6762 §9) is out of the
-	// registry for the moment: stop the re-probe so it stays gone (#54).
-	if r.cancelReprobe("svc:" + serviceID) {
+	// Block and stop any RFC 6762 §9 re-probe of this service for the whole
+	// call, so a conflict cannot bring it back (#54). The service ID may be
+	// the instance name or the full "<instance>.<type>" name.
+	instance := serviceID
+	if svc, found := r.GetService(serviceID); found {
+		instance = svc.InstanceName
+	} else if reprobing, ok := r.reprobingInstance(serviceID); ok {
+		instance = reprobing
+	}
+	wasReprobing := r.beginUnregister(instance)
+	defer r.endUnregister(instance)
+	if wasReprobing {
 		if _, found := r.GetService(serviceID); !found {
-			return nil
+			return nil // it was out of the registry while re-probing
 		}
 	}
 

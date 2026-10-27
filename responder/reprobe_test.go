@@ -142,3 +142,33 @@ func TestReprobeHost_RenameUpdatesSRV(t *testing.T) {
 		t.Fatalf("no SRV announcement with target myhost-2.local (host now %q)", r.hostName())
 	}
 }
+
+// Review of #54: Unregister with the full service ID also cancels a re-probe.
+func TestReprobe_UnregisterByFullIDCancels(t *testing.T) {
+	r, mt := newConformanceResponder(t)
+	registerOrFail(t, r, &Service{InstanceName: "Alpha", ServiceType: "_http._tcp.local", Port: 80})
+
+	_ = r.handleQuery(mt, buildResponse(t, "Alpha._http._tcp.local", 16, []byte{3, 'x', '=', '1'}), otherHost, 0)
+	eventually(time.Second, func() bool { _, ok := r.reprobeJobFor("svc:Alpha"); return ok })
+	if err := r.Unregister("Alpha._http._tcp.local"); err != nil {
+		t.Fatalf("Unregister(full ID) during re-probe: %v", err)
+	}
+	time.Sleep(3 * time.Second)
+	if _, ok := r.registry.Get("Alpha"); ok {
+		t.Error("Alpha registered again after Unregister(full ID)")
+	}
+}
+
+// Review of #54: no re-probe can start while the service is being
+// unregistered.
+func TestUnregister_BlocksNewReprobe(t *testing.T) {
+	r, _ := newConformanceResponder(t)
+	registerOrFail(t, r, &Service{InstanceName: "Alpha", ServiceType: "_http._tcp.local", Port: 80})
+
+	r.beginUnregister("Alpha")
+	r.reprobeService("Alpha")
+	if _, running := r.reprobeJobFor("svc:Alpha"); running {
+		t.Error("a re-probe started while Alpha was being unregistered")
+	}
+	r.endUnregister("Alpha")
+}

@@ -201,31 +201,42 @@ type reprobeJob struct {
 
 // startReprobe registers a re-probe job for key and runs fn in a tracked
 // goroutine with a context that Close and Unregister can cancel. It does
-// nothing if a re-probe for key is already running or the responder closed.
+// nothing if a re-probe for key is already running, the key is being
+// unregistered, or the responder closed.
 func (r *Responder) startReprobe(key string, fn func(ctx context.Context)) bool {
+	job, ctx, ok := r.newReprobeJob(key)
+	if !ok {
+		return false
+	}
+	r.reprobeWg.Add(1)
+	go r.runReprobe(key, job, ctx, fn)
+	return true
+}
+
+func (r *Responder) newReprobeJob(key string) (*reprobeJob, context.Context, bool) {
 	r.hostMu.Lock()
 	defer r.hostMu.Unlock()
-	if r.runCtx().Err() != nil {
-		return false
+	if r.runCtx().Err() != nil || r.unregistering[key] {
+		return nil, nil, false
 	}
 	if r.reprobing == nil {
 		r.reprobing = make(map[string]*reprobeJob)
 	}
 	if _, running := r.reprobing[key]; running {
-		return false
+		return nil, nil, false
 	}
 	ctx, cancel := context.WithCancel(r.runCtx())
 	job := &reprobeJob{cancel: cancel, done: make(chan struct{})}
 	r.reprobing[key] = job
-	r.reprobeWg.Add(1)
-	go func() {
-		defer r.reprobeWg.Done()
-		defer close(job.done)
-		defer r.endReprobe(key, job)
-		defer cancel()
-		fn(ctx)
-	}()
-	return true
+	return job, ctx, true
+}
+
+func (r *Responder) runReprobe(key string, job *reprobeJob, ctx context.Context, fn func(ctx context.Context)) {
+	defer r.reprobeWg.Done()
+	defer close(job.done)
+	defer r.endReprobe(key, job)
+	defer job.cancel()
+	fn(ctx)
 }
 
 func (r *Responder) endReprobe(key string, job *reprobeJob) {
@@ -236,12 +247,17 @@ func (r *Responder) endReprobe(key string, job *reprobeJob) {
 	}
 }
 
+func (r *Responder) reprobeJobFor(key string) (*reprobeJob, bool) {
+	r.hostMu.Lock()
+	defer r.hostMu.Unlock()
+	job, ok := r.reprobing[key]
+	return job, ok
+}
+
 // cancelReprobe stops the re-probe for key, if any, and waits for it. It
 // reports whether one was running.
 func (r *Responder) cancelReprobe(key string) bool {
-	r.hostMu.Lock()
-	job, ok := r.reprobing[key]
-	r.hostMu.Unlock()
+	job, ok := r.reprobeJobFor(key)
 	if !ok {
 		return false
 	}
@@ -250,18 +266,66 @@ func (r *Responder) cancelReprobe(key string) bool {
 	return true
 }
 
-// cancelReprobes stops every re-probe and waits for them (Close).
-func (r *Responder) cancelReprobes() {
+func (r *Responder) allReprobeJobs() []*reprobeJob {
 	r.hostMu.Lock()
+	defer r.hostMu.Unlock()
 	jobs := make([]*reprobeJob, 0, len(r.reprobing))
 	for _, job := range r.reprobing {
 		jobs = append(jobs, job)
 	}
-	r.hostMu.Unlock()
-	for _, job := range jobs {
+	return jobs
+}
+
+// cancelReprobes stops every re-probe and waits for them (Close).
+func (r *Responder) cancelReprobes() {
+	for _, job := range r.allReprobeJobs() {
 		job.cancel()
 	}
 	r.reprobeWg.Wait()
+}
+
+// beginUnregister marks an instance as being unregistered, so no re-probe
+// can start for it, and stops one that is running. endUnregister clears
+// the mark. Together they keep a conflict that arrives during Unregister
+// from bringing the service back (#54 review).
+func (r *Responder) beginUnregister(instance string) bool {
+	key := "svc:" + instance
+	r.setUnregistering(key, true)
+	return r.cancelReprobe(key)
+}
+
+func (r *Responder) endUnregister(instance string) {
+	r.setUnregistering("svc:"+instance, false)
+}
+
+func (r *Responder) setUnregistering(key string, on bool) {
+	r.hostMu.Lock()
+	defer r.hostMu.Unlock()
+	if r.unregistering == nil {
+		r.unregistering = make(map[string]bool)
+	}
+	if on {
+		r.unregistering[key] = true
+	} else {
+		delete(r.unregistering, key)
+	}
+}
+
+// reprobingInstance maps a service ID (instance name or full
+// "<instance>.<type>" name) to the instance name of a running re-probe.
+func (r *Responder) reprobingInstance(serviceID string) (string, bool) {
+	r.hostMu.Lock()
+	defer r.hostMu.Unlock()
+	for key := range r.reprobing {
+		instance, ok := strings.CutPrefix(key, "svc:")
+		if !ok {
+			continue
+		}
+		if namesEqual(serviceID, instance) || strings.HasPrefix(strings.ToLower(serviceID), strings.ToLower(instance)+"._") {
+			return instance, true
+		}
+	}
+	return "", false
 }
 
 // reprobeService takes a conflicted instance back to probing (RFC 6762 §9):

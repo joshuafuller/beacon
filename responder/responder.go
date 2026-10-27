@@ -61,6 +61,7 @@ type Responder struct {
 	conflictTimes   []time.Time            // recent probe conflicts, for the 15-in-10s rate limit
 	reprobing       map[string]*reprobeJob // running RFC 6762 §9 re-probes, by "svc:<instance>" or "host"
 	reprobeWg       sync.WaitGroup
+	unregistering   map[string]bool // "svc:<instance>" being unregistered: no re-probe may start
 
 	// lifeCtx is cancelled by Close: probing, deferral waits and re-probes
 	// stop with it. Sends still use ctx so goodbyes go out during Close.
