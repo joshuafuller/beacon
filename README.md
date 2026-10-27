@@ -7,7 +7,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/joshuafuller/beacon.svg)](https://pkg.go.dev/github.com/joshuafuller/beacon)
 [![Go Report Card](https://goreportcard.com/badge/github.com/joshuafuller/beacon)](https://goreportcard.com/report/github.com/joshuafuller/beacon)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/joshuafuller/beacon)
+[<img src="https://devin.ai/assets/askdeepwiki.png" alt="Ask DeepWiki" height="20"/>](https://deepwiki.com/joshuafuller/beacon)
 [![RFC 6762 P0](https://img.shields.io/badge/RFC%206762%20P0-100%25-brightgreen?style=flat-square&logo=checkmarx)](./archive/p0-documentation/RFC_COMPLIANCE_CERTIFICATE_v1.0.md)
 [![RFC 6762 Overall](https://img.shields.io/badge/RFC%206762-97.9%25-brightgreen?style=flat-square&logo=checkmarx)](./archive/p0-documentation/RFC_COMPLIANCE_CERTIFICATE_v1.0.md)
 [![RFC 6763 P0](https://img.shields.io/badge/RFC%206763%20P0-100%25-brightgreen?style=flat-square&logo=checkmarx)](./archive/p0-documentation/RFC6763_KEY_REQUIREMENTS.md)
