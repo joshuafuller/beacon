@@ -76,7 +76,29 @@ func (rb *ResponseBuilder) BuildResponse(service *ServiceWithIP, query *message.
 		return nil, fmt.Errorf("query cannot be nil")
 	}
 
-	response := rb.newResponseSkeleton(query)
+	if len(query.Questions) == 0 {
+		response := rb.NewResponseSkeleton()
+		return response, rb.FinalizeResponse(response)
+	}
+	return rb.BuildResponseForQuestion(service, query, query.Questions[0])
+}
+
+// BuildResponseForQuestion builds the response records that answer one
+// question of query for service (RFC 6762 §6). A query can carry several
+// questions; callers build one response per matched question and merge them.
+//
+// A PTR question gets the PTR record as the answer and SRV/TXT/address records
+// as additionals; any other type gets the matching records as answers. Known
+// answers in query suppress records per RFC 6762 §7.1.
+func (rb *ResponseBuilder) BuildResponseForQuestion(service *ServiceWithIP, query *message.DNSMessage, question message.Question) (*message.DNSMessage, error) {
+	if service == nil {
+		return nil, fmt.Errorf("service cannot be nil")
+	}
+	if query == nil {
+		return nil, fmt.Errorf("query cannot be nil")
+	}
+
+	response := rb.NewResponseSkeleton()
 
 	allRecords, err := rb.buildServiceRecords(service)
 	if err != nil {
@@ -86,25 +108,31 @@ func (rb *ResponseBuilder) BuildResponse(service *ServiceWithIP, query *message.
 	knownAnswers := rb.convertKnownAnswers(query)
 
 	// For PTR query, answer is PTR record, additional is SRV/TXT/A
-	// For now, assume first question is PTR query (will enhance later)
-	if len(query.Questions) > 0 && query.Questions[0].QTYPE == uint16(protocol.RecordTypePTR) {
+	if question.QTYPE == uint16(protocol.RecordTypePTR) {
 		rb.populatePTRResponse(response, allRecords, knownAnswers)
-	} else if len(query.Questions) > 0 {
-		rb.populateDirectResponse(response, allRecords, knownAnswers, protocol.RecordType(query.Questions[0].QTYPE))
+	} else {
+		rb.populateDirectResponse(response, allRecords, knownAnswers, protocol.RecordType(question.QTYPE))
 	}
 
-	if err := rb.finalizeCounts(response); err != nil {
+	if err := rb.FinalizeResponse(response); err != nil {
 		return nil, err
 	}
-
-	rb.applyPacketSizeTruncation(response)
-
 	return response, nil
 }
 
-// newResponseSkeleton builds an empty mDNS response message per RFC 6762 §6,
+// FinalizeResponse sets the section counts of response and enforces the
+// RFC 6762 §17 packet size limit. Call it after merging several responses.
+func (rb *ResponseBuilder) FinalizeResponse(response *message.DNSMessage) error {
+	if err := rb.finalizeCounts(response); err != nil {
+		return err
+	}
+	rb.applyPacketSizeTruncation(response)
+	return nil
+}
+
+// NewResponseSkeleton builds an empty mDNS response message per RFC 6762 §6,
 // with the header flags/ID set and every section initialized but unpopulated.
-func (rb *ResponseBuilder) newResponseSkeleton(query *message.DNSMessage) *message.DNSMessage {
+func (rb *ResponseBuilder) NewResponseSkeleton() *message.DNSMessage {
 	// Build response header per RFC 6762 §6
 	// Flags: QR=1 (response), OPCODE=0, AA=1 (authoritative), TC=0, RD=0, RA=0, Z=0, RCODE=0
 	// Bit 15 (QR=1): 0x8000
@@ -114,12 +142,14 @@ func (rb *ResponseBuilder) newResponseSkeleton(query *message.DNSMessage) *messa
 
 	return &message.DNSMessage{
 		Header: message.DNSHeader{
-			ID:      query.Header.ID, // Match query ID
-			Flags:   flags,           // Response with authoritative answer
-			QDCount: 0,               // No questions in response per RFC 6762 §6
-			ANCount: 0,               // Will be set after building
-			NSCount: 0,               // No authority records
-			ARCount: 0,               // Will be set after building
+			// RFC 6762 §18.1: multicast responses MUST use ID 0. Legacy unicast
+			// responses (§6.7) set the query ID in the responder.
+			ID:      0,
+			Flags:   flags, // Response with authoritative answer
+			QDCount: 0,     // No questions in response per RFC 6762 §6
+			ANCount: 0,     // Will be set after building
+			NSCount: 0,     // No authority records
+			ARCount: 0,     // Will be set after building
 		},
 		Questions:   []message.Question{}, // RFC 6762 §6: No questions in response
 		Answers:     []message.Answer{},   // Will populate based on query
@@ -184,10 +214,12 @@ func (rb *ResponseBuilder) populatePTRResponse(response *message.DNSMessage, all
 	for _, rr := range allRecords {
 		if rr.Type == protocol.RecordTypePTR {
 			// T095: Apply known-answer suppression per RFC 6762 §7.1
-			if rb.ApplyKnownAnswerSuppression(rr, knownAnswers) {
-				response.Answers = append(response.Answers, rb.recordToAnswer(rr))
+			if !rb.ApplyKnownAnswerSuppression(rr, knownAnswers) {
+				// The querier already knows this instance; its SRV/TXT/address
+				// additionals would only add traffic.
+				return
 			}
-			// T096: TODO - log suppressed record
+			response.Answers = append(response.Answers, rb.recordToAnswer(rr))
 			break
 		}
 	}

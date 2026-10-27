@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/joshuafuller/beacon/internal/errors"
 	"github.com/joshuafuller/beacon/internal/message"
 	"github.com/joshuafuller/beacon/internal/protocol"
 	"github.com/joshuafuller/beacon/internal/security"
@@ -244,6 +245,11 @@ func (q *Querier) Query(ctx context.Context, name string, recordType RecordType)
 	default:
 	}
 
+	// A closed Querier has no transport or receiver.
+	if q.ctx != nil && q.ctx.Err() != nil {
+		return nil, &errors.NetworkError{Operation: "query", Err: q.ctx.Err(), Details: "querier is closed"}
+	}
+
 	// Honor the configured default timeout when the caller's context carries no
 	// deadline, so queries are always bounded. Without this, Query on a
 	// deadline-less context (e.g. context.Background()) blocks forever in
@@ -254,14 +260,19 @@ func (q *Querier) Query(ctx context.Context, name string, recordType RecordType)
 		defer cancel()
 	}
 
-	// FR-003: Validate name
-	err := protocol.ValidateName(name)
-	if err != nil {
-		return nil, err // Already wrapped as ValidationError
+	// FR-003: Validate name. SRV/TXT questions name a service instance, whose
+	// first label may hold spaces/UTF-8 (RFC 6763 §4.3); BuildQuery validates
+	// those. Host names and service types stay strict RFC 1035 names.
+	if recordType != RecordTypeSRV && recordType != RecordTypeTXT {
+		if err := protocol.ValidateName(name); err != nil {
+			return nil, err // Already wrapped as ValidationError
+		}
+	} else if strings.TrimSuffix(name, ".") == "" {
+		return nil, protocol.ValidateName("") // empty/root name is never a valid question
 	}
 
 	// FR-002: Validate record type
-	err = protocol.ValidateRecordType(uint16(recordType))
+	err := protocol.ValidateRecordType(uint16(recordType))
 	if err != nil {
 		return nil, err // Already wrapped as ValidationError
 	}
@@ -271,6 +282,10 @@ func (q *Querier) Query(ctx context.Context, name string, recordType RecordType)
 	if err != nil {
 		return nil, err
 	}
+
+	// Discard packets that arrived before this query; they answer an earlier
+	// question and must not be reported as results of this one.
+	q.drainResponses()
 
 	// FR-005: Send query to the mDNS multicast group (224.0.0.251:5353).
 	err = q.transport.Send(ctx, queryMsg, protocol.MulticastGroupIPv4())
@@ -359,8 +374,11 @@ func computeBrowseTimeout(ctx context.Context) time.Duration {
 // deriveInstanceName extracts the user-facing instance name from a PTR
 // target, e.g. "My Printer._http._tcp.local" → "My Printer".
 func deriveInstanceName(target, serviceType string) string {
-	if strings.HasSuffix(target, "."+serviceType) {
-		return strings.TrimSuffix(target, "."+serviceType)
+	// DNS names compare case-insensitively (RFC 6762 §16).
+	suffix := "." + strings.TrimSuffix(serviceType, ".")
+	target = strings.TrimSuffix(target, ".")
+	if len(target) > len(suffix) && strings.EqualFold(target[len(target)-len(suffix):], suffix) {
+		return target[:len(target)-len(suffix)]
 	}
 	return target
 }
@@ -518,7 +536,7 @@ func toRecordData(data interface{}) interface{} {
 // bundled in a browse response (RFC 6763 §12) before falling back to queries.
 func findInAdditionals(additionals []ResourceRecord, name string, t RecordType) *ResourceRecord {
 	for i := range additionals {
-		if additionals[i].Type == t && additionals[i].Name == name {
+		if additionals[i].Type == t && namesEqual(additionals[i].Name, name) {
 			return &additionals[i]
 		}
 	}
@@ -533,7 +551,7 @@ func findInAdditionals(additionals []ResourceRecord, name string, t RecordType) 
 // FR-010: Filter answer section records
 // FR-011: Validate and discard malformed packets
 // FR-016: Continue collecting after discarding malformed packets
-func (q *Querier) collectResponses(ctx context.Context, _ string, queryType RecordType) (*Response, error) {
+func (q *Querier) collectResponses(ctx context.Context, name string, queryType RecordType) (*Response, error) {
 	response := &Response{
 		Records: make([]ResourceRecord, 0),
 	}
@@ -548,7 +566,11 @@ func (q *Querier) collectResponses(ctx context.Context, _ string, queryType Reco
 			// Timeout is NOT an error per FR-008 - return what we collected
 			return response, nil
 
-		case responseMsg := <-q.responseChan:
+		case responseMsg, ok := <-q.responseChan:
+			if !ok {
+				// Querier closed: no more responses can arrive.
+				return response, nil
+			}
 			// FR-009: Parse response message
 			parsedMsg, err := message.ParseMessage(responseMsg)
 			if err != nil {
@@ -570,6 +592,11 @@ func (q *Querier) collectResponses(ctx context.Context, _ string, queryType Reco
 				if RecordType(answer.TYPE) != queryType {
 					// Skip records of different type
 					// (Production might include related records)
+					continue
+				}
+				// Skip answers to other questions (other hosts' announcements,
+				// other service types). Names compare case-insensitively.
+				if !namesEqual(answer.NAME, name) {
 					continue
 				}
 
@@ -673,7 +700,76 @@ func (q *Querier) runReceiveLoop(tr transport.Transport, ipv6Network bool) {
 	}
 }
 
-// isValidSourceIP reports whether srcIP is link-local scope per RFC 6762 §2.
+// drainResponses discards every packet already queued on responseChan.
+func (q *Querier) drainResponses() {
+	for {
+		select {
+		case _, ok := <-q.responseChan:
+			if !ok {
+				return // closed by Close
+			}
+		default:
+			return
+		}
+	}
+}
+
+// namesEqual compares DNS names case-insensitively (RFC 1035 §2.3.3,
+// RFC 6762 §16), ignoring a trailing root dot.
+func namesEqual(a, b string) bool {
+	return strings.EqualFold(strings.TrimSuffix(a, "."), strings.TrimSuffix(b, "."))
+}
+
+// localInterfaceAddrs lists this host's interface addresses. It is a variable
+// so tests can supply a fixed set of subnets.
+var localInterfaceAddrs = net.InterfaceAddrs
+
+// onLinkCache keeps the interface address list for a short time so that a
+// flood of packets from non-private sources does not list interfaces per packet.
+var onLinkCache struct {
+	sync.Mutex
+	addrs   []net.Addr
+	fetched time.Time
+}
+
+const onLinkCacheTTL = 5 * time.Second
+
+func cachedInterfaceAddrs() []net.Addr {
+	onLinkCache.Lock()
+	defer onLinkCache.Unlock()
+	if onLinkCache.addrs == nil || time.Since(onLinkCache.fetched) > onLinkCacheTTL {
+		addrs, err := localInterfaceAddrs()
+		if err != nil {
+			return nil
+		}
+		onLinkCache.addrs, onLinkCache.fetched = addrs, time.Now()
+	}
+	return onLinkCache.addrs
+}
+
+// resetOnLinkCache drops the cached interface addresses (tests).
+func resetOnLinkCache() {
+	onLinkCache.Lock()
+	defer onLinkCache.Unlock()
+	onLinkCache.addrs = nil
+}
+
+// isOnLink reports whether ip4 is inside a subnet configured on a local
+// interface (RFC 6762 §11: the source is on the local link).
+func isOnLink(ip4 net.IP) bool {
+	addrs := cachedInterfaceAddrs()
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.To4() != nil && ipnet.Contains(ip4) {
+			return true
+		}
+	}
+	return false
+}
+
+// isValidSourceIP reports whether srcIP is link-local scope per RFC 6762 §2,
+// or (IPv4) a private address or an address on a local interface's subnet
+// (RFC 6762 §11). The on-link check admits LANs that use CGNAT or public
+// addressing.
 func isValidSourceIP(srcIP net.IP, ipv6Network bool) bool {
 	if ipv6Network {
 		if ip4 := srcIP.To4(); ip4 != nil {
@@ -686,7 +782,7 @@ func isValidSourceIP(srcIP net.IP, ipv6Network bool) bool {
 		return false
 	}
 	isLinkLocal := ip4[0] == 169 && ip4[1] == 254
-	return isLinkLocal || security.IsPrivate(srcIP)
+	return isLinkLocal || security.IsPrivate(srcIP) || isOnLink(ip4)
 }
 
 // isAcceptableSourceIP is retained for focused package tests and callers that
@@ -705,6 +801,11 @@ func (q *Querier) shouldDrop(responseMsg []byte, srcAddr net.Addr, ipv6Network b
 	udpAddr, ok := srcAddr.(*net.UDPAddr)
 	if !ok {
 		return false
+	}
+	// RFC 6762 §6: "Multicast DNS implementations MUST silently ignore any
+	// Multicast DNS responses they receive where the source UDP port is not 5353."
+	if udpAddr.Port != protocol.Port {
+		return true
 	}
 	srcIP := udpAddr.IP
 	if srcIP != nil && !isValidSourceIP(srcIP, ipv6Network) {

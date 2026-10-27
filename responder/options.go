@@ -1,6 +1,7 @@
 package responder
 
 import (
+	"github.com/joshuafuller/beacon/internal/protocol"
 	"github.com/joshuafuller/beacon/internal/security"
 	"github.com/joshuafuller/beacon/internal/transport"
 )
@@ -91,6 +92,11 @@ func WithIPv6() Option {
 // T044: WithHostname option
 func WithHostname(hostname string) Option {
 	return func(r *Responder) error {
+		// The host name is the owner of A/AAAA records and the SRV target, so
+		// it must be a valid RFC 1035 name; otherwise no response serializes.
+		if err := protocol.ValidateName(hostname); err != nil {
+			return err
+		}
 		r.hostname = hostname
 		return nil
 	}

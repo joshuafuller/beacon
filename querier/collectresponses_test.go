@@ -243,10 +243,11 @@ func TestCollectResponses_NormalAggregation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	// Inject multiple valid responses
-	packet1 := buildValidResponsePacket("test1.local", protocol.RecordTypeA, []byte{192, 168, 1, 1})
-	packet2 := buildValidResponsePacket("test2.local", protocol.RecordTypeA, []byte{192, 168, 1, 2})
-	packet3 := buildValidResponsePacket("test3.local", protocol.RecordTypeA, []byte{192, 168, 1, 3})
+	// Inject multiple valid responses for the queried name (three responders
+	// answering the same question; answers for other names are filtered out)
+	packet1 := buildValidResponsePacket("test.local", protocol.RecordTypeA, []byte{192, 168, 1, 1})
+	packet2 := buildValidResponsePacket("test.local", protocol.RecordTypeA, []byte{192, 168, 1, 2})
+	packet3 := buildValidResponsePacket("test.local", protocol.RecordTypeA, []byte{192, 168, 1, 3})
 
 	q.responseChan <- packet1
 	q.responseChan <- packet2
@@ -303,7 +304,7 @@ func buildValidResponsePacket(name string, rtype protocol.RecordType, rdata []by
 
 	// Answer section:
 	// NAME (encoded as DNS labels)
-	nameEncoded, _ := message.EncodeName(name)
+	nameEncoded, _ := message.EncodeDomainName(name)
 	packet = append(packet, nameEncoded...)
 
 	// TYPE (2 bytes, big-endian)
@@ -343,7 +344,7 @@ func buildQueryPacket(name string, rtype protocol.RecordType) []byte {
 	packet = append(packet, 0x00, 0x00) // ARCOUNT=0
 
 	// Question section
-	nameEncoded, _ := message.EncodeName(name)
+	nameEncoded, _ := message.EncodeDomainName(name)
 	packet = append(packet, nameEncoded...)
 
 	typeBytes := make([]byte, 2)
@@ -359,13 +360,13 @@ func buildQueryPacket(name string, rtype protocol.RecordType) []byte {
 // serviceType plus SRV/TXT/A records in the ADDITIONAL section (the round-trip
 // optimization per RFC 6763 §12).
 func buildBundledPTRResponse(serviceType, instance, host string, port uint16, ip [4]byte, txt string) []byte {
-	ptrTarget, _ := message.EncodeName(instance)
+	ptrTarget, _ := message.EncodeDomainName(instance)
 
 	srv := make([]byte, 6)
 	binary.BigEndian.PutUint16(srv[0:2], 0) // priority
 	binary.BigEndian.PutUint16(srv[2:4], 0) // weight
 	binary.BigEndian.PutUint16(srv[4:6], port)
-	hostEnc, _ := message.EncodeName(host)
+	hostEnc, _ := message.EncodeDomainName(host)
 	srv = append(srv, hostEnc...)
 
 	txtRDATA := append([]byte{byte(len(txt))}, []byte(txt)...)
@@ -441,7 +442,7 @@ func TestDiscoverServices_UsesAdditionals_SingleRoundTrip(t *testing.T) {
 
 	packet := buildBundledPTRResponse("_http._tcp.local", "Inst._http._tcp.local",
 		"host.local", 8080, [4]byte{192, 168, 1, 5}, "path=/api")
-	q.responseChan <- packet
+	defer feedResponseUntilStopped(q, packet)()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
@@ -475,7 +476,7 @@ func TestDiscoverServices_UsesAdditionals_SingleRoundTrip(t *testing.T) {
 // includeSRV/includeTXT/includeA. Used to force DiscoverServices to fall back
 // to an explicit SRV/TXT/A query for whichever record is omitted here.
 func buildPartiallyBundledPTRResponse(serviceType, instance, host string, port uint16, ip [4]byte, txt string, includeSRV, includeTXT, includeA bool) []byte {
-	ptrTarget, _ := message.EncodeName(instance)
+	ptrTarget, _ := message.EncodeDomainName(instance)
 
 	msg := &message.DNSMessage{
 		Header: message.DNSHeader{Flags: 0x8400}, // QR=1, AA=1
@@ -487,7 +488,7 @@ func buildPartiallyBundledPTRResponse(serviceType, instance, host string, port u
 	if includeSRV {
 		srv := make([]byte, 6)
 		binary.BigEndian.PutUint16(srv[4:6], port)
-		hostEnc, _ := message.EncodeName(host)
+		hostEnc, _ := message.EncodeDomainName(host)
 		srv = append(srv, hostEnc...)
 		msg.Additionals = append(msg.Additionals, message.Answer{
 			NAME: instance, TYPE: uint16(protocol.RecordTypeSRV), CLASS: 1, TTL: 120, RDATA: srv,
@@ -570,11 +571,11 @@ func TestDiscoverServices_FallbackSRV_WhenNotBundled(t *testing.T) {
 
 	ptrPacket := buildPartiallyBundledPTRResponse(serviceType, instance, host, port, ip, txt,
 		false /* includeSRV */, true /* includeTXT */, true /* includeA */)
-	q.responseChan <- ptrPacket
+	defer feedResponseUntilStopped(q, ptrPacket)()
 
 	srv := make([]byte, 6)
 	binary.BigEndian.PutUint16(srv[4:6], port)
-	hostEnc, _ := message.EncodeName(host)
+	hostEnc, _ := message.EncodeDomainName(host)
 	srv = append(srv, hostEnc...)
 	srvPacket := buildValidResponsePacket(instance, protocol.RecordTypeSRV, srv)
 	defer feedResponseUntilStopped(q, srvPacket)()
@@ -586,9 +587,8 @@ func TestDiscoverServices_FallbackSRV_WhenNotBundled(t *testing.T) {
 		t.Fatalf("DiscoverServices error: %v", err)
 	}
 	// Look up by instance name rather than assuming len(services)==1: a real
-	// mDNS socket on a shared network can pick up unrelated PTR traffic
-	// alongside our injected packets (collectResponses doesn't filter by
-	// queried name), so extra entries aren't a sign of a bug here.
+	// mDNS socket on a shared network can pick up real instances of the same
+	// service type alongside our injected packets.
 	s := findServiceByInstance(services, "Inst")
 	if s == nil {
 		t.Fatalf("service %q not found in %+v", "Inst", services)
@@ -629,7 +629,7 @@ func TestDiscoverServices_FallbackTXT_WhenNotBundled(t *testing.T) {
 
 	ptrPacket := buildPartiallyBundledPTRResponse(serviceType, instance, host, port, ip, txt,
 		true /* includeSRV */, false /* includeTXT */, true /* includeA */)
-	q.responseChan <- ptrPacket
+	defer feedResponseUntilStopped(q, ptrPacket)()
 
 	txtRDATA := append([]byte{byte(len(txt))}, []byte(txt)...)
 	txtPacket := buildValidResponsePacket(instance, protocol.RecordTypeTXT, txtRDATA)
@@ -667,7 +667,7 @@ func TestDiscoverServices_FallbackA_WhenNotBundled(t *testing.T) {
 
 	ptrPacket := buildPartiallyBundledPTRResponse(serviceType, instance, host, port, ip, txt,
 		true /* includeSRV */, true /* includeTXT */, false /* includeA */)
-	q.responseChan <- ptrPacket
+	defer feedResponseUntilStopped(q, ptrPacket)()
 
 	aPacket := buildValidResponsePacket(host, protocol.RecordTypeA, ip[:])
 	defer feedResponseUntilStopped(q, aPacket)()

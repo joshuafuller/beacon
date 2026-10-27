@@ -7,7 +7,6 @@ import (
 	"encoding/binary"
 	"math"
 	"math/big"
-	"strings"
 
 	"github.com/joshuafuller/beacon/internal/errors"
 	"github.com/joshuafuller/beacon/internal/protocol"
@@ -50,9 +49,10 @@ func BuildQuery(name string, recordType uint16) ([]byte, error) {
 	}
 
 	// Encode name per RFC 1035 §3.1 (this also validates per FR-003)
-	encodedName, err := EncodeName(name)
+	// Instance names (SRV/TXT questions) may contain spaces/UTF-8 (RFC 6763 §4.3)
+	encodedName, err := EncodeDomainName(name)
 	if err != nil {
-		return nil, err // EncodeName already returns ValidationError
+		return nil, err // EncodeDomainName already returns ValidationError
 	}
 
 	// Build DNS header per RFC 6762 §18
@@ -270,42 +270,10 @@ func SerializeResourceRecord(rr *ResourceRecord) ([]byte, error) {
 		}
 	}
 
-	// Encode the domain name
-	// Detect service instance names per RFC 6763 §4.3:
-	// If the name contains a service type pattern (_service._proto.local),
-	// split it and encode the instance portion separately to allow UTF-8/spaces.
-	var encodedName []byte
-	var err error
-
-	// Check if this is a service instance name format: "instance._service._proto.local"
-	// Pattern: contains "._" which indicates a service type
-	if strings.Contains(rr.Name, "._") {
-		// Split into instance name and service type
-		parts := strings.SplitN(rr.Name, "._", 2)
-		if len(parts) == 2 {
-			// parts[0] = instance name (may contain spaces/UTF-8)
-			// parts[1] = service type (e.g., "http._tcp.local")
-			instanceName := parts[0]
-			serviceType := "_" + parts[1] // Restore leading underscore
-
-			// Use special encoding for service instance names
-			encodedName, err = EncodeServiceInstanceName(instanceName, serviceType)
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			// Fallback to normal encoding
-			encodedName, err = EncodeName(rr.Name)
-			if err != nil {
-				return nil, err
-			}
-		}
-	} else {
-		// Normal DNS name (not a service instance)
-		encodedName, err = EncodeName(rr.Name)
-		if err != nil {
-			return nil, err
-		}
+	// Encode the domain name (service instance names may contain UTF-8/spaces)
+	encodedName, err := EncodeDomainName(rr.Name)
+	if err != nil {
+		return nil, err
 	}
 
 	// Calculate total size

@@ -2,6 +2,8 @@ package responder
 
 import (
 	"net"
+	"strconv"
+	"strings"
 
 	"github.com/joshuafuller/beacon/internal/message"
 	"github.com/joshuafuller/beacon/internal/protocol"
@@ -171,24 +173,87 @@ func (r *Responder) handleQueryOnTransport(tr transport.Transport, ipv6Network b
 		return nil
 	}
 
-	// Process each question
+	normalizeKnownAnswers(packet, msg)
+
+	// Answer every question with every matching service in one response
+	// (RFC 6762 §6; RFC 6763 §4.1: a browse lists all instances of a type).
+	var matched []matchedQuestion
+	enumerationAnswered := false
 	for _, question := range msg.Questions {
 		// RFC 6763 §9: Service Type Enumeration
 		// A PTR query for "_services._dns-sd._udp.local" returns all unique service types.
-		if question.QTYPE == uint16(protocol.RecordTypePTR) && question.QNAME == serviceEnumerationName {
-			r.handleServiceEnumerationQuery(tr, ipv6Network, question, srcAddr)
+		if question.QTYPE == uint16(protocol.RecordTypePTR) && namesEqual(question.QNAME, serviceEnumerationName) {
+			if !enumerationAnswered { // one reply per packet, however often it asks
+				enumerationAnswered = true
+				r.handleServiceEnumerationQuery(tr, ipv6Network, msg, question, srcAddr)
+			}
 			continue
 		}
 
-		matchedService := r.findMatchingService(question)
-		if matchedService == nil {
-			continue
+		services := r.findMatchingServices(question)
+		if len(services) > 0 {
+			matched = append(matched, matchedQuestion{question: question, services: services})
 		}
-
-		r.respondToQuery(tr, ipv6Network, matchedService, msg, question, srcAddr, interfaceIndex)
+	}
+	if len(matched) == 0 {
+		return nil
 	}
 
+	r.respondToQuery(tr, ipv6Network, msg, matched, srcAddr, interfaceIndex)
 	return nil
+}
+
+// normalizeKnownAnswers rewrites the RDATA of PTR and SRV known answers in
+// msg without name compression. Queriers compress names inside RDATA, and
+// RFC 6762 §7.1 compares records by their decompressed data, so our
+// uncompressed records must be compared against decompressed known answers.
+func normalizeKnownAnswers(packet []byte, msg *message.DNSMessage) {
+	for i := range msg.Answers {
+		a := &msg.Answers[i]
+		switch a.TYPE {
+		case uint16(protocol.RecordTypePTR):
+			data, err := message.ParseRDATAInMessage(a.TYPE, packet, a.RDATAOffset, int(a.RDLENGTH))
+			if err != nil {
+				continue
+			}
+			if enc, err := message.EncodeDomainName(data.(string)); err == nil {
+				a.RDATA = enc
+			}
+		case uint16(protocol.RecordTypeSRV):
+			data, err := message.ParseRDATAInMessage(a.TYPE, packet, a.RDATAOffset, int(a.RDLENGTH))
+			if err != nil {
+				continue
+			}
+			srv := data.(message.SRVData)
+			target, err := message.EncodeName(srv.Target)
+			if err != nil {
+				continue
+			}
+			rdata := make([]byte, 6, 6+len(target))
+			copy(rdata, a.RDATA[:6])
+			a.RDATA = append(rdata, target...)
+		}
+	}
+}
+
+// matchedQuestion pairs a query question with the registered services that
+// can answer it.
+type matchedQuestion struct {
+	question message.Question
+	services []*responder.Service
+}
+
+// namesEqual compares DNS names case-insensitively (RFC 1035 §2.3.3,
+// RFC 6762 §16), ignoring a trailing root dot.
+func namesEqual(a, b string) bool {
+	return strings.EqualFold(strings.TrimSuffix(a, "."), strings.TrimSuffix(b, "."))
+}
+
+// isLegacyQuery reports whether srcAddr is a legacy (one-shot) querier:
+// RFC 6762 §6.7 — a query whose source UDP port is not 5353.
+func isLegacyQuery(srcAddr net.Addr) bool {
+	udpAddr, ok := srcAddr.(*net.UDPAddr)
+	return ok && udpAddr.Port != protocol.Port
 }
 
 // serviceEnumerationName is the DNS-SD meta-query name per RFC 6763 §9.
@@ -196,7 +261,12 @@ const serviceEnumerationName = "_services._dns-sd._udp.local"
 
 // handleServiceEnumerationQuery responds to a DNS-SD Service Type Enumeration
 // query (RFC 6763 §9) with a PTR record for each unique registered service type.
-func (r *Responder) handleServiceEnumerationQuery(tr transport.Transport, ipv6Network bool, question message.Question, srcAddr net.Addr) {
+func (r *Responder) handleServiceEnumerationQuery(tr transport.Transport, ipv6Network bool, query *message.DNSMessage, question message.Question, srcAddr net.Addr) {
+	// Per-source-IP rate limiting (FR-026), as for every other reply.
+	if !r.allowSource(srcAddr) {
+		return
+	}
+
 	serviceTypes := r.registry.ListServiceTypes()
 	if len(serviceTypes) == 0 {
 		return // No services registered, no response needed
@@ -230,6 +300,20 @@ func (r *Responder) handleServiceEnumerationQuery(tr transport.Transport, ipv6Ne
 		return
 	}
 
+	// RFC 6762 §6.7: a legacy querier gets a conventional unicast reply that
+	// repeats its ID and questions, without cache-flush bits, TTL <= 10 s.
+	if isLegacyQuery(srcAddr) {
+		parsed, err := message.ParseMessage(responseMsg)
+		if err != nil {
+			return
+		}
+		makeLegacyUnicastResponse(parsed, query)
+		if packet, err := message.SerializeMessage(parsed); err == nil {
+			_ = tr.Send(r.ctx, packet, srcAddr)
+		}
+		return
+	}
+
 	// Determine destination (unicast vs multicast based on QU bit)
 	quBit := (question.QCLASS & 0x8000) != 0
 	var dest net.Addr
@@ -243,11 +327,12 @@ func (r *Responder) handleServiceEnumerationQuery(tr transport.Transport, ipv6Ne
 	_ = tr.Send(r.ctx, responseMsg, dest)
 }
 
-// findMatchingService finds a registered service matching question's QTYPE/QNAME.
-func (r *Responder) findMatchingService(question message.Question) *responder.Service {
-	services := r.registry.List()
+// findMatchingServices returns every registered service that answers
+// question's QTYPE/QNAME. Names compare case-insensitively (RFC 6762 §16).
+func (r *Responder) findMatchingServices(question message.Question) []*responder.Service {
+	var matches []*responder.Service
 
-	for _, instanceName := range services {
+	for _, instanceName := range r.registry.List() {
 		service, found := r.registry.Get(instanceName)
 		if !found {
 			continue
@@ -256,24 +341,24 @@ func (r *Responder) findMatchingService(question message.Question) *responder.Se
 		switch question.QTYPE {
 		case uint16(protocol.RecordTypePTR):
 			// PTR: match by service type (e.g., "_http._tcp.local")
-			if service.ServiceType == question.QNAME {
-				return service
+			if namesEqual(service.ServiceType, question.QNAME) {
+				matches = append(matches, service)
 			}
 		case uint16(protocol.RecordTypeSRV), uint16(protocol.RecordTypeTXT):
 			// SRV/TXT: match by full instance name (e.g., "My Printer._http._tcp.local")
-			fullName := service.InstanceName + "." + service.ServiceType
-			if fullName == question.QNAME {
-				return service
+			if namesEqual(service.InstanceName+"."+service.ServiceType, question.QNAME) {
+				matches = append(matches, service)
 			}
 		case uint16(protocol.RecordTypeA), uint16(protocol.RecordTypeAAAA):
-			// A: match by hostname (e.g., "myhost.local")
-			if r.hostname == question.QNAME {
-				return service
+			// A/AAAA: the host records are the same for every service, so one
+			// match is enough (e.g., "myhost.local").
+			if namesEqual(r.hostname, question.QNAME) {
+				return []*responder.Service{service}
 			}
 		}
 	}
 
-	return nil
+	return matches
 }
 
 // respondToQuery builds and sends a response for a matched service using the
@@ -287,7 +372,11 @@ func (r *Responder) findMatchingService(question message.Question) *responder.Se
 // a particular interface, it MUST include only addresses that are valid
 // on that interface, and MUST NOT include addresses configured on other
 // interfaces."
-func (r *Responder) respondToQuery(tr transport.Transport, ipv6Network bool, matchedService *responder.Service, msg *message.DNSMessage, question message.Question, srcAddr net.Addr, interfaceIndex int) {
+//
+// All matched questions and services are merged into one response. A legacy
+// query (RFC 6762 §6.7) gets a conventional unicast DNS response; otherwise
+// the response is multicast unless every matched question has the QU bit.
+func (r *Responder) respondToQuery(tr transport.Transport, ipv6Network bool, msg *message.DNSMessage, matched []matchedQuestion, srcAddr net.Addr, interfaceIndex int) {
 	ipv4, ipv6Addresses, ipErr := getResponseAddresses(ipv6Network, interfaceIndex)
 
 	if ipErr != nil {
@@ -299,41 +388,54 @@ func (r *Responder) respondToQuery(tr transport.Transport, ipv6Network bool, mat
 		return
 	}
 
-	serviceWithIP := &responder.ServiceWithIP{
-		InstanceName:  matchedService.InstanceName,
-		ServiceType:   matchedService.ServiceType,
-		Domain:        "local",
-		Port:          matchedService.Port,
-		IPv4Address:   ipv4,
-		IPv6Addresses: ipv6Addresses,
-		TXTRecords:    matchedService.TXT, // internal.Service uses TXT field
-		Hostname:      r.hostname,
+	response := r.responseBuilder.NewResponseSkeleton()
+	allQU := true
+	for _, m := range matched {
+		// RFC 6762 §5.4: QU bit (bit 15 of QCLASS) asks for a unicast response
+		if m.question.QCLASS&0x8000 == 0 {
+			allQU = false
+		}
+		for _, svc := range m.services {
+			serviceWithIP := &responder.ServiceWithIP{
+				InstanceName:  svc.InstanceName,
+				ServiceType:   svc.ServiceType,
+				Domain:        "local",
+				Port:          svc.Port,
+				IPv4Address:   ipv4,
+				IPv6Addresses: ipv6Addresses,
+				TXTRecords:    svc.TXT, // internal.Service uses TXT field
+				Hostname:      r.hostname,
+			}
+			part, err := r.responseBuilder.BuildResponseForQuestion(serviceWithIP, msg, m.question)
+			if err != nil {
+				continue
+			}
+			mergeResponse(response, part)
+		}
 	}
 
-	// Build response (T076)
-	response, err := r.responseBuilder.BuildResponse(serviceWithIP, msg)
-	if err != nil {
+	// Never put an empty response on the wire (all answers known or suppressed).
+	if len(response.Answers) == 0 {
+		return
+	}
+
+	legacy := isLegacyQuery(srcAddr)
+	if legacy {
+		makeLegacyUnicastResponse(response, msg)
+	}
+	if err := r.responseBuilder.FinalizeResponse(response); err != nil {
 		return
 	}
 
 	// Per-source-IP rate limiting (FR-026, RFC 6762 §6.2)
-	if r.rateLimiter != nil && srcAddr != nil {
-		srcIP := srcAddr.String()
-		if udpAddr, ok := srcAddr.(*net.UDPAddr); ok {
-			srcIP = udpAddr.IP.String()
-		}
-		if !r.rateLimiter.Allow(srcIP) {
-			return // Rate-limited, skip response
-		}
+	if !r.allowSource(srcAddr) {
+		return // Rate-limited, skip response
 	}
 
-	// RFC 6762 §5.4: Check QU bit (bit 15 of QCLASS) to determine unicast vs multicast
-	// Task 4: QU bit handling
-	quBit := (question.QCLASS & 0x8000) != 0
-
 	var dest net.Addr
-	if quBit {
-		// RFC 6762 §5.4: QU bit set → send unicast response to querier
+	if legacy || allQU {
+		// RFC 6762 §6.7: legacy query → unicast to the source address and port.
+		// RFC 6762 §5.4: QU bit set → send unicast response to querier.
 		dest = srcAddr
 	} else if ipv6Network {
 		dest = protocol.MulticastGroupIPv6()
@@ -342,9 +444,145 @@ func (r *Responder) respondToQuery(tr transport.Transport, ipv6Network bool, mat
 		dest = nil // nil = multicast to 224.0.0.251:5353
 	}
 
-	// Send response
-	responsePacket := buildResponsePacket(response)
-	_ = tr.Send(r.ctx, responsePacket, dest)
+	// Send response. Legacy unicast is one conventional DNS reply (TC keeps its
+	// unicast meaning there). Multicast replies MUST have TC clear (§18.5) and
+	// are split so each packet fits the MTU (§17, §7.2).
+	if legacy {
+		if packet, err := message.SerializeMessage(response); err == nil {
+			_ = tr.Send(r.ctx, packet, dest)
+		}
+		return
+	}
+	response.Header.Flags &^= 0x0200
+	for _, part := range splitResponse(response, maxMulticastPayload) {
+		if packet, err := message.SerializeMessage(part); err == nil {
+			_ = tr.Send(r.ctx, packet, dest)
+		}
+	}
+}
+
+// maxMulticastPayload keeps an mDNS packet inside a 1500-byte Ethernet MTU
+// with IPv6 (40) and UDP (8) headers and some margin. RFC 6762 §17: a packet
+// larger than the MTU "MUST NOT contain more than one resource record".
+const maxMulticastPayload = 1440
+
+// recordWireSize is the uncompressed wire size of a resource record.
+func recordWireSize(a message.Answer) int {
+	name, err := message.EncodeDomainName(a.NAME)
+	if err != nil {
+		return 1 + len(a.NAME) + 1 + 10 + len(a.RDATA) // upper bound
+	}
+	return len(name) + 10 + len(a.RDATA)
+}
+
+// splitResponse splits msg into packets whose payload is at most limit bytes.
+// Answers are kept whole and in order; additionals fill the remaining space
+// and are dropped when they do not fit (they are optional, RFC 6762 §6). A
+// single answer larger than limit is sent alone.
+func splitResponse(msg *message.DNSMessage, limit int) []*message.DNSMessage {
+	const headerSize = 12
+	newPart := func() *message.DNSMessage {
+		return &message.DNSMessage{Header: message.DNSHeader{ID: msg.Header.ID, Flags: msg.Header.Flags}}
+	}
+	parts := []*message.DNSMessage{newPart()}
+	size := headerSize
+	for _, a := range msg.Answers {
+		n := recordWireSize(a)
+		cur := parts[len(parts)-1]
+		if len(cur.Answers) > 0 && size+n > limit {
+			cur = newPart()
+			parts = append(parts, cur)
+			size = headerSize
+		}
+		cur.Answers = append(cur.Answers, a)
+		size += n
+	}
+	cur := parts[len(parts)-1]
+	for _, a := range msg.Additionals {
+		if n := recordWireSize(a); size+n <= limit {
+			cur.Additionals = append(cur.Additionals, a)
+			size += n
+		}
+	}
+	for _, p := range parts {
+		// #nosec G115 -- each part holds a subset of msg's uint16-bounded sections.
+		p.Header.ANCount, p.Header.ARCount = uint16(len(p.Answers)), uint16(len(p.Additionals)) //nolint:gosec
+	}
+	return parts
+}
+
+// allowSource applies the per-source-IP rate limit (FR-026) to a reply for
+// srcAddr. It reports true when there is no limiter or no source.
+func (r *Responder) allowSource(srcAddr net.Addr) bool {
+	if r.rateLimiter == nil || srcAddr == nil {
+		return true
+	}
+	srcIP := srcAddr.String()
+	if udpAddr, ok := srcAddr.(*net.UDPAddr); ok {
+		srcIP = udpAddr.IP.String()
+	}
+	return r.rateLimiter.Allow(srcIP)
+}
+
+// mergeResponse appends part's records to response, skipping records already
+// present. A record that is an answer is not repeated as an additional.
+func mergeResponse(response, part *message.DNSMessage) {
+	key := func(a message.Answer) string {
+		return strings.ToLower(a.NAME) + "|" + strconv.Itoa(int(a.TYPE)) + "|" + string(a.RDATA)
+	}
+	seen := make(map[string]bool, len(response.Answers)+len(response.Additionals))
+	for _, a := range response.Answers {
+		seen[key(a)] = true
+	}
+	for _, a := range part.Answers {
+		if !seen[key(a)] {
+			seen[key(a)] = true
+			response.Answers = append(response.Answers, a)
+		}
+	}
+	for _, a := range response.Additionals {
+		seen[key(a)] = true
+	}
+	for _, a := range part.Additionals {
+		if !seen[key(a)] {
+			seen[key(a)] = true
+			response.Additionals = append(response.Additionals, a)
+		}
+	}
+	// A later question may have promoted an earlier additional to an answer.
+	inAnswers := make(map[string]bool, len(response.Answers))
+	for _, a := range response.Answers {
+		inAnswers[key(a)] = true
+	}
+	kept := response.Additionals[:0]
+	for _, a := range response.Additionals {
+		if !inAnswers[key(a)] {
+			kept = append(kept, a)
+		}
+	}
+	response.Additionals = kept
+}
+
+// legacyUnicastMaxTTL is the TTL cap for legacy unicast responses
+// (RFC 6762 §6.7: "SHOULD NOT be greater than ten seconds").
+const legacyUnicastMaxTTL = 10
+
+// makeLegacyUnicastResponse turns response into a conventional unicast DNS
+// response to query per RFC 6762 §6.7: it repeats the query ID and questions,
+// clears the cache-flush bit, and caps TTLs at ten seconds.
+func makeLegacyUnicastResponse(response, query *message.DNSMessage) {
+	response.Header.ID = query.Header.ID // RFC 6762 §18.1
+	response.Questions = append([]message.Question(nil), query.Questions...)
+	// #nosec G115 -- the query was parsed from a uint16 QDCOUNT.
+	response.Header.QDCount = uint16(len(response.Questions)) //nolint:gosec
+	for _, section := range [][]message.Answer{response.Answers, response.Additionals} {
+		for i := range section {
+			section[i].CLASS &^= 0x8000 // cache-flush bit MUST NOT be set
+			if section[i].TTL > legacyUnicastMaxTTL {
+				section[i].TTL = legacyUnicastMaxTTL
+			}
+		}
+	}
 }
 
 func ipBytes(ips []net.IP) [][]byte {
@@ -360,25 +598,4 @@ func ipBytes(ips []net.IP) [][]byte {
 // parseMessage is a wrapper around message.ParseMessage for easier imports.
 func parseMessage(packet []byte) (*message.DNSMessage, error) {
 	return message.ParseMessage(packet)
-}
-
-// buildResponsePacket serializes a DNSMessage to wire format using message.SerializeMessage.
-//
-// RFC 1035 §4.1: Converts the complete DNSMessage struct (header, questions,
-// answers, authority, additional sections) into wire-format bytes.
-func buildResponsePacket(msg *message.DNSMessage) []byte {
-	data, err := message.SerializeMessage(msg)
-	if err != nil {
-		// Serialization failed - return minimal valid DNS response header
-		// so the responder doesn't crash on unexpected serialization errors
-		return []byte{
-			0x00, 0x00, // ID
-			0x84, 0x00, // Flags (QR=1, AA=1)
-			0x00, 0x00, // QDCount
-			0x00, 0x00, // ANCount
-			0x00, 0x00, // NSCount
-			0x00, 0x00, // ARCount
-		}
-	}
-	return data
 }
