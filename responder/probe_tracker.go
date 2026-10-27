@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/joshuafuller/beacon/internal/message"
+	"github.com/joshuafuller/beacon/internal/protocol"
 	"github.com/joshuafuller/beacon/internal/state"
 )
 
@@ -120,11 +121,41 @@ func (t *probeTracker) onProbe(msg *message.DNSMessage) {
 					ours = append(ours, tiebreakRecord{class: uint16(rr.Class) &^ 0x8000, rrtype: uint16(rr.Type), rdata: rr.Data})
 				}
 			}
+			ours, theirs = dropDependentTXT(ours, theirs)
 			if len(theirs) > 0 && compareTiebreak(ours, theirs) < 0 {
 				s.send(state.ProbeEvent{Name: name, LostTiebreak: true})
 			}
 		}
 	}
+}
+
+// dropDependentTXT removes TXT records from both sets when we probe an SRV
+// for the name. A DNS-SD service's TXT record depends on its SRV record for
+// conflict detection (Apple mDNSResponder marks it DependentOn the SRV), so
+// the SRV alone decides the tiebreak. Without this, a peer whose probe
+// carries only the SRV (as Apple's BCT does) makes our TXT (type 16) sort
+// before its SRV (type 33) and we wrongly "lose" (BCT II.5).
+func dropDependentTXT(ours, theirs []tiebreakRecord) ([]tiebreakRecord, []tiebreakRecord) {
+	hasSRV := false
+	for _, r := range ours {
+		if r.rrtype == uint16(protocol.RecordTypeSRV) {
+			hasSRV = true
+			break
+		}
+	}
+	if !hasSRV {
+		return ours, theirs
+	}
+	keep := func(rs []tiebreakRecord) []tiebreakRecord {
+		out := rs[:0:0]
+		for _, r := range rs {
+			if r.rrtype != uint16(protocol.RecordTypeTXT) {
+				out = append(out, r)
+			}
+		}
+		return out
+	}
+	return keep(ours), keep(theirs)
 }
 
 type tiebreakRecord struct {

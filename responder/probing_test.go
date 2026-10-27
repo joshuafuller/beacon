@@ -227,3 +227,36 @@ func TestRenameHost(t *testing.T) {
 		t.Errorf("second rename = %q", got)
 	}
 }
+
+// BCT II.5 (SRV probing): BCT's simultaneous probe carries only an SRV
+// record. Our probe proposes SRV and TXT. The TXT record depends on the SRV
+// (as in Apple's mDNSResponder), so the tiebreak is decided by the SRV: our
+// port 8080 beats their 8079, and we must not defer.
+func TestTiebreak_TXTDependsOnSRV_WinOnSRV(t *testing.T) {
+	r, mt := newConformanceResponder(t)
+	svc := &Service{InstanceName: "Alpha", ServiceType: "_http._tcp.local", Port: 8080}
+	done := registerAsync(t, r, mt, svc, func() {
+		q := buildTestQuery(t, 0, testQuestion{"Alpha._http._tcp.local", 255})
+		q[9] = 1 // NSCOUNT = 1
+		enc, _ := message.EncodeDomainName("Alpha._http._tcp.local")
+		target, _ := message.EncodeName("myhost.local")
+		rdata := append([]byte{0, 0, 0, 0, 0x1f, 0x8f}, target...) // port 8079
+		q = append(q, enc...)
+		q = binary.BigEndian.AppendUint16(q, uint16(protocol.RecordTypeSRV))
+		q = binary.BigEndian.AppendUint16(q, 1)
+		q = binary.BigEndian.AppendUint32(q, 120)
+		q = binary.BigEndian.AppendUint16(q, uint16(len(rdata)))
+		q = append(q, rdata...)
+		_ = r.handleQuery(mt, q, otherHost, 0)
+	})
+	waitDone(t, done)
+	probes := 0
+	for _, c := range mt.SendCalls() {
+		if m, err := message.ParseMessage(c.Packet); err == nil && !m.Header.IsResponse() {
+			probes++
+		}
+	}
+	if probes != 3 || svc.InstanceName != "Alpha" {
+		t.Errorf("probes=%d name=%q, want 3 probes and Alpha kept (we win on SRV)", probes, svc.InstanceName)
+	}
+}
