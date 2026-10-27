@@ -78,18 +78,14 @@ Each answer must have TTL 10, the `aa` flag and no cache-flush bit.
 
 ## Known gaps BCT is likely to report
 
-Tracked for the next release (see the PR/issue that adds BCT readiness):
+The BCT-readiness changes cover probing with host name and Authority section,
+conflict and tiebreak handling, the 15-in-10s rate limit, re-probing after
+announcement, ANY queries, shared-reply delay and aggregation, the TC wait and
+IP TTL 255. Not covered yet (a real BCT run is still to be done):
 
-- The host name is not probed, and probes carry no Authority section, so BCT
-  may not recognise them as probes (II.1, RFC 6762 §8.1).
-- Conflicts are not detected during probing on a real network, nor after
-  announcement (II.2, II.6, RFC 6762 §8.1, §9).
-- Registration gives up after 10 renames; BCT denies more than 15 (II.3).
-- Shared (PTR) answers are not delayed 20-120 ms and back-to-back queries are
-  not aggregated (II.8, II.15); TC queries are not held 400-500 ms (II.10).
-- Type ANY (255) queries are not answered (II.7, II.8).
-- mDNS packets use the OS default IP TTL, not 255 (III.3, warning).
-- No hot-plug handling (II.17): run with `-M h`.
+- No hot-plug handling (II.17): Beacon does not watch for link down/up and
+  re-probe. Run with `-M h`.
+- Phase I is the operating system's link-local addressing (see above).
 
 ## Manual name change (II.16)
 
