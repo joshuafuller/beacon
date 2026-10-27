@@ -76,16 +76,31 @@ dig -p 5353 @<device-ip> _services._dns-sd._udp.local PTR
 
 Each answer must have TTL 10, the `aa` flag and no cache-flush bit.
 
-## Known gaps BCT is likely to report
+## Result
 
-The BCT-readiness changes cover probing with host name and Authority section,
-conflict and tiebreak handling, the 15-in-10s rate limit, re-probing after
-announcement, ANY queries, shared-reply delay and aggregation, the TC wait and
-IP TTL 255. Not covered yet (a real BCT run is still to be done):
+BCT 1.5.4, run with `-I en1 -M -N c` (all mDNS subtests, including
+hot-plugging; network interoperability without the 24-hour chattiness test):
 
-- No hot-plug handling (II.17): Beacon does not watch for link down/up and
-  re-probe. Run with `-M h`.
-- Phase I is the operating system's link-local addressing (see above).
+- Multicast DNS: **PASSED with 0 warnings** (47 checks, II.1-II.17).
+- Network Interoperability: unicast interoperability, mDNS IP TTL, duplicate
+  and additional-record checks passed; chattiness skipped.
+- Link-Local Address Allocation (Phase I) not run: it tests the device
+  operating system, not Beacon.
+
+## Pitfalls seen setting up the test
+
+- **The Mac must send and receive multicast on the test interface.** With a
+  second interface (for example a NAT interface for remote access), macOS can
+  route 224.0.0.0/4 and 169.254/16 to it. BCT then sees ARP from the device
+  but no mDNS at all ("Receive New Probe: Timeout") for *any* device. Check
+  `route -n get 224.0.0.251` shows the test interface.
+- BCT starts its mDNS tests after it sees the device's RFC 3927 ARP probes and
+  announcement. A device with a static address must send them (for example
+  `arping -D` then `arping -U`) when it "powers on" and after the cable is
+  replugged.
+- For hot-plugging, the address should come back only after the ARP probes,
+  as on a real link-local device; Beacon re-probes once an up link has an
+  IPv4 address.
 
 ## Manual name change (II.16)
 
