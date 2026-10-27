@@ -233,20 +233,46 @@ func fromInternalService(s *responder.Service) *Service {
 //
 // T037: Marked as deprecated for response building (007-interface-specific-addressing)
 func getLocalIPv4() ([]byte, error) {
-	addrs, err := net.InterfaceAddrs()
+	ifaces, err := net.Interfaces()
 	if err != nil {
 		return nil, err
 	}
+	cands := make([]ifaceAddrs, 0, len(ifaces))
+	for _, iface := range ifaces {
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		cands = append(cands, ifaceAddrs{flags: iface.Flags, addrs: addrs})
+	}
+	return pickIPv4(cands)
+}
 
-	for _, addr := range addrs {
-		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			if ipv4 := ipnet.IP.To4(); ipv4 != nil {
-				return ipv4, nil
+// ifaceAddrs is one interface's flags and addresses (testable input for
+// pickIPv4).
+type ifaceAddrs struct {
+	flags net.Flags
+	addrs []net.Addr
+}
+
+// pickIPv4 returns the first IPv4 address on an interface that is up, can
+// multicast and is not a loopback interface. Checking the interface, not
+// only the address, matters: WSL puts 10.255.255.254 on lo, which other
+// hosts cannot reach (#56).
+func pickIPv4(cands []ifaceAddrs) ([]byte, error) {
+	for _, c := range cands {
+		if c.flags&net.FlagUp == 0 || c.flags&net.FlagLoopback != 0 || c.flags&net.FlagMulticast == 0 {
+			continue
+		}
+		for _, addr := range c.addrs {
+			if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+				if ipv4 := ipnet.IP.To4(); ipv4 != nil {
+					return ipv4, nil
+				}
 			}
 		}
 	}
-
-	return nil, fmt.Errorf("no non-loopback IPv4 address found")
+	return nil, fmt.Errorf("no IPv4 address on an up, multicast-capable, non-loopback interface")
 }
 
 // getIPv4ForInterface returns the IPv4 address assigned to the specified network interface.
