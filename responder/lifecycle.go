@@ -5,6 +5,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"net"
+	"time"
 
 	beaconerrors "github.com/joshuafuller/beacon/internal/errors"
 	"github.com/joshuafuller/beacon/internal/message"
@@ -21,6 +22,11 @@ import (
 //
 // FR-032: System MUST handle registration failures gracefully
 const maxRenameAttempts = 10
+
+// maxNetworkRenameAttempts bounds renames caused by real conflicts. RFC 6762
+// §8.1 rate-limits rather than caps probing; BCT II.3 denies more than 15
+// probes in a row, so the cap must be well above that.
+const maxNetworkRenameAttempts = 256
 
 // Register registers a service with probing and announcing per RFC 6762 §8.
 //
@@ -41,6 +47,12 @@ const maxRenameAttempts = 10
 // Returns:
 //   - error: validation error, conflict error, max attempts error, or context error
 func (r *Responder) Register(service *Service) error {
+	return r.register(r.runCtx(), service)
+}
+
+// register is Register with a context that can stop it (Close, or a
+// cancelled re-probe).
+func (r *Responder) register(ctx context.Context, service *Service) error {
 	if service == nil {
 		return fmt.Errorf("service cannot be nil")
 	}
@@ -50,9 +62,10 @@ func (r *Responder) Register(service *Service) error {
 		return err
 	}
 
-	// Set hostname if not provided
-	if service.Hostname == "" {
-		service.Hostname = r.hostname
+	// The service follows the responder's host name unless the caller set one.
+	followsHost := service.Hostname == ""
+	if followsHost {
+		service.Hostname = r.hostName()
 	}
 
 	// Get local IPv4 address (simplified - use first non-loopback)
@@ -61,10 +74,17 @@ func (r *Responder) Register(service *Service) error {
 		return fmt.Errorf("failed to get local IPv4: %w", err)
 	}
 
-	// RFC 6762 §9: Rename loop on conflict (max 10 attempts)
-	// Attempt probing up to maxRenameAttempts times
-	for attempt := 1; attempt <= maxRenameAttempts; attempt++ {
-		// Build record set for this service (with current name)
+	// RFC 6762 §8.1, §9: probe, and on conflict rename what conflicted and
+	// probe again. Injected test conflicts stop after maxRenameAttempts; real
+	// conflicts are rate-limited (15 in 10 s → 5 s apart) and stop after
+	// maxNetworkRenameAttempts or when the responder closes.
+	renames, deferrals := 0, 0
+	for attempt := 1; ; attempt++ {
+		if err := r.waitProbeRateLimit(ctx); err != nil {
+			return err
+		}
+
+		// Build record set for this service (with current names)
 		serviceInfo := buildServiceInfo(service.InstanceName, service.ServiceType,
 			service.Hostname, service.Port, ipv4, service.TXTRecords)
 		recordSet := records.BuildRecordSet(serviceInfo)
@@ -73,22 +93,47 @@ func (r *Responder) Register(service *Service) error {
 		r.lastAnnouncedRecords = recordSet
 
 		serviceName := service.InstanceName + "." + service.ServiceType
-		finalState, err := r.runProbeAndAnnounce(recordSet, serviceName)
+		probeHost := followsHost && !r.isHostEstablished()
+		session := r.probes.start(probeSetFor(serviceName, service.Hostname, probeHost, recordSet))
+		finalState, result, err := r.runProbeAndAnnounce(ctx, recordSet, serviceName, session)
+		r.probes.stop(session)
 		if err != nil {
 			return err
 		}
 
 		if finalState == state.StateConflictDetected {
-			// Conflict detected - rename and retry (unless max attempts reached)
-			if attempt >= maxRenameAttempts {
-				// Max attempts exceeded - give up
-				return fmt.Errorf("max rename attempts (%d) exceeded for service %q",
-					maxRenameAttempts, service.InstanceName)
+			if result.Deferred {
+				// RFC 6762 §8.2: lost a simultaneous-probe tiebreak. Wait one
+				// second and probe again with the same names. Deferrals count
+				// toward the §8.1 rate limit and have their own cap, so a host
+				// that keeps winning tiebreaks cannot keep us probing (#53).
+				r.noteConflict()
+				deferrals++
+				if deferrals >= maxNetworkRenameAttempts {
+					return fmt.Errorf("max rename attempts (%d) exceeded for service %q: lost every probe tiebreak", maxNetworkRenameAttempts, service.InstanceName)
+				}
+				if err := r.sleep(ctx, time.Second); err != nil {
+					return err
+				}
+				continue
+			}
+			renames++
+			limit := maxNetworkRenameAttempts
+			if result.ConflictName == "" { // injected test conflict
+				limit = maxRenameAttempts
+			} else {
+				r.noteConflict()
+			}
+			if renames >= limit {
+				return fmt.Errorf("max rename attempts (%d) exceeded for service %q", limit, service.InstanceName)
 			}
 
-			// Rename service and try again
-			service.Rename() // Appends "-2", "-3", etc.
-			continue         // Retry with new name
+			if probeHost && namesEqual(result.ConflictName, service.Hostname) {
+				service.Hostname = r.renameHost(service.Hostname) // "myhost-2.local"
+			} else {
+				service.Rename() // Appends "-2", "-3", etc.
+			}
+			continue // Retry with new name
 		}
 
 		if finalState != state.StateEstablished {
@@ -97,31 +142,41 @@ func (r *Responder) Register(service *Service) error {
 			return fmt.Errorf("unexpected final state: %v", finalState) // nosemgrep: beacon-error-wrap-percent-v
 		}
 
+		// A cancelled re-probe (Unregister or Close) must not register (#54).
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		// Success! Add to registry
 		// US5: toInternalService carries TXT records for UpdateService support
 		if err := r.registry.Register(toInternalService(service)); err != nil {
 			return fmt.Errorf("failed to add to registry: %w", err)
 		}
+		if probeHost {
+			r.setHostEstablished(true)
+		}
 
 		return nil // Successfully registered
 	}
-
-	// Should never reach here (loop returns on success or max attempts)
-	return fmt.Errorf("unexpected: register loop completed without result")
 }
 
 // runProbeAndAnnounce builds a state machine for recordSet/serviceName, wires
 // the transport and any test hooks, runs the probing + announcing sequence
 // (RFC 6762 §8), and returns the resulting state.
-func (r *Responder) runProbeAndAnnounce(recordSet []*message.ResourceRecord, serviceName string) (state.State, error) {
+func (r *Responder) runProbeAndAnnounce(ctx context.Context, recordSet []*message.ResourceRecord, serviceName string, session *probeSession) (state.State, state.ProbeResult, error) {
 	machine := state.NewMachine()
+	if session != nil {
+		// RFC 6762 §8.1/§8.2: real probes with an Authority section; conflicts
+		// and tiebreaks arrive from the query handler.
+		machine.GetProber().SetProbeSet(session.set, session.events)
+	}
 
 	// Wire transport so probes and announcements are sent in every configured
 	// .local zone (RFC 6762 §20).
 	registrationTransport, err := r.registrationTransport(recordSet)
 	if err != nil {
 		var zero state.State
-		return zero, fmt.Errorf("build registration transport: %w", err)
+		return zero, state.ProbeResult{}, fmt.Errorf("build registration transport: %w", err)
 	}
 	machine.SetTransport(registrationTransport)
 
@@ -151,12 +206,12 @@ func (r *Responder) runProbeAndAnnounce(recordSet []*message.ResourceRecord, ser
 	}
 
 	// Run state machine (probing + announcing)
-	if err := machine.Run(r.ctx, serviceName); err != nil {
+	if err := machine.Run(ctx, serviceName); err != nil {
 		var zero state.State
-		return zero, fmt.Errorf("state machine failed: %w", err)
+		return zero, state.ProbeResult{}, fmt.Errorf("state machine failed: %w", err)
 	}
 
-	return machine.GetState(), nil
+	return machine.GetState(), machine.GetProber().LastResult(), nil
 }
 
 // registrationMulticastTransport mirrors state-machine lifecycle sends into
@@ -329,6 +384,24 @@ func lookupLifecycleAddressesWith(
 //
 // T042: Implement Unregister() with goodbye packets
 func (r *Responder) Unregister(serviceID string) error {
+	// Block and stop any RFC 6762 §9 re-probe of this service for the whole
+	// call, so a conflict cannot bring it back (#54). The service ID may be
+	// the instance name or the full "<instance>.<type>" name.
+	instance := serviceID
+	if svc, found := r.GetService(serviceID); found {
+		instance = svc.InstanceName
+	} else if reprobing, ok := r.reprobingInstance(serviceID); ok {
+		instance = reprobing
+	}
+	wasReprobing := r.beginUnregister(instance)
+	defer r.endUnregister(instance)
+	r.dropLinkPending(serviceID)
+	if wasReprobing {
+		if _, found := r.GetService(serviceID); !found {
+			return nil // it was out of the registry while re-probing
+		}
+	}
+
 	// Lookup service to get instance name (handles both full ID and instance name)
 	svc, found := r.GetService(serviceID)
 	if !found {
@@ -345,7 +418,7 @@ func (r *Responder) Unregister(serviceID string) error {
 
 	// Build goodbye records with TTL=0 (RFC 6762 §10.1)
 	serviceInfo := buildServiceInfo(svc.InstanceName, svc.ServiceType,
-		r.hostname, svc.Port, ipv4, svc.TXTRecords)
+		r.hostName(), svc.Port, ipv4, svc.TXTRecords)
 	goodbyeRecords := records.BuildGoodbyeRecords(serviceInfo)
 
 	// Build and send goodbye packet
@@ -366,6 +439,27 @@ func (r *Responder) Unregister(serviceID string) error {
 	}
 
 	return nil
+}
+
+// Services returns copies of all registered services with their current
+// names.
+//
+// A name conflict found after registration (RFC 6762 §9) can rename a
+// service in the background ("My Service" → "My Service-2"). RFC 6763
+// Appendix C asks that the user be told the new name; Services is how a
+// caller finds it. A service being re-probed is briefly absent.
+//
+// Returns:
+//   - []*Service: one copy per registered service, in no particular order
+func (r *Responder) Services() []*Service {
+	names := r.registry.List()
+	out := make([]*Service, 0, len(names))
+	for _, name := range names {
+		if svc, ok := r.registry.Get(name); ok {
+			out = append(out, fromInternalService(svc))
+		}
+	}
+	return out
 }
 
 // GetService retrieves a registered service by service ID.
@@ -450,7 +544,7 @@ func (r *Responder) UpdateService(serviceID string, txtRecords map[string]string
 	}
 
 	serviceInfo := buildServiceInfo(svc.InstanceName, svc.ServiceType,
-		r.hostname, svc.Port, ipv4, txtRecords)
+		r.hostName(), svc.Port, ipv4, txtRecords)
 	announcedRecords := records.BuildRecordSet(serviceInfo)
 
 	// Convert to message.ResourceRecord for BuildResponse

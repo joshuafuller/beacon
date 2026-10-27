@@ -21,12 +21,13 @@ func newConformanceResponder(t *testing.T, instances ...string) (*Responder, *tr
 	t.Helper()
 	mt := transport.NewMockTransport()
 	r := &Responder{
-		ctx:             context.Background(),
-		transport:       mt,
-		registry:        iresp.NewRegistry(),
-		hostname:        "myhost.local",
-		responseBuilder: iresp.NewResponseBuilder(),
-		rateLimiter:     security.NewRateLimiter(100, 60*time.Second, 10000),
+		ctx:              context.Background(),
+		transport:        mt,
+		registry:         iresp.NewRegistry(),
+		hostname:         "myhost.local",
+		responseBuilder:  iresp.NewResponseBuilder(),
+		rateLimiter:      security.NewRateLimiter(100, 60*time.Second, 10000),
+		queryHandlerDone: make(chan struct{}),
 	}
 	for _, name := range instances {
 		svc := &Service{InstanceName: name, ServiceType: "_http._tcp.local", Port: 80}
@@ -92,6 +93,7 @@ func answersOfType(msgs []*message.DNSMessage, rrtype uint16) []message.Answer {
 func TestHandleQuery_PTRBrowse_ReturnsEveryInstance(t *testing.T) {
 	r, mt := newConformanceResponder(t, "Alpha", "Bravo")
 	_ = r.handleQuery(mt, buildTestQuery(t, 0, testQuestion{"_http._tcp.local", 12}), mdnsSource, 0)
+	flushResponses(r)
 
 	msgs, _ := sentMessages(t, mt)
 	if len(msgs) != 1 {
@@ -117,6 +119,7 @@ func TestHandleQuery_SecondQuestionAnswered(t *testing.T) {
 	r, mt := newConformanceResponder(t, "Alpha")
 	q := buildTestQuery(t, 0, testQuestion{"other.local", 1}, testQuestion{"_http._tcp.local", 12})
 	_ = r.handleQuery(mt, q, mdnsSource, 0)
+	flushResponses(r)
 
 	msgs, _ := sentMessages(t, mt)
 	if len(answersOfType(msgs, 12)) != 1 {
@@ -128,6 +131,7 @@ func TestHandleQuery_SecondQuestionAnswered(t *testing.T) {
 func TestHandleQuery_NoAnswers_SendsNothing(t *testing.T) {
 	r, mt := newConformanceResponder(t, "Alpha")
 	_ = r.handleQuery(mt, buildTestQuery(t, 0, testQuestion{"other.local", 1}), mdnsSource, 0)
+	flushResponses(r)
 	if n := len(mt.SendCalls()); n != 0 {
 		t.Errorf("sent %d packets for a query we cannot answer, want 0", n)
 	}
@@ -137,6 +141,7 @@ func TestHandleQuery_NoAnswers_SendsNothing(t *testing.T) {
 func TestHandleQuery_MulticastResponse_HasZeroID(t *testing.T) {
 	r, mt := newConformanceResponder(t, "Alpha")
 	_ = r.handleQuery(mt, buildTestQuery(t, 0x1234, testQuestion{"_http._tcp.local", 12}), mdnsSource, 0)
+	flushResponses(r)
 
 	_, calls := sentMessages(t, mt)
 	if len(calls) != 1 {
@@ -161,6 +166,7 @@ func TestHandleQuery_NamesMatchCaseInsensitively(t *testing.T) {
 	for _, tq := range tests {
 		r, mt := newConformanceResponder(t, "Alpha")
 		_ = r.handleQuery(mt, buildTestQuery(t, 0, tq), mdnsSource, 0)
+		flushResponses(r)
 		msgs, _ := sentMessages(t, mt)
 		if len(answersOfType(msgs, tq.qtype)) == 0 {
 			t.Errorf("query %s type %d: no answer", tq.name, tq.qtype)
@@ -234,6 +240,7 @@ func TestHandleQuery_AllKnownAnswers_SendsNothing(t *testing.T) {
 	q = append(q, target...)
 
 	_ = r.handleQuery(mt, q, mdnsSource, 0)
+	flushResponses(r)
 	if n := len(mt.SendCalls()); n != 0 {
 		t.Errorf("sent %d packets although the only answer is known, want 0", n)
 	}

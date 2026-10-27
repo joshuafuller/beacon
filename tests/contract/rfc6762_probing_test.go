@@ -3,6 +3,7 @@ package contract
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"testing"
 	"time"
 
@@ -25,7 +26,7 @@ func TestRFC6762_Probing_ThreeQueries(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	r, err := responder.New(ctx)
+	r, err := responder.New(ctx, responder.WithHostname(uniqueHostname()))
 	if err != nil {
 		t.Fatalf("responder.New() error = %v, want nil", err)
 	}
@@ -101,7 +102,7 @@ func TestRFC6762_Probing_250msInterval(t *testing.T) {
 // T028: Test probe message format compliance
 func TestRFC6762_Probing_QueryFormat(t *testing.T) {
 	ctx := context.Background()
-	r, err := responder.New(ctx)
+	r, err := responder.New(ctx, responder.WithHostname(uniqueHostname()))
 	if err != nil {
 		t.Fatalf("responder.New() error = %v, want nil", err)
 	}
@@ -154,7 +155,7 @@ func TestRFC6762_Probing_QueryFormat(t *testing.T) {
 // T028: Test conflict detection during probing
 func TestRFC6762_Probing_ConflictDetection(t *testing.T) {
 	ctx := context.Background()
-	r, err := responder.New(ctx)
+	r, err := responder.New(ctx, responder.WithHostname(uniqueHostname()))
 	if err != nil {
 		t.Fatalf("responder.New() error = %v, want nil", err)
 	}
@@ -191,7 +192,7 @@ func TestRFC6762_Probing_ConflictDetection(t *testing.T) {
 // T028: Test tie-breaking for simultaneous probes
 func TestRFC6762_Probing_TieBreaking(t *testing.T) {
 	ctx := context.Background()
-	r, err := responder.New(ctx)
+	r, err := responder.New(ctx, responder.WithHostname(uniqueHostname()))
 	if err != nil {
 		t.Fatalf("responder.New() error = %v, want nil", err)
 	}
@@ -222,4 +223,12 @@ func TestRFC6762_Probing_TieBreaking(t *testing.T) {
 	if registered == nil {
 		t.Error("registered service is nil")
 	}
+}
+
+// uniqueHostname returns a host name nobody else on the test network owns.
+// Without it the probe counts depend on the network: on Windows/WSL, Windows
+// itself answers for "<PC name>.local", and Beacon correctly renames its host
+// (RFC 6762 §9), adding a probe round.
+func uniqueHostname() string {
+	return fmt.Sprintf("beacon-contract-%d.local", time.Now().UnixNano())
 }

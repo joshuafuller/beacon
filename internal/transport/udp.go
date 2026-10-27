@@ -83,6 +83,12 @@ func NewUDPv4Transport() (*UDPv4Transport, error) {
 	// This allows extracting interface index from IP_PKTINFO (Linux) or IP_RECVIF (macOS/BSD)
 	ipv4Conn := ipv4.NewPacketConn(conn)
 
+	// RFC 6762 §11: mDNS packets SHOULD be sent with IP TTL 255 so receivers can
+	// tell on-link traffic from forwarded traffic (BCT III.3). Best effort: a
+	// platform that refuses keeps its default TTL.
+	_ = ipv4Conn.SetMulticastTTL(255)
+	_ = ipv4Conn.SetTTL(255)
+
 	// T009: Enable interface index in control messages (RFC 6762 §15 compliance)
 	// Platform-specific: IP_PKTINFO on Linux, IP_RECVIF on macOS/BSD
 	// NOTE: This may fail on Windows (not supported). We treat this as non-fatal
@@ -125,6 +131,13 @@ func (t *UDPv4Transport) Send(ctx context.Context, packet []byte, dest net.Addr)
 	}
 
 	// Send query to destination
+	// nil dest means "multicast to the mDNS group" (the responder's convention
+	// for multicast replies). Without this WriteTo fails with EINVAL and no
+	// multicast reply to a query ever reached the network (found by BCT).
+	if dest == nil {
+		dest = protocol.MulticastGroupIPv4()
+	}
+
 	n, err := t.conn.WriteTo(packet, dest)
 	if err != nil {
 		return &errors.NetworkError{

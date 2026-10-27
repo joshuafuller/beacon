@@ -168,12 +168,24 @@ func (r *Responder) handleQueryOnTransport(tr transport.Transport, ipv6Network b
 		return err
 	}
 
-	// Ignore responses (QR=1)
+	// Compare record data without name compression (RFC 6762 §7.1, §8.2, §9).
+	normalizeRDATA(packet, msg.Answers)
+	normalizeRDATA(packet, msg.Authorities)
+	normalizeRDATA(packet, msg.Additionals)
+
+	// Responses are not answered, but they can conflict with names we are
+	// probing (§8.1) or already use (§9).
 	if msg.Header.IsResponse() {
+		r.probes.onResponse(msg)
+		r.checkEstablishedConflicts(msg)
 		return nil
 	}
 
-	normalizeKnownAnswers(packet, msg)
+	// A query with proposed records in its Authority section is another
+	// host's probe: tiebreak against ours (§8.2).
+	if len(msg.Authorities) > 0 {
+		r.probes.onProbe(msg)
+	}
 
 	// Answer every question with every matching service in one response
 	// (RFC 6762 §6; RFC 6763 §4.1: a browse lists all instances of a type).
@@ -195,21 +207,79 @@ func (r *Responder) handleQueryOnTransport(tr transport.Transport, ipv6Network b
 			matched = append(matched, matchedQuestion{question: question, services: services})
 		}
 	}
+	truncated := msg.Header.Flags&0x0200 != 0
 	if len(matched) == 0 {
+		// RFC 6762 §7.2: a known-answer-only packet continues an earlier
+		// truncated query from the same host.
+		if len(msg.Answers) > 0 {
+			r.scheduler.addKnownAnswers(tr, srcAddr, interfaceIndex, msg.Answers, truncated)
+		}
 		return nil
 	}
 
-	r.respondToQuery(tr, ipv6Network, msg, matched, srcAddr, interfaceIndex)
+	r.dispatchResponse(tr, ipv6Network, msg, matched, srcAddr, interfaceIndex, truncated)
 	return nil
 }
 
-// normalizeKnownAnswers rewrites the RDATA of PTR and SRV known answers in
-// msg without name compression. Queriers compress names inside RDATA, and
-// RFC 6762 §7.1 compares records by their decompressed data, so our
-// uncompressed records must be compared against decompressed known answers.
-func normalizeKnownAnswers(packet []byte, msg *message.DNSMessage) {
-	for i := range msg.Answers {
-		a := &msg.Answers[i]
+// dispatchResponse sends the response at once or schedules it, per RFC 6762:
+//   - legacy unicast (§6.7) and all-QU (§5.4) queries: answer at once;
+//   - TC set (§7.2): wait 400-500 ms for more known answers;
+//   - any shared answer (§6): wait 20-120 ms, merging back-to-back queries;
+//   - only unique answers: answer at once (§6), unless a delayed response
+//     to the same querier is pending, which then carries them too.
+func (r *Responder) dispatchResponse(tr transport.Transport, ipv6Network bool, msg *message.DNSMessage,
+	matched []matchedQuestion, srcAddr net.Addr, interfaceIndex int, truncated bool) {
+	allQU := true
+	shared := false
+	for _, m := range matched {
+		if m.question.QCLASS&0x8000 == 0 {
+			allQU = false
+		}
+		if isSharedQuestion(m.question) {
+			shared = true
+		}
+	}
+
+	if isLegacyQuery(srcAddr) || allQU {
+		r.respondToQuery(tr, ipv6Network, msg, matched, srcAddr, interfaceIndex)
+		return
+	}
+
+	switch {
+	case truncated:
+		delay := randomDelay(truncatedDelayMin, truncatedDelayMax)
+		if r.scheduler.schedule(r, tr, ipv6Network, srcAddr, interfaceIndex, matched, msg.Answers, delay, true) {
+			return
+		}
+	case shared:
+		delay := randomDelay(sharedDelayMin, sharedDelayMax)
+		if r.scheduler.schedule(r, tr, ipv6Network, srcAddr, interfaceIndex, matched, msg.Answers, delay, false) {
+			return
+		}
+	default:
+		if r.scheduler.addToPending(tr, srcAddr, interfaceIndex, matched, msg.Answers) {
+			return
+		}
+	}
+	r.respondToQuery(tr, ipv6Network, msg, matched, srcAddr, interfaceIndex)
+}
+
+// isSharedQuestion reports whether question asks for shared records (a PTR
+// record set many hosts may answer, RFC 6762 §6), directly or via ANY.
+func isSharedQuestion(q message.Question) bool {
+	if q.QTYPE == uint16(protocol.RecordTypePTR) {
+		return true
+	}
+	return q.QTYPE == uint16(protocol.RecordTypeANY) && strings.HasPrefix(q.QNAME, "_")
+}
+
+// normalizeRDATA rewrites the RDATA of PTR and SRV records in rrs without
+// name compression. Peers compress names inside RDATA, and RFC 6762 compares
+// records by their decompressed data (§7.1 known answers, §8.2 tiebreaking,
+// §9 conflicts), so they must be compared against our uncompressed records.
+func normalizeRDATA(packet []byte, rrs []message.Answer) {
+	for i := range rrs {
+		a := &rrs[i]
 		switch a.TYPE {
 		case uint16(protocol.RecordTypePTR):
 			data, err := message.ParseRDATAInMessage(a.TYPE, packet, a.RDATAOffset, int(a.RDLENGTH))
@@ -349,10 +419,18 @@ func (r *Responder) findMatchingServices(question message.Question) []*responder
 			if namesEqual(service.InstanceName+"."+service.ServiceType, question.QNAME) {
 				matches = append(matches, service)
 			}
+		case uint16(protocol.RecordTypeANY):
+			// ANY (RFC 1035 §3.2.3): every record we own under the name. Probes
+			// use ANY too, so answering it also defends our names (RFC 6762 §8.1).
+			if namesEqual(service.ServiceType, question.QNAME) ||
+				namesEqual(service.InstanceName+"."+service.ServiceType, question.QNAME) ||
+				namesEqual(r.hostName(), question.QNAME) {
+				matches = append(matches, service)
+			}
 		case uint16(protocol.RecordTypeA), uint16(protocol.RecordTypeAAAA):
 			// A/AAAA: the host records are the same for every service, so one
 			// match is enough (e.g., "myhost.local").
-			if namesEqual(r.hostname, question.QNAME) {
+			if namesEqual(r.hostName(), question.QNAME) {
 				return []*responder.Service{service}
 			}
 		}
@@ -404,7 +482,7 @@ func (r *Responder) respondToQuery(tr transport.Transport, ipv6Network bool, msg
 				IPv4Address:   ipv4,
 				IPv6Addresses: ipv6Addresses,
 				TXTRecords:    svc.TXT, // internal.Service uses TXT field
-				Hostname:      r.hostname,
+				Hostname:      r.hostName(),
 			}
 			part, err := r.responseBuilder.BuildResponseForQuestion(serviceWithIP, msg, m.question)
 			if err != nil {

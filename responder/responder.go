@@ -51,6 +51,23 @@ type Responder struct {
 	recordSet        *records.RecordSet         // Per-record rate limiting tracker
 	rateLimiter      *security.RateLimiter      // Per-source-IP rate limiting (FR-026)
 	queryHandlerDone chan struct{}              // Signal query handler shutdown
+	scheduler        responseScheduler          // Delayed/aggregated multicast responses (RFC 6762 §6, §7.2)
+	probes           probeTracker               // Running probes; fed by the query handler (RFC 6762 §8)
+
+	// Host name state. The host name can change after a conflict (RFC 6762
+	// §9), so it is read through hostName() under hostMu.
+	hostMu          sync.RWMutex
+	hostEstablished bool                   // host name probed and announced (RFC 6762 §8.1)
+	conflictTimes   []time.Time            // recent probe conflicts, for the 15-in-10s rate limit
+	reprobing       map[string]*reprobeJob // running RFC 6762 §9 re-probes, by "svc:<instance>" or "host"
+	reprobeWg       sync.WaitGroup
+	linkPending     []*Service      // services a cancelled link re-probe had not re-registered
+	unregistering   map[string]bool // "svc:<instance>" being unregistered: no re-probe may start
+
+	// lifeCtx is cancelled by Close: probing, deferral waits and re-probes
+	// stop with it. Sends still use ctx so goodbyes go out during Close.
+	lifeCtx    context.Context
+	lifeCancel context.CancelFunc
 
 	// Test-only state. These fields exist solely to support black-box contract
 	// tests (see testhooks.go); they are not part of the responder's runtime
@@ -90,6 +107,7 @@ func New(ctx context.Context, opts ...Option) (*Responder, error) {
 		rateLimiter:      security.NewRateLimiter(100, 60*time.Second, 10000),
 		queryHandlerDone: make(chan struct{}),
 	}
+	r.lifeCtx, r.lifeCancel = context.WithCancel(ctx)
 
 	// Apply options
 	for _, opt := range opts {
@@ -97,6 +115,11 @@ func New(ctx context.Context, opts ...Option) (*Responder, error) {
 			return nil, fmt.Errorf("failed to apply option: %w", err)
 		}
 	}
+
+	// Watch for link changes and probe/announce again (RFC 6762 §8). Close
+	// cancels lifeCtx and waits on reprobeWg.
+	r.reprobeWg.Add(1)
+	go r.runLinkWatcher()
 
 	// Start query handler goroutine(s). IPv6 goroutine starts only when transport6 is set.
 	r.queryHandlerWg.Add(1)
@@ -122,8 +145,16 @@ func New(ctx context.Context, opts ...Option) (*Responder, error) {
 // T043: Implement Close()
 // T080: Stop query handler
 func (r *Responder) Close() error {
-	// Stop query handler goroutine (T080)
+	// Stop query handler goroutine (T080) and drop delayed responses
 	close(r.queryHandlerDone)
+	r.scheduler.close()
+
+	// Stop probing and re-probes; nothing may probe or announce after the
+	// goodbyes below (#54).
+	if r.lifeCancel != nil {
+		r.lifeCancel()
+	}
+	r.cancelReprobes()
 
 	// Unregister all services (sends goodbye packets)
 	services := r.registry.List()
@@ -181,6 +212,21 @@ func buildServiceInfo(instanceName, serviceType, hostname string, port uint16, i
 	}
 }
 
+// runCtx is the context for probing and waits: cancelled by Close.
+func (r *Responder) runCtx() context.Context {
+	if r.lifeCtx != nil {
+		return r.lifeCtx
+	}
+	return r.ctx
+}
+
+// hostName returns the current host name (e.g. "myhost.local").
+func (r *Responder) hostName() string {
+	r.hostMu.RLock()
+	defer r.hostMu.RUnlock()
+	return r.hostname
+}
+
 // toInternalService converts a public Service to the internal registry type.
 func toInternalService(s *Service) *responder.Service {
 	return &responder.Service{
@@ -216,20 +262,46 @@ func fromInternalService(s *responder.Service) *Service {
 //
 // T037: Marked as deprecated for response building (007-interface-specific-addressing)
 func getLocalIPv4() ([]byte, error) {
-	addrs, err := net.InterfaceAddrs()
+	ifaces, err := net.Interfaces()
 	if err != nil {
 		return nil, err
 	}
+	cands := make([]ifaceAddrs, 0, len(ifaces))
+	for _, iface := range ifaces {
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		cands = append(cands, ifaceAddrs{flags: iface.Flags, addrs: addrs})
+	}
+	return pickIPv4(cands)
+}
 
-	for _, addr := range addrs {
-		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			if ipv4 := ipnet.IP.To4(); ipv4 != nil {
-				return ipv4, nil
+// ifaceAddrs is one interface's flags and addresses (testable input for
+// pickIPv4).
+type ifaceAddrs struct {
+	flags net.Flags
+	addrs []net.Addr
+}
+
+// pickIPv4 returns the first IPv4 address on an interface that is up, can
+// multicast and is not a loopback interface. Checking the interface, not
+// only the address, matters: WSL puts 10.255.255.254 on lo, which other
+// hosts cannot reach (#56).
+func pickIPv4(cands []ifaceAddrs) ([]byte, error) {
+	for _, c := range cands {
+		if c.flags&net.FlagUp == 0 || c.flags&net.FlagLoopback != 0 || c.flags&net.FlagMulticast == 0 {
+			continue
+		}
+		for _, addr := range c.addrs {
+			if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+				if ipv4 := ipnet.IP.To4(); ipv4 != nil {
+					return ipv4, nil
+				}
 			}
 		}
 	}
-
-	return nil, fmt.Errorf("no non-loopback IPv4 address found")
+	return nil, fmt.Errorf("no IPv4 address on an up, multicast-capable, non-loopback interface")
 }
 
 // getIPv4ForInterface returns the IPv4 address assigned to the specified network interface.

@@ -108,9 +108,12 @@ func (rb *ResponseBuilder) BuildResponseForQuestion(service *ServiceWithIP, quer
 	knownAnswers := rb.convertKnownAnswers(query)
 
 	// For PTR query, answer is PTR record, additional is SRV/TXT/A
-	if question.QTYPE == uint16(protocol.RecordTypePTR) {
+	switch question.QTYPE {
+	case uint16(protocol.RecordTypePTR):
 		rb.populatePTRResponse(response, allRecords, knownAnswers)
-	} else {
+	case uint16(protocol.RecordTypeANY):
+		rb.populateANYResponse(response, allRecords, knownAnswers, question.QNAME)
+	default:
 		rb.populateDirectResponse(response, allRecords, knownAnswers, protocol.RecordType(question.QTYPE))
 	}
 
@@ -236,10 +239,32 @@ func (rb *ResponseBuilder) populatePTRResponse(response *message.DNSMessage, all
 	}
 }
 
+// populateANYResponse answers a type ANY (255) question with every record
+// whose owner name matches name (case-insensitive, RFC 6762 §16).
+func (rb *ResponseBuilder) populateANYResponse(response *message.DNSMessage, allRecords, knownAnswers []*message.ResourceRecord, name string) {
+	for _, rr := range allRecords {
+		if strings.EqualFold(strings.TrimSuffix(rr.Name, "."), strings.TrimSuffix(name, ".")) &&
+			rb.ApplyKnownAnswerSuppression(rr, knownAnswers) {
+			response.Answers = append(response.Answers, rb.recordToAnswer(rr))
+		}
+	}
+}
+
 func (rb *ResponseBuilder) populateDirectResponse(response *message.DNSMessage, allRecords, knownAnswers []*message.ResourceRecord, recordType protocol.RecordType) {
+	answeredSRV := false
 	for _, rr := range allRecords {
 		if rr.Type == recordType && rb.ApplyKnownAnswerSuppression(rr, knownAnswers) {
 			response.Answers = append(response.Answers, rb.recordToAnswer(rr))
+			answeredSRV = answeredSRV || rr.Type == protocol.RecordTypeSRV
+		}
+	}
+	// RFC 6763 §12.2: an SRV answer carries the target host's address
+	// records as additionals, so the querier need not ask again (BCT II.7).
+	if answeredSRV {
+		for _, rr := range allRecords {
+			if (rr.Type == protocol.RecordTypeA || rr.Type == protocol.RecordTypeAAAA) && rb.ApplyKnownAnswerSuppression(rr, knownAnswers) {
+				response.Additionals = append(response.Additionals, rb.recordToAnswer(rr))
+			}
 		}
 	}
 }
@@ -358,10 +383,17 @@ func (rb *ResponseBuilder) truncateAdditionals(msg *message.DNSMessage, currentS
 //
 // T076: Helper for response building
 func (rb *ResponseBuilder) recordToAnswer(rr *message.ResourceRecord) message.Answer {
+	class := uint16(rr.Class)
+	if rr.CacheFlush {
+		// RFC 6762 §10.2: unique records carry the cache-flush bit in
+		// responses (BCT II.7 warns otherwise). Legacy unicast replies clear
+		// it again (§6.7).
+		class |= 0x8000
+	}
 	return message.Answer{
 		NAME:  rr.Name,
 		TYPE:  uint16(rr.Type),
-		CLASS: uint16(rr.Class),
+		CLASS: class,
 		TTL:   rr.TTL,
 		// G115: length validated by validateRecordLengths in BuildResponse before
 		// any record reaches this conversion.

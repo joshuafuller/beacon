@@ -61,6 +61,10 @@ func NewUDPv6Transport() (*UDPv6Transport, error) {
 
 	ipv6Conn := ipv6.NewPacketConn(conn)
 
+	// RFC 6762 §11: hop limit 255 for all mDNS packets (best effort).
+	_ = ipv6Conn.SetMulticastHopLimit(255)
+	_ = ipv6Conn.SetHopLimit(255)
+
 	// Enable interface index in incoming control messages (RFC 6762 §6.2).
 	// Non-fatal on platforms that don't support it; interfaceIndex will be 0.
 	_ = ipv6Conn.SetControlMessage(ipv6.FlagInterface, true)

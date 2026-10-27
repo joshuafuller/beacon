@@ -76,20 +76,31 @@ dig -p 5353 @<device-ip> _services._dns-sd._udp.local PTR
 
 Each answer must have TTL 10, the `aa` flag and no cache-flush bit.
 
-## Known gaps BCT is likely to report
+## Result
 
-Tracked for the next release (see the PR/issue that adds BCT readiness):
+BCT 1.5.4, run with `-I en1 -M -N c` (all mDNS subtests, including
+hot-plugging; network interoperability without the 24-hour chattiness test):
 
-- The host name is not probed, and probes carry no Authority section, so BCT
-  may not recognise them as probes (II.1, RFC 6762 §8.1).
-- Conflicts are not detected during probing on a real network, nor after
-  announcement (II.2, II.6, RFC 6762 §8.1, §9).
-- Registration gives up after 10 renames; BCT denies more than 15 (II.3).
-- Shared (PTR) answers are not delayed 20-120 ms and back-to-back queries are
-  not aggregated (II.8, II.15); TC queries are not held 400-500 ms (II.10).
-- Type ANY (255) queries are not answered (II.7, II.8).
-- mDNS packets use the OS default IP TTL, not 255 (III.3, warning).
-- No hot-plug handling (II.17): run with `-M h`.
+- Multicast DNS: **PASSED with 0 warnings** (47 checks, II.1-II.17).
+- Network Interoperability: unicast interoperability, mDNS IP TTL, duplicate
+  and additional-record checks passed; chattiness skipped.
+- Link-Local Address Allocation (Phase I) not run: it tests the device
+  operating system, not Beacon.
+
+## Pitfalls seen setting up the test
+
+- **The Mac must send and receive multicast on the test interface.** With a
+  second interface (for example a NAT interface for remote access), macOS can
+  route 224.0.0.0/4 and 169.254/16 to it. BCT then sees ARP from the device
+  but no mDNS at all ("Receive New Probe: Timeout") for *any* device. Check
+  `route -n get 224.0.0.251` shows the test interface.
+- BCT starts its mDNS tests after it sees the device's RFC 3927 ARP probes and
+  announcement. A device with a static address must send them (for example
+  `arping -D` then `arping -U`) when it "powers on" and after the cable is
+  replugged.
+- For hot-plugging, the address should come back only after the ARP probes,
+  as on a real link-local device; Beacon re-probes once an up link has an
+  IPv4 address.
 
 ## Manual name change (II.16)
 

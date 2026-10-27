@@ -25,7 +25,7 @@ func testRFC6762Timing(t *testing.T, trackTimes func(*responder.Responder) []tim
 	}
 
 	ctx := context.Background()
-	r, err := responder.New(ctx)
+	r, err := responder.New(ctx, responder.WithHostname(uniqueHostname()))
 	if err != nil {
 		t.Fatalf("responder.New() error = %v, want nil", err)
 	}

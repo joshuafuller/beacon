@@ -14,8 +14,13 @@ import (
 
 // ProbeResult represents the result of probing.
 type ProbeResult struct {
-	Conflict bool  // true if naming conflict detected
-	Error    error // error if probing failed
+	// ConflictName is the probed name that conflicted (empty for injected
+	// test conflicts). Deferred means a lost simultaneous-probe tiebreak:
+	// probe the same names again after one second (RFC 6762 §8.2).
+	ConflictName string
+	Deferred     bool
+	Conflict     bool  // true if naming conflict detected
+	Error        error // error if probing failed
 }
 
 // Prober performs probing per RFC 6762 §8.1.
@@ -28,6 +33,9 @@ type ProbeResult struct {
 // T039: Implement Prober
 // T059: Integrate ConflictDetector with Prober (GREEN phase)
 type Prober struct {
+	probeSet   *ProbeSet         // multi-name probe with Authority section (nil: legacy single-name probe)
+	events     <-chan ProbeEvent // conflicts and tiebreaks seen by the responder
+	lastResult ProbeResult
 	// Transport for sending probe packets on the wire
 	transport transport.Transport
 
@@ -83,6 +91,17 @@ func NewProber() *Prober {
 //
 // T039: Implement probing with 3 queries × 250ms intervals
 func (p *Prober) Probe(ctx context.Context, serviceName string) ProbeResult {
+	if p.probeSet != nil {
+		p.lastResult = p.probeWithSet(ctx)
+		return p.lastResult
+	}
+	p.lastResult = p.probeSingle(ctx, serviceName)
+	return p.lastResult
+}
+
+// probeSingle is the original single-question probe (no Authority section),
+// kept for callers that do not supply a ProbeSet.
+func (p *Prober) probeSingle(ctx context.Context, serviceName string) ProbeResult {
 	const probeCount = 3
 
 	for i := 0; i < probeCount; i++ {
