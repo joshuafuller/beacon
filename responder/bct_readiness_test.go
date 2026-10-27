@@ -250,3 +250,27 @@ func TestScheduler_PendingBounded(t *testing.T) {
 		t.Errorf("%d pending responses, want <= %d", n, maxPendingResponses)
 	}
 }
+
+// BCT II.7 warnings: a reply carries the cache-flush bit on unique records
+// (RFC 6762 §10.2), and an SRV answer carries the target host's address
+// records as additionals (RFC 6763 §12.2).
+func TestHandleQuery_UniqueAnswerHasCacheFlushAndSRVAdditionals(t *testing.T) {
+	r, mt := newConformanceResponder(t, "Alpha")
+	_ = r.handleQuery(mt, buildTestQuery(t, 0, testQuestion{"Alpha._http._tcp.local", 33}), mdnsSource, 0)
+	msgs, _ := sentMessages(t, mt)
+	if len(msgs) != 1 || len(msgs[0].Answers) != 1 {
+		t.Fatalf("got %d packets, want 1 with the SRV answer", len(msgs))
+	}
+	if msgs[0].Answers[0].CLASS&0x8000 == 0 {
+		t.Error("SRV answer has no cache-flush bit")
+	}
+	hasA := false
+	for _, a := range msgs[0].Additionals {
+		if a.TYPE == 1 && namesEqual(a.NAME, "myhost.local") {
+			hasA = true
+		}
+	}
+	if !hasA {
+		t.Error("SRV answer without the target's A record in additionals")
+	}
+}
