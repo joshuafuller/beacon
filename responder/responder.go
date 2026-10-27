@@ -115,6 +115,11 @@ func New(ctx context.Context, opts ...Option) (*Responder, error) {
 		}
 	}
 
+	// Watch for link changes and probe/announce again (RFC 6762 §8). Close
+	// cancels lifeCtx and waits on reprobeWg.
+	r.reprobeWg.Add(1)
+	go r.runLinkWatcher()
+
 	// Start query handler goroutine(s). IPv6 goroutine starts only when transport6 is set.
 	r.queryHandlerWg.Add(1)
 	go r.runQueryHandler(r.transport, false)
