@@ -440,6 +440,27 @@ func (r *Responder) Unregister(serviceID string) error {
 	return nil
 }
 
+// Services returns copies of all registered services with their current
+// names.
+//
+// A name conflict found after registration (RFC 6762 §9) can rename a
+// service in the background ("My Service" → "My Service-2"). RFC 6763
+// Appendix C asks that the user be told the new name; Services is how a
+// caller finds it. A service being re-probed is briefly absent.
+//
+// Returns:
+//   - []*Service: one copy per registered service, in no particular order
+func (r *Responder) Services() []*Service {
+	names := r.registry.List()
+	out := make([]*Service, 0, len(names))
+	for _, name := range names {
+		if svc, ok := r.registry.Get(name); ok {
+			out = append(out, fromInternalService(svc))
+		}
+	}
+	return out
+}
+
 // GetService retrieves a registered service by service ID.
 //
 // The serviceID can be either:

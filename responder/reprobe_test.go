@@ -172,3 +172,30 @@ func TestUnregister_BlocksNewReprobe(t *testing.T) {
 	}
 	r.endUnregister("Alpha")
 }
+
+// RFC 6763 Appendix C: callers must be able to see a name chosen after a
+// conflict. Services() lists the current names (BCT II.16 needs the current
+// name to send its goodbye).
+func TestServices_ShowsNameAfterConflictRename(t *testing.T) {
+	r, mt := newConformanceResponder(t)
+	registerOrFail(t, r, &Service{InstanceName: "Alpha", ServiceType: "_http._tcp.local", Port: 80})
+
+	// A conflict after announcement; defend it again during the re-probe so
+	// the service must be renamed.
+	conflict := buildResponse(t, "Alpha._http._tcp.local", 16, []byte{3, 'x', '=', '1'})
+	_ = r.handleQuery(mt, conflict, otherHost, 0)
+	eventually(2*time.Second, func() bool { _, ok := r.reprobeJobFor("svc:Alpha"); return ok })
+	time.Sleep(400 * time.Millisecond)
+	_ = r.handleQuery(mt, conflict, otherHost, 0)
+
+	if !eventually(6*time.Second, func() bool {
+		for _, s := range r.Services() {
+			if s.InstanceName == "Alpha-2" {
+				return true
+			}
+		}
+		return false
+	}) {
+		t.Fatalf("Services() = %+v, want Alpha-2 after the conflict rename", r.Services())
+	}
+}

@@ -18,11 +18,15 @@ import (
 	"bufio"
 	"context"
 	"flag"
+	"fmt"
 	"log"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/joshuafuller/beacon/responder"
 )
@@ -56,6 +60,20 @@ func main() {
 		if err := r.Close(); err != nil {
 			log.Printf("close: %v", err)
 		}
+	}()
+
+	// BCT III.1 opens a TCP connection to the advertised port, so serve it.
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
+	if err != nil {
+		log.Fatalf("listen on tcp port %d: %v", *port, err)
+	}
+	defer ln.Close() // nolint:errcheck -- process exit closes it anyway
+	go func() {
+		srv := &http.Server{
+			Handler:           http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = fmt.Fprintln(w, "beacon bct harness") }),
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		_ = srv.Serve(ln)
 	}()
 
 	r.OnProbe(func() { log.Printf("probe sent") })
@@ -97,8 +115,16 @@ func main() {
 				log.Printf("unknown command %q (want: rename <new name>)", line)
 				continue
 			}
-			if err := r.Unregister(svc.InstanceName); err != nil {
-				log.Printf("unregister %q: %v", svc.InstanceName, err)
+			// Unregister under the current name: a conflict after
+			// registration may have renamed the service (RFC 6762 §9).
+			current := svc.InstanceName
+			for _, s := range r.Services() {
+				if strings.EqualFold(s.ServiceType, svc.ServiceType) {
+					current = s.InstanceName
+				}
+			}
+			if err := r.Unregister(current); err != nil {
+				log.Printf("unregister %q: %v", current, err)
 			}
 			svc = &responder.Service{InstanceName: newName, ServiceType: svc.ServiceType, Port: svc.Port, TXTRecords: svc.TXTRecords}
 			if err := r.Register(svc); err != nil {
